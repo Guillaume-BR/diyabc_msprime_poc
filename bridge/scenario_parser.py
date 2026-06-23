@@ -1,0 +1,133 @@
+"""
+Parseur du texte de header.txt vers les structures définies dans
+scenario_types.py.
+
+Aucune valeur numérique n'est calculée ici (voir scenario_types.py pour
+la justification). Ce module ne fait que de la transcription texte -> objets.
+
+Limité, pour l'instant, au vocabulaire nécessaire au scénario 1 du dataset
+human : sample, merge, varNe. SplitEvent (admixture) sera ajouté quand on
+généralisera aux scénarios 2/3/5/6 du même fichier.
+"""
+
+import re
+import warnings
+
+from bridge.scenario_types import (
+    Scenario,
+    SampleEvent,
+    MergeEvent,
+    VarNeEvent,
+)
+
+# Capture : "scenario 1 [0.16667] (16)" -> index=1, weight=0.16667, nlines=16
+_SCENARIO_HEADER_RE = re.compile(
+    r"^scenario\s+(\d+)\s+\[([\d.]+)\]\s+\((\d+)\)\s*$"
+)
+
+
+def split_scenario_blocks(header_text: str) -> list[str]:
+    """Découpe le texte complet de header.txt en blocs bruts, un par
+    scénario, chaque bloc commençant par sa ligne d'en-tête
+    'scenario N [poids] (nlignes)' et s'arrêtant juste avant le bloc suivant
+    (ou la fin de la section, ex: 'historical parameters priors')."""
+    lines = header_text.splitlines()
+
+    # Repère les lignes d'index où démarre chaque scénario
+    start_indices = [
+        i for i, line in enumerate(lines)
+        if _SCENARIO_HEADER_RE.match(line.strip())
+    ]
+    if not start_indices:
+        raise ValueError("Aucun bloc 'scenario N [...] (...)' trouvé dans le texte fourni")
+
+    blocks = []
+    for k, start in enumerate(start_indices):
+        end = start_indices[k + 1] if k + 1 < len(start_indices) else len(lines)
+        block = "\n".join(lines[start:end]).strip()
+        blocks.append(block)
+    return blocks
+
+
+def parse_scenario_block(block_text: str) -> Scenario:
+    """Transforme un bloc brut (en commençant par la ligne 'scenario N [...]')
+    en objet Scenario rempli."""
+    lines = [l.strip() for l in block_text.splitlines() if l.strip()]
+
+    header_match = _SCENARIO_HEADER_RE.match(lines[0])
+    if not header_match:
+        raise ValueError(f"Première ligne inattendue, pas un en-tête de scénario : {lines[0]!r}")
+    index = int(header_match.group(1))
+    weight = float(header_match.group(2))
+
+    # Deuxième ligne : tailles de population initiales, ex: "N1 N2 N3 N4"
+    initial_pop_size_exprs = lines[1].split()
+
+    events = []
+    for line in lines[2:]:
+        events.append(_parse_event_line(line))
+
+    return Scenario(
+        index=index,
+        weight=weight,
+        initial_pop_size_exprs=initial_pop_size_exprs,
+        events=events,
+    )
+
+
+def _parse_event_line(line: str):
+    """Transforme une ligne d'événement, ex: 't1 merge 2 1', en
+    SampleEvent / MergeEvent / VarNeEvent selon le mot-clé rencontré.
+
+    Vocabulaire de référence : src-JMC-C++/history.cpp (ScenarioC::read_events).
+    """
+    tokens = line.split()
+    time_expr, action = tokens[0], tokens[1]
+    args = tokens[2:]
+
+    if action == "sample":
+        # ex: "0 sample 1" -> pop=1
+        return SampleEvent(time_expr=time_expr, pop=int(args[0]))
+
+    if action == "merge":
+        # ex: "t1 merge 2 1" -> ancestral_pop=2 (survit), derived_pop=1 (disparaît)
+        return MergeEvent(
+            time_expr=time_expr,
+            ancestral_pop=int(args[0]),
+            derived_pop=int(args[1]),
+        )
+
+    if action == "varNe":
+        # ex: "t2-d3 varNe 3 Nbn3" -> pop=3, new_size_expr="Nbn3"
+        return VarNeEvent(
+            time_expr=time_expr,
+            pop=int(args[0]),
+            new_size_expr=args[1],
+        )
+
+    raise NotImplementedError(
+        f"Action '{action}' non gérée par ce parser (limité à sample/merge/varNe "
+        f"pour le scénario 1 de human). Ligne : {line!r}"
+    )
+
+
+def parse_header_scenarios(header_text: str) -> list[Scenario]:
+    """Point d'entrée principal : header.txt complet -> liste de Scenario.
+
+    Les blocs utilisant un vocabulaire pas encore implémenté (ex: 'split',
+    nécessaire aux scénarios 2/3/5/6 de human) sont sautés avec un
+    avertissement explicite, plutôt que de faire échouer tout le parsing.
+
+    Important : seule l'exception NotImplementedError est avalée ici,
+    volontairement. Toute autre exception (erreur de parsing réelle, bug)
+    doit continuer à se propager normalement.
+    """
+    blocks = split_scenario_blocks(header_text)
+    scenarios = []
+    for block in blocks:
+        try:
+            scenarios.append(parse_scenario_block(block))
+        except NotImplementedError as e:
+            first_line = block.splitlines()[0]
+            warnings.warn(f"Bloc '{first_line}' ignoré : {e}")
+    return scenarios
