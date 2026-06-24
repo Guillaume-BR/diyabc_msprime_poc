@@ -14,6 +14,8 @@ from bridge.prior_parser import parse_priors
 from bridge.parameter_sampling import draw_parameter_values, ConstraintsNotSatisfiedError
 from bridge.demography_builder import evaluate_expression, build_demography
 from bridge.pipeline import build_random_demography_for_scenario_index
+from bridge.observed_data import count_samples_per_population
+
 
 import msprime
 
@@ -173,3 +175,15 @@ def test_pipeline_scenario1(header_text):
     # Les valeurs tirées doivent inclure tous les paramètres du header
     assert "N1" in values
     assert "t1" in values
+
+
+
+OBSERVED_SNP_FILE = REFERENCE_DIR / "human_snp_all22chr_maf5.snp"
+
+def test_count_samples_per_population():
+    """Vérifie que le comptage retrouve bien les 4 populations à 30
+    individus chacune, annoncées en commentaire dans le fichier."""
+    counts = count_samples_per_population(OBSERVED_SNP_FILE)
+
+    assert set(counts.keys()) == {"ASW", "YRI", "CHB", "GBR"}
+    assert all(n == 30 for n in counts.values())
