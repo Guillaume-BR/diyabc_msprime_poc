@@ -13,6 +13,7 @@ from bridge.scenario_types import MergeEvent, VarNeEvent, SampleEvent, OrderCons
 from bridge.prior_parser import parse_priors
 from bridge.parameter_sampling import draw_parameter_values, ConstraintsNotSatisfiedError
 from bridge.demography_builder import evaluate_expression, build_demography
+from bridge.pipeline import build_random_demography_for_scenario_index
 
 import msprime
 
@@ -154,3 +155,21 @@ def test_build_demography_scenario1(header_text):
     assert split_by_time[10].derived == ["pop1"] and split_by_time[10].ancestral == "pop2"
     assert split_by_time[5000].derived == ["pop4"] and split_by_time[5000].ancestral == "pop3"
     assert split_by_time[8000].derived == ["pop3"] and split_by_time[8000].ancestral == "pop2"
+
+def test_pipeline_scenario1(header_text):
+    """Vérifie que le pipeline complet (header.txt -> Demography) fonctionne
+    de bout en bout sur le scénario 1, et que la démographie produite a la
+    structure attendue (4 populations, 3 fusions)."""
+    
+    demography, values = build_random_demography_for_scenario_index(
+        header_text, scenario_index=1, seed=42
+    )
+
+    assert len(demography.populations) == 4
+
+    splits = [e for e in demography.events if isinstance(e, msprime.demography.PopulationSplit)]
+    assert len(splits) == 3
+
+    # Les valeurs tirées doivent inclure tous les paramètres du header
+    assert "N1" in values
+    assert "t1" in values
