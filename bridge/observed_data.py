@@ -20,6 +20,18 @@ def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
 
     Ex: pour human_snp_all22chr_maf5.snp -> {"ASW": 30, "YRI": 30, ...}
 
+    IMPORTANT -- garantie d'ordre : le dict retourné préserve l'ordre de
+    première apparition des populations dans le fichier (garanti par
+    Counter/dict en Python >= 3.7, et vérifié expérimentalement sur
+    human). Cet ordre a un sens métier précis : header.txt ne nomme jamais
+    les populations (seulement des indices 1,2,3,4) -- le mapping réel,
+    vérifié en l'absence de toute référence croisée dans le code C++
+    (data.cpp ne relie jamais popname aux indices de scénario), est
+    implicite : pop i du scénario = i-ème population dans l'ORDRE
+    D'APPARITION de ce fichier. Ne jamais remplacer Counter par un type
+    qui ne garantirait pas cet ordre (ex: trier les clés alphabétiquement
+    casserait silencieusement ce mapping).
+
     L'en-tête 'IND SEX POP' peut être précédé ou non d'un commentaire libre
     en première ligne (comportement observé dans data.cpp, qui teste les
     deux cas) : on recherche son index plutôt que de supposer sa position,
@@ -51,3 +63,18 @@ def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
         counts[fields[pop_index]] += 1
 
     return dict(counts)
+
+
+def population_index_to_name(snp_file_path: str | Path) -> dict[int, str]:
+    """Construit le mapping entre l'indice de population utilisé dans
+    header.txt (1-indexed : pop1, pop2, ...) et le nom réel de population
+    tel qu'il apparaît dans le fichier .snp (ex: "ASW", "YRI"...).
+
+    Ex: {1: "ASW", 2: "YRI", 3: "CHB", 4: "GBR"} pour human.
+
+    Voir la docstring de count_samples_per_population pour la
+    justification de ce mapping par ordre d'apparition (header.txt ne
+    nomme jamais les populations).
+    """
+    names_in_order = list(count_samples_per_population(snp_file_path).keys())
+    return {i + 1: name for i, name in enumerate(names_in_order)}

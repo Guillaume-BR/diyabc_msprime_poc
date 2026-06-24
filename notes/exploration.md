@@ -43,3 +43,11 @@ avec ">"). Vérifié sur human/header.txt : (21,4) correspond exactement à
 assertion de validation après parsing (si len(priors) != N, le parsing a
 raté quelque chose).
 
+## Mapping indice de population (header.txt) <-> nom réel (fichier .snp)
+
+Aucun nom n'est déclaré dans header.txt -- seulement des indices (1,2,3,4).
+Vérifié : popname (data.cpp) n'est jamais croisé avec les indices du
+scénario dans le code. Le mapping réel est implicite : pop i du scénario
+= i-ème population rencontrée dans l'ORDRE D'APPARITION du fichier .snp.
+Vérifié sur human : ASW(1) YRI(2) CHB(3) GBR(4), chacune avec un bloc
+de 30 lignes consécutives.

@@ -15,6 +15,7 @@ from bridge.parameter_sampling import draw_parameter_values, ConstraintsNotSatis
 from bridge.demography_builder import evaluate_expression, build_demography
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.observed_data import count_samples_per_population
+from bridge.observed_data import population_index_to_name
 
 
 import msprime
@@ -187,3 +188,11 @@ def test_count_samples_per_population():
 
     assert set(counts.keys()) == {"ASW", "YRI", "CHB", "GBR"}
     assert all(n == 30 for n in counts.values())
+
+
+def test_population_index_to_name():
+    """Vérifie le mapping indice de scénario (1-indexed) -> nom réel de
+    population, dans l'ordre d'apparition du fichier .snp."""
+    mapping = population_index_to_name(OBSERVED_SNP_FILE)
+
+    assert mapping == {1: "ASW", 2: "YRI", 3: "CHB", 4: "GBR"}
