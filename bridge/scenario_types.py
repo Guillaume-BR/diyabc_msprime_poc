@@ -32,7 +32,43 @@ class Scenario:                                    # ← elle est bien là, just
 
 @dataclass
 class Prior:
+    """Une ligne de la section 'historical parameters priors'.
+    Ex: 'N1 N UN[1000.0,100000.0,0.0,0.0]' ->
+        Prior(name="N1", category="N", law="UN", bounds=(1000.0, 100000.0, 0.0, 0.0))
+    """
+
     name: str
     category: str        # "N" (taille), "T" (temps), "A" (taux admixture)
     law: str              # "UN", "LU", "GA"
     bounds: tuple[float, ...]
+
+@dataclass
+class OrderConstraint:
+    """Une ligne du type 't4>t3' ou 't431<t32' dans
+    'historical parameters priors' : contrainte que doit respecter un
+    tirage de valeurs pour être valide.
+ 
+    Observée juste avant 'DRAW UNTIL' dans header.txt -- DIYABC tire les
+    valeurs de tous les priors, vérifie ces contraintes, et retire tant
+    qu'elles ne sont pas respectées (d'où le nom 'DRAW UNTIL').
+ 
+    Vérifié dans history.cpp (EventC, parsing de 'condition') : 4 opérateurs
+    possibles -- '>', '<', '>=', '<='. La contrainte signifie
+    "valeur(param1) <operator> valeur(param2)" doit être vraie.
+    """
+    param1: str      # "t4"
+    operator: str    # ">" , "<", ">=", ou "<="
+    param2: str      # "t3"
+ 
+    def is_satisfied(self, values: dict[str, float]) -> bool:
+        v1, v2 = values[self.param1], values[self.param2]
+        if self.operator == ">":
+            return v1 > v2
+        if self.operator == "<":
+            return v1 < v2
+        if self.operator == ">=":
+            return v1 >= v2
+        if self.operator == "<=":
+            return v1 <= v2
+        raise ValueError(f"Opérateur de contrainte inconnu : {self.operator!r}")
+
