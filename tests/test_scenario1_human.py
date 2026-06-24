@@ -88,18 +88,28 @@ def test_priors_and_constraints(header_text):
 def test_draw_parameter_values(header_text):
     """Vérifie que draw_parameter_values tire bien une valeur pour chaque
     prior, et que le tirage retourné respecte toutes les contraintes
-    d'ordre (t4>t3, etc.)."""
+    d'ordre (t4>t3, t3>t2, t44>t33, t44>t22)."""
     priors, constraints = parse_priors(header_text)
 
     seed = 42
     values = draw_parameter_values(priors, constraints, seed)
 
-    # Check that all priors have been drawn
+    # Toutes les valeurs ont bien été tirées
     assert set(values.keys()) == {p.name for p in priors}
 
-    # Check that all constraints are satisfied
+    # Toutes les contraintes sont respectées par ce tirage
     for constraint in constraints:
         assert constraint.is_satisfied(values)
+
+def test_draw_parameter_values_reproducible(header_text):
+    """Même graine -> même tirage (déterminisme attendu pour la
+    reproductibilité scientifique)."""
+    priors, constraints = parse_priors(header_text)
+
+    values1 = draw_parameter_values(priors, constraints, seed=123)
+    values2 = draw_parameter_values(priors, constraints, seed=123)
+
+    assert values1 == values2
 
 def test_evaluate_expression():
     values = {"t1": 12.3, "t2": 4881.0, "d3": 35.0}
