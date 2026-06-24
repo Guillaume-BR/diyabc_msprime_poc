@@ -12,6 +12,9 @@ from bridge.scenario_parser import parse_header_scenarios
 from bridge.scenario_types import MergeEvent, VarNeEvent, SampleEvent, OrderConstraint
 from bridge.prior_parser import parse_priors
 from bridge.parameter_sampling import draw_parameter_values, ConstraintsNotSatisfiedError
+from bridge.demography_builder import evaluate_expression, build_demography
+
+import msprime
 
 REFERENCE_DIR = Path(__file__).parent.parent / "reference" / "human"
 
@@ -97,3 +100,47 @@ def test_draw_parameter_values(header_text):
     # Check that all constraints are satisfied
     for constraint in constraints:
         assert constraint.is_satisfied(values)
+
+def test_evaluate_expression():
+    values = {"t1": 12.3, "t2": 4881.0, "d3": 35.0}
+
+    assert evaluate_expression("t1", values) == 12.3
+    assert evaluate_expression("0", values) == 0.0
+    assert evaluate_expression("t2-d3", values) == 4881.0 - 35.0
+    assert evaluate_expression("t2+d3", values) == 4881.0 + 35.0
+
+    with pytest.raises(ValueError):
+        evaluate_expression("inconnu", values)
+
+def test_build_demography_scenario1(header_text):
+    """Vérifie que build_demography produit la bonne structure
+    d'événements pour le scénario 1 de human, avec des valeurs de
+    paramètres fixées à la main (pas de tirage aléatoire ici, pour
+    isoler le test de la logique de construction de la démographie)."""
+    scenarios = parse_header_scenarios(header_text)
+    scenario1 = next(s for s in scenarios if s.index == 1)
+
+    # Valeurs choisies à la main, cohérentes avec les contraintes
+    # (t4 > t3 > t2 > t2-d3, t2-d4 ; t3 > t3-d34)
+    values = {
+        "N1": 50000, "N2": 50000, "N3": 50000, "N4": 50000,
+        "t1": 10, "t2": 5000, "d3": 30, "Nbn3": 200,
+        "d4": 20, "Nbn4": 300, "N34": 60000,
+        "t3": 8000, "d34": 25, "Nbn34": 250,
+        "t4": 9000, "Na": 40000,
+    }
+
+    demography = build_demography(scenario1, values)
+
+    # 4 populations créées
+    assert len(demography.populations) == 4
+    assert {p.name for p in demography.populations} == {"pop1", "pop2", "pop3", "pop4"}
+
+    # Les événements de fusion sont bien présents, avec les bons temps
+    splits = [e for e in demography.events if isinstance(e, __import__("msprime").demography.PopulationSplit)]
+    assert len(splits) == 3
+
+    split_by_time = {s.time: s for s in splits}
+    assert split_by_time[10].derived == ["pop1"] and split_by_time[10].ancestral == "pop2"
+    assert split_by_time[5000].derived == ["pop4"] and split_by_time[5000].ancestral == "pop3"
+    assert split_by_time[8000].derived == ["pop3"] and split_by_time[8000].ancestral == "pop2"
