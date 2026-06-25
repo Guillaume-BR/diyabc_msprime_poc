@@ -16,7 +16,7 @@ from bridge.demography_builder import evaluate_expression, build_demography
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.observed_data import count_samples_per_population
 from bridge.observed_data import population_index_to_name
-from bridge.ancestry_simulation import build_samples_argument,simulate_independent_loci
+from bridge.ancestry_simulation import build_samples_argument,simulate_independent_loci, mutate_independent_loci
 
 
 import msprime
@@ -257,3 +257,26 @@ def test_simulate_independent_loci_scenario1(header_text):
     # (30 individus x 4 populations x ploidy 2 = 240 lignées)
     for ts in tree_sequences:
         assert ts.num_samples == 30 * 4 * 2
+
+    
+def test_mutate_independent_loci_scenario1(header_text):
+    """Vérifie que la mutation binaire s'applique correctement sur les
+    arbres simulés, et que des sites variables apparaissent (preuve que
+    le taux de mutation choisi produit un résultat exploitable)."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text, scenario_index=1, seed=42
+    )
+    samples = build_samples_argument(OBSERVED_SNP_FILE)
+
+    num_loci = 20
+    tree_sequences = simulate_independent_loci(demography, samples, num_loci, seed=123)
+
+    mutation_rate = 1e-3  # choisi pour produire des sites variables sur des arbres courts
+    mutated = list(mutate_independent_loci(tree_sequences, mutation_rate, seed=456))
+
+    assert len(mutated) == num_loci
+
+    # Au moins certains loci doivent porter une mutation (sinon le taux
+    # choisi est trop faible pour être utile sur ce POC)
+    num_with_mutations = sum(1 for ts in mutated if ts.num_mutations > 0)
+    assert num_with_mutations > 0

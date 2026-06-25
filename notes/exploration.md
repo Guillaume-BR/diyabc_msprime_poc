@@ -72,3 +72,26 @@ indépendants entre eux, ET toute la séquence de K réplicats est
 reproductible si on relance avec la même seed S. Pas besoin de générer
 et passer un tableau de graines à la main (contrairement à l'exemple de
 la doc orienté parallélisation multi-process).
+
+## Modèle de mutation SNP de human : non élucidé précisément, simplifié pour le POC
+
+Découverte importante : human/header.txt n'a AUCUNE section "group priors"
+(pas de MEANMU/MEANSNI/MEANP), contrairement à sequences-mut. Le format
+"5000 <A> G1 from 1" n'active aucune des branches [M]/[S]/[P] de
+header.cpp (qui testent ss[2] contre ces marqueurs -- ici ss[2]="G1",
+donc aucune branche ne matche). "from 1" est un texte libre/commentaire,
+absent de tout parseur C++ (vérifié par grep sur tout le dépôt).
+
+Conséquence : put_mutations() (particuleC.cpp) utiliserait mutrate =
+mut_rate + sni_rate pour ce type de locus (<5), mais ces valeurs ne sont
+jamais déclarées dans header.txt pour human -- donc soit des valeurs par
+défaut codées en dur existent ailleurs dans le C++ (non trouvées), soit
+human suit un algorithme de simulation SNP distinct du modèle de mutation
+à taux fixe (un article tiers, arxiv 2501.17107, mentionne un "algorithme
+de simulation SNP" spécifique à DIYABC-RF v1.0, sans en détailler le
+mécanisme).
+
+DÉCISION POC : reporté. On utilise un modèle de mutation msprime simplifié
+et raisonnable (taux fixe choisi à la main), sans prétendre reproduire
+l'algorithme exact de DIYABC pour les SNP. À creuser sérieusement avant
+toute comparaison statistique fine avec le reftableRF.bin de référence.
