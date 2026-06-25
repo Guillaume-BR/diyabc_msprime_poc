@@ -9,6 +9,8 @@ Ce module ne contient aucune nouvelle logique de parsing ou de
 construction : il orchestre uniquement.
 """
 
+from pathlib import Path
+
 import msprime
 
 from bridge.scenario_parser import parse_header_scenarios
@@ -16,6 +18,14 @@ from bridge.prior_parser import parse_priors
 from bridge.parameter_sampling import draw_parameter_values
 from bridge.demography_builder import build_demography
 from bridge.scenario_types import Scenario
+from bridge.observed_data import count_samples_per_population, population_index_to_name
+from bridge.ancestry_simulation import (
+    build_samples_argument,
+    simulate_independent_loci,
+    mutate_independent_loci,
+)
+
+
 
 def build_random_demography(
         scenario: Scenario,
@@ -58,5 +68,42 @@ def build_random_demography_for_scenario_index(
         )
     return build_random_demography(scenario, header_text, seed)
 
+
+def run_poc_for_directory(
+    directory: str | Path,
+    scenario_index: int,
+    num_loci: int,
+    mutation_rate: float,
+    seed: int,
+):
+    """Point d'entrée de haut niveau : équivalent du `-p ./` de DIYABC.
+ 
+    Prend un dossier contenant header.txt et le fichier de données
+    observées (.snp), et produit num_loci TreeSequence mutées, simulées
+    sous le scénario demandé.
+ 
+    Le nom du fichier de données est lu sur la PREMIÈRE LIGNE de
+    header.txt (ex: "human_snp_all22chr_maf5.snp"), pas deviné par
+    extension -- c'est le contrat du format DIYABC.
+ 
+    Retourne (mutated_tree_sequences, values) : l'itérateur des
+    TreeSequence mutées, et le dict des valeurs de paramètres tirées
+    (nécessaires plus tard pour écrire le reftable.bin).
+    """
+    directory = Path(directory)
+    header_text = (directory / "header.txt").read_text()
+ 
+    snp_filename = header_text.splitlines()[0].strip()
+    snp_path = directory / snp_filename
+ 
+    demography, values = build_random_demography_for_scenario_index(
+        header_text, scenario_index, seed
+    )
+    samples = build_samples_argument(snp_path)
+ 
+    tree_sequences = simulate_independent_loci(demography, samples, num_loci, seed)
+    mutated = mutate_independent_loci(tree_sequences, mutation_rate, seed)
+ 
+    return mutated, values
 
 

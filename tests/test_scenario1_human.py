@@ -17,7 +17,7 @@ from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.observed_data import count_samples_per_population
 from bridge.observed_data import population_index_to_name
 from bridge.ancestry_simulation import build_samples_argument,simulate_independent_loci, mutate_independent_loci
-
+from bridge.pipeline import run_poc_for_directory
 
 import msprime
 
@@ -280,3 +280,21 @@ def test_mutate_independent_loci_scenario1(header_text):
     # choisi est trop faible pour être utile sur ce POC)
     num_with_mutations = sum(1 for ts in mutated if ts.num_mutations > 0)
     assert num_with_mutations > 0
+
+def test_run_poc_for_directory():
+    """Vérifie le point d'entrée de haut niveau : à partir d'un simple
+    chemin de dossier (comme le -p ./ de DIYABC), tout le pipeline doit
+    fonctionner sans qu'on ait à lire manuellement header.txt ou le
+    fichier .snp nous-mêmes."""
+    mutated, values = run_poc_for_directory(
+        REFERENCE_DIR,
+        scenario_index=1,
+        num_loci=15,
+        mutation_rate=1e-3,
+        seed=42,
+    )
+
+    mutated_list = list(mutated)
+    assert len(mutated_list) == 15
+    assert "N1" in values
+
