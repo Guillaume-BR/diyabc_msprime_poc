@@ -41,9 +41,16 @@ def split_scenario_blocks(header_text: str) -> list[str]:
     if not start_indices:
         raise ValueError("Aucun bloc 'scenario N [...] (...)' trouvé dans le texte fourni")
 
+    # Borne de fin pour le tout dernier scénario : la section des priors,
+    # si elle est présente, sinon la fin du fichier.
+    priors_section_index = next(
+        (i for i, line in enumerate(lines) if line.strip().startswith("historical parameters priors")),
+        len(lines),
+    )
+
     blocks = []
     for k, start in enumerate(start_indices):
-        end = start_indices[k + 1] if k + 1 < len(start_indices) else len(lines)
+        end = start_indices[k + 1] if k + 1 < len(start_indices) else priors_section_index
         block = "\n".join(lines[start:end]).strip()
         blocks.append(block)
     return blocks

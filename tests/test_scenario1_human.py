@@ -16,6 +16,7 @@ from bridge.demography_builder import evaluate_expression, build_demography
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.observed_data import count_samples_per_population
 from bridge.observed_data import population_index_to_name
+from bridge.ancestry_simulation import build_samples_argument,simulate_independent_loci
 
 
 import msprime
@@ -69,6 +70,26 @@ def test_scenario1_events(header_text):
     ]
 
     assert scenario1.events == expected
+
+def test_scenario4_events(header_text):
+    scenarios = parse_header_scenarios(header_text)
+    scenario4 = next(s for s in scenarios if s.index==4)
+
+    expected = [
+        SampleEvent(time_expr="0", pop=1),
+        SampleEvent(time_expr="0", pop=2),
+        SampleEvent(time_expr="0", pop=3),
+        SampleEvent(time_expr="0", pop=4),
+        MergeEvent(time_expr="t11", ancestral_pop=2, derived_pop=1),
+        VarNeEvent(time_expr="t22-d3", pop=3, new_size_expr="Nbn3"),
+        MergeEvent(time_expr="t22", ancestral_pop=2, derived_pop=3),
+        VarNeEvent(time_expr="t33-d4", pop=4, new_size_expr="Nbn4"),
+        MergeEvent(time_expr="t33", ancestral_pop=2, derived_pop=4),
+        VarNeEvent(time_expr="t44", pop=2, new_size_expr="Na"),
+    ]
+
+    assert scenario4.events == expected
+
 
 def test_priors_and_constraints(header_text):
     priors, constraints = parse_priors(header_text)
@@ -133,7 +154,21 @@ def test_build_demography_scenario1(header_text):
     isoler le test de la logique de construction de la démographie)."""
     scenarios = parse_header_scenarios(header_text)
     scenario1 = next(s for s in scenarios if s.index == 1)
+    """Extrait les priors et les contraintes d'ordre de header.txt.
 
+ 
+
+    Retourne (priors, constraints). Une ligne qui ne correspond à aucun
+
+    des deux formats connus lève une erreur explicite plutôt que d'être
+
+    silencieusement ignorée : contrairement aux événements de scénario, on
+
+    n'a pas de raison de s'attendre à du vocabulaire non géré ici pour le
+
+    dataset human.
+
+    """
     # Valeurs choisies à la main, cohérentes avec les contraintes
     # (t4 > t3 > t2 > t2-d3, t2-d4 ; t3 > t3-d34)
     values = {
@@ -196,3 +231,29 @@ def test_population_index_to_name():
     mapping = population_index_to_name(OBSERVED_SNP_FILE)
 
     assert mapping == {1: "ASW", 2: "YRI", 3: "CHB", 4: "GBR"}
+
+def test_simulate_independent_loci_scenario1(header_text):
+    """Vérifie que build_samples_argument construit bien le dict attendu
+    par msprime.sim_ancestry, avec les bons noms de populations et le bon
+    nombre d'individus par population."""
+    
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text, scenario_index=1, seed=42
+    )
+    samples = build_samples_argument(OBSERVED_SNP_FILE)
+
+    # 4 populations, 30 individus chacune attendus
+    assert samples == {"pop1": 30, "pop2": 30, "pop3": 30, "pop4": 30}
+
+    num_loci = 10  # petit nombre pour un test rapide, pas les 51250 réels
+    tree_sequences = list(simulate_independent_loci(
+        demography, samples, num_loci=num_loci, seed=123
+    ))
+
+    # On doit obtenir exactement num_loci arbres indépendants
+    assert len(tree_sequences) == num_loci
+
+    # Chaque arbre doit avoir le bon nombre total de lignées échantillonnées
+    # (30 individus x 4 populations x ploidy 2 = 240 lignées)
+    for ts in tree_sequences:
+        assert ts.num_samples == 30 * 4 * 2

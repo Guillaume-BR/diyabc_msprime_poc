@@ -51,3 +51,24 @@ scénario dans le code. Le mapping réel est implicite : pop i du scénario
 = i-ème population rencontrée dans l'ORDRE D'APPARITION du fichier .snp.
 Vérifié sur human : ASW(1) YRI(2) CHB(3) GBR(4), chacune avec un bloc
 de 30 lignes consécutives.
+
+## Choix de ploidy=2 pour human
+
+Confirmé : human/header.txt déclare ses 5000 loci en <A> (autosomal),
+cohérent avec une transmission diploïde classique. ploidy=2 (valeur par
+défaut de msprime.sim_ancestry) est donc le bon choix : chaque "sample
+individual" = 2 lignées génomiques, et l'échelle de temps de la
+coalescence est calée en générations diploïdes -- cohérent avec les bornes
+des priors de temps (UN[1,30], UN[100,10000]), qui sont en générations.
+À revoir si on traite un jour un locus <H>/<X>/<Y>/<M> dans un autre
+dataset (mitochondrial par exemple, qui serait haploïde, ploidy=1).
+
+## Reproductibilité de sim_ancestry avec num_replicates
+
+Vérifié empiriquement (pas dans la doc) : sim_ancestry(samples=N,
+num_replicates=K, random_seed=S) dérive correctement K graines distinctes
+à partir d'une seule seed S -- les réplicats sont statistiquement
+indépendants entre eux, ET toute la séquence de K réplicats est
+reproductible si on relance avec la même seed S. Pas besoin de générer
+et passer un tableau de graines à la main (contrairement à l'exemple de
+la doc orienté parallélisation multi-process).
