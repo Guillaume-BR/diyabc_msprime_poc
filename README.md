@@ -31,3 +31,25 @@ scénario 1 :
 ## Comment a été générée la référence
 Depuis `diyabc/tests/datasets/human/` (dépôt diyabc/diyabc) :
     general -p ./ -R "FST1;ML1" -r 100 -g 50 -m -t 8
+
+## État au 25/06/2026
+
+Fait et testé (pytest tests/ -v, tout vert) :
+1. Demography msprime correcte pour le scénario 1 — ✅
+2. Simulation de coalescence + mutation SNP — ✅ (modèle de mutation
+   simplifié, PAS une reproduction fidèle de l'algorithme DIYABC réel
+   pour les SNP, qui reste non élucidé — voir notes/exploration.md)
+
+Reste à faire :
+3. Statistiques résumées comparables au reftableRF.bin de référence —
+   prochaine étape : lire sumstat.cpp pour comprendre le calcul exact
+   de FST1/ML1, puis les reproduire à partir des TreeSequence msprime
+   (probablement via tskit.TreeSequence.Fst() ou un calcul manuel).
+
+Modules du pipeline (bridge/) :
+- scenario_types.py, scenario_parser.py — parsing scénarios ✅
+- prior_parser.py, parameter_sampling.py — priors + tirage sous contraintes ✅
+- demography_builder.py — construction Demography msprime ✅
+- observed_data.py — comptage échantillons + mapping pop ✅
+- ancestry_simulation.py — coalescence + mutation ✅
+- pipeline.py — orchestration de tout ce qui précède ✅
