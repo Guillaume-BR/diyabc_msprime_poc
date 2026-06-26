@@ -15,7 +15,7 @@ import re
 
 import msprime
 
-from bridge.scenario_types import Scenario, SampleEvent, MergeEvent, VarNeEvent
+from bridge.scenario_types import Scenario, SampleEvent, MergeEvent, SplitEvent, VarNeEvent
 
 # "t2-d3" -> param1="t2", op="-", param2="d3"
 # "t1"    -> pas de match -> traité comme un nom de paramètre seul
@@ -82,6 +82,15 @@ def build_demography(scenario: Scenario, values: dict[str, float]) -> msprime.De
                 initial_size=evaluate_expression(event.new_size_expr, values),
             )
             continue
+        if isinstance(event, SplitEvent):
+            demography.add_admixture(
+                time=time,
+                derived=f"pop{event.derived_pop}",
+                ancestral=[f"pop{event.ancestral_pop1}", f"pop{event.ancestral_pop2}"],
+                proportions=[event.admixture_rate, 1 - event.admixture_rate],
+            )
+            continue
+        
         raise NotImplementedError(f"Type d'événement non géré par build_demography : {event!r}")
     demography.sort_events()
     return demography

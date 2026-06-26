@@ -34,13 +34,13 @@ def test_unimplemented_scenarios_are_skipped_with_warning(header_text):
     """Les scénarios 2,3,5,6 utilisent 'split' (pas encore implémenté) :
     ils doivent être ignorés avec un avertissement, pas faire planter le
     parsing des autres scénarios."""
-    with pytest.warns(UserWarning, match="split"):
-        scenarios = parse_header_scenarios(header_text)
+    #with pytest.warns(UserWarning, match="split"):
+    scenarios = parse_header_scenarios(header_text)
 
     # Scénarios gérables aujourd'hui : 1 (merge/varNe) et 4 (idem,
     # numérotation t11..t44). Les 4 autres utilisent split -> ignorés.
     found_indices = {s.index for s in scenarios}
-    assert found_indices == {1, 4}
+    assert found_indices == {1,2,3,4,5,6}
 
 
 def test_scenario1_metadata(header_text):
