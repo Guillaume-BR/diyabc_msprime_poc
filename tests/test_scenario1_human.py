@@ -11,12 +11,13 @@ import pytest
 from bridge.scenario_parser import parse_header_scenarios
 from bridge.scenario_types import MergeEvent, VarNeEvent, SampleEvent, OrderConstraint
 from bridge.prior_parser import parse_priors
+from bridge.loci_parser import parse_loci_description
 from bridge.parameter_sampling import draw_parameter_values, ConstraintsNotSatisfiedError
 from bridge.demography_builder import evaluate_expression, build_demography
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.observed_data import count_samples_per_population
 from bridge.observed_data import population_index_to_name
-from bridge.ancestry_simulation import build_samples_argument,simulate_independent_loci, mutate_independent_loci
+from bridge.ancestry_simulation import build_samples_argument,simulate_independent_loci, simulate_snp_genotypes
 from bridge.pipeline import run_poc_for_directory
 
 import msprime
@@ -194,6 +195,15 @@ def test_build_demography_scenario1(header_text):
     assert split_by_time[5000].derived == ["pop4"] and split_by_time[5000].ancestral == "pop3"
     assert split_by_time[8000].derived == ["pop3"] and split_by_time[8000].ancestral == "pop2"
 
+def test_parse_loci_description(header_text):
+    """Vérifie le parsing de la section 'loci description' de human,
+    format condensé à un seul type d'héritage."""
+    description = parse_loci_description(header_text)
+
+    assert description.total_loci == 5000
+    assert description.group == "G1"
+    assert description.start_index == 0  # "from 1" en 1-based -> 0 en 0-based
+
 def test_pipeline_scenario1(header_text):
     """Vérifie que le pipeline complet (header.txt -> Demography) fonctionne
     de bout en bout sur le scénario 1, et que la démographie produite a la
@@ -259,10 +269,11 @@ def test_simulate_independent_loci_scenario1(header_text):
         assert ts.num_samples == 30 * 4 * 2
 
     
-def test_mutate_independent_loci_scenario1(header_text):
-    """Vérifie que la mutation binaire s'applique correctement sur les
-    arbres simulés, et que des sites variables apparaissent (preuve que
-    le taux de mutation choisi produit un résultat exploitable)."""
+def test_simulate_snp_genotypes_scenario1(header_text):
+    """Vérifie que chaque locus simulé est polymorphe (au moins un 0 et
+    un 1 parmi les génotypes), garantissant la propriété centrale de
+    l'algorithme de Hudson : exactement une mutation par locus, jamais
+    un locus monomorphe."""
     demography, _ = build_random_demography_for_scenario_index(
         header_text, scenario_index=1, seed=42
     )
@@ -270,16 +281,38 @@ def test_mutate_independent_loci_scenario1(header_text):
 
     num_loci = 20
     tree_sequences = simulate_independent_loci(demography, samples, num_loci, seed=123)
+    genotypes_per_locus = list(simulate_snp_genotypes(tree_sequences, seed=456))
 
-    mutation_rate = 1e-3  # choisi pour produire des sites variables sur des arbres courts
-    mutated = list(mutate_independent_loci(tree_sequences, mutation_rate, seed=456))
+    assert len(genotypes_per_locus) == num_loci
 
-    assert len(mutated) == num_loci
+    for locus_genotypes in genotypes_per_locus:
+        all_genotypes = [g for genos in locus_genotypes.values() for g in genos]
+        assert set(all_genotypes) == {0, 1}, f"Locus non polymorphe : {locus_genotypes}"
 
-    # Au moins certains loci doivent porter une mutation (sinon le taux
-    # choisi est trop faible pour être utile sur ce POC)
-    num_with_mutations = sum(1 for ts in mutated if ts.num_mutations > 0)
-    assert num_with_mutations > 0
+def test_simulate_snp_genotypes_grouped_by_population(header_text):
+    """Vérifie que les génotypes sont bien regroupés par nom de
+    population (pop1..pop4), avec le bon nombre de lignées par groupe
+    (30 individus x ploidy 2 = 60 lignées par population), et que chaque
+    locus reste globalement polymorphe."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text, scenario_index=1, seed=42
+    )
+    samples = build_samples_argument(OBSERVED_SNP_FILE)
+
+    num_loci = 10
+    tree_sequences = simulate_independent_loci(demography, samples, num_loci, seed=123)
+    genotypes_per_locus = list(simulate_snp_genotypes(tree_sequences, seed=456))
+
+    assert len(genotypes_per_locus) == num_loci
+
+    for locus_genotypes in genotypes_per_locus:
+        assert set(locus_genotypes.keys()) == {"pop1", "pop2", "pop3", "pop4"}
+        for pop_name, genos in locus_genotypes.items():
+            assert len(genos) == 60  # 30 individus x ploidy 2
+
+        # Polymorphe globalement (au moins un 0 et un 1 sur l'ensemble)
+        all_genotypes = [g for genos in locus_genotypes.values() for g in genos]
+        assert set(all_genotypes) == {0, 1}
 
 def test_run_poc_for_directory():
     """Vérifie le point d'entrée de haut niveau : à partir d'un simple
@@ -290,11 +323,12 @@ def test_run_poc_for_directory():
         REFERENCE_DIR,
         scenario_index=1,
         num_loci=15,
-        mutation_rate=1e-3,
         seed=42,
     )
 
     mutated_list = list(mutated)
     assert len(mutated_list) == 15
     assert "N1" in values
+
+
 

@@ -68,32 +68,66 @@ def simulate_independent_loci(
     )
 
 
-def mutate_independent_loci(
-    tree_sequences: Iterator[msprime.TreeSequence],
-    mutation_rate: float,
-    seed: int,
-) -> Iterator[msprime.TreeSequence]:
-    """Applique une mutation binaire (alleles "0"/"1", ancestral toujours
-    "0") sur chaque TreeSequence de l'itérateur, avec une graine DISTINCTE
-    par locus -- dérivée de `seed` et de l'indice du locus, pour éviter
-    toute corrélation artificielle entre loci tout en restant reproductible
-    avec une seule seed globale.
+def _draw_single_mutation_node(tree, rng: random.Random) -> int:
+    """Tire un noeud de l'arbre (portant la mutation unique), avec une
+    probabilité proportionnelle à la longueur de sa branche -- algorithme
+    de Hudson (2002), tel que décrit dans la doc DIYABC (section 2.4.3) :
+    "il est supposé qu'il y a eu une et une seule mutation dans l'arbre
+    de coalescence des gènes échantillonnés".
 
-    LIMITE CONNUE (voir notes/exploration.md) : le modèle de mutation réel
-    utilisé par DIYABC pour les SNP de human n'a pas été élucidé
-    précisément (aucun MEANMU/MEANSNI déclaré dans header.txt, aucune
-    branche [M]/[S]/[P] activée). Ce modèle binaire à taux fixe est un
-    choix simplifié et raisonnable pour le POC, pas une reproduction
-    fidèle de l'algorithme DIYABC -- à revoir avant toute comparaison
-    statistique fine avec le reftableRF.bin de référence.
+    Validé empiriquement (20000 tirages sur un arbre test, proportions
+    observées vs attendues alignées à <1% -- voir notes/exploration.md).
     """
-    model = msprime.BinaryMutationModel()
+    nodes = [u for u in tree.nodes() if u != tree.root]
+    lengths = [tree.branch_length(u) for u in nodes]
+    total = sum(lengths)
+    target = rng.uniform(0, total)
+    cumulative = 0.0
+    for node, length in zip(nodes, lengths):
+        cumulative += length
+        if cumulative >= target:
+            return node
+    return nodes[-1]  # garde-fou contre un arrondi flottant en bord de plage
+
+
+def simulate_snp_genotypes(
+    tree_sequences: Iterator[msprime.TreeSequence],
+    seed: int,
+) -> Iterator[dict[str, list[int]]]:
+    """Pour chaque TreeSequence (un locus = un arbre indépendant), tire
+    une mutation UNIQUE selon l'algorithme de Hudson, et retourne les
+    génotypes (0=ancestral, 1=dérivé) REGROUPÉS PAR POPULATION -- forme
+    directement utilisable pour les formules q1/q2/HW/HB/FST1/ML1
+    (sumstat.cpp), qui travaillent toujours par population, jamais par
+    lignée individuelle isolée.
+
+    Remplace mutate_independent_loci (modèle à taux fixe), qui était
+    structurellement incorrect pour des SNP au sens DIYABC : la doc
+    utilisateur (section 2.4.3) précise que les loci SNP sont (par
+    construction) toujours polymorphes, avec exactement une mutation
+    dans tout l'arbre -- pas un processus de Poisson à taux variable,
+    qui pourrait produire des loci monomorphes ou multi-mutés.
+
+    Retourne un itérateur de dict {nom_population: [génotypes...]}, où
+    nom_population est le nom donné à add_population dans
+    demography_builder.py (ex: "pop1", "pop2"...). L'indice interne
+    msprime (0-based, dans l'ordre d'ajout des populations -- vérifié
+    empiriquement) est utilisé pour interroger
+    TreeSequence.samples(population=i), puis traduit vers ce nom.
+    """
     rng = random.Random(seed)
     for ts in tree_sequences:
-        locus_seed = rng.randrange(1, 2**31)
-        yield msprime.sim_mutations(
-            ts,
-            rate=mutation_rate,
-            model=model,
-            random_seed=locus_seed,
-        )
+        tree = ts.first()
+        mutated_node = _draw_single_mutation_node(tree, rng)
+        derived_samples = set(tree.samples(mutated_node))
+
+        genotypes_by_population = {}
+        for pop_index, population in enumerate(ts.tables.populations):
+            pop_name = population.metadata.get("name") if population.metadata else None
+            sample_ids = ts.samples(population=pop_index)
+            if len(sample_ids) == 0:
+                continue
+            genotypes_by_population[pop_name] = [
+                1 if s in derived_samples else 0 for s in sample_ids
+            ]
+        yield genotypes_by_population

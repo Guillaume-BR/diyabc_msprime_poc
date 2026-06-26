@@ -71,4 +71,10 @@ class OrderConstraint:
         if self.operator == "<=":
             return v1 <= v2
         raise ValueError(f"Opérateur de contrainte inconnu : {self.operator!r}")
+    
+@dataclass
+class LociDescription:
+    total_loci: int        # 5000
+    group: str              # "G1"
+    start_index: int        # 0 (déjà converti en 0-based, comme le C++ : prem = N - 1)
 
