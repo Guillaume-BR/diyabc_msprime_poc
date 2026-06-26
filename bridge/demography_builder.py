@@ -5,10 +5,6 @@ et d'un dict de valeurs numériques tirées (parameter_sampling.py).
 evaluate_expression() est l'équivalent Python de ParticleC::getvalue()
 (particuleC.cpp) : transforme une expression texte ("t2-d3", "t1", "0")
 en valeur numérique, en utilisant les valeurs déjà tirées des priors.
- 
-Limité pour l'instant aux événements nécessaires au scénario 1 de human :
-SampleEvent, MergeEvent, VarNeEvent. SplitEvent (admixture) sera ajouté
-en généralisant aux scénarios 2/3/5/6.
 """
 
 import re
@@ -83,11 +79,12 @@ def build_demography(scenario: Scenario, values: dict[str, float]) -> msprime.De
             )
             continue
         if isinstance(event, SplitEvent):
+            admixture_rate = evaluate_expression(event.admixture_rate, values)
             demography.add_admixture(
                 time=time,
                 derived=f"pop{event.derived_pop}",
                 ancestral=[f"pop{event.ancestral_pop1}", f"pop{event.ancestral_pop2}"],
-                proportions=[event.admixture_rate, 1 - event.admixture_rate],
+                proportions=[admixture_rate, 1 - admixture_rate],
             )
             continue
         
