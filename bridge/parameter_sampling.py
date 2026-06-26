@@ -33,7 +33,7 @@ def draw_parameter_values(
     priors: list[Prior],
     constraints: list[OrderConstraint],
     seed: int,
-    max_attempts: int = 100_000,
+    max_attempts: int = 1000,
 ) -> dict[str, float]:
     """Tire une valeur pour chaque prior, en retirant tant que les
     contraintes d'ordre ne sont pas toutes satisfaites.

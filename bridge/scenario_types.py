@@ -24,7 +24,7 @@ class Event:
     args: list[str]      # ["2", "1"] pour merge, ["3", "Nbn3"] pour varNe
 
 @dataclass
-class Scenario:                                    # ← elle est bien là, juste après
+class Scenario:                                    
     index: int
     weight: float
     initial_pop_size_exprs: list[str]
@@ -39,7 +39,7 @@ class Prior:
 
     name: str
     category: str        # "N" (taille), "T" (temps), "A" (taux admixture)
-    law: str              # "UN", "LU", "GA"
+    law: str              # "UN", "LU", "GA"...
     bounds: tuple[float, ...]
 
 @dataclass
