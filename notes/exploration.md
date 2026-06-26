@@ -28,6 +28,7 @@ matchent aucun mot-clé connu (sample/merge/varNe/split) et lèvent
 NotImplementedError au parsing -> le bloc est juste rejeté entièrement.
 A garder en tête si on ajoute un mot-clé qui pourrait matcher par erreur
 du texte de la section suivante.
+Correction apportée : on s'arrêt à : "historical parameters priors"
 
 ## scenario 4 de human/header.txt passe sans modification du code
 
@@ -54,7 +55,7 @@ de 30 lignes consécutives.
 
 ## Choix de ploidy=2 pour human
 
-Confirmé : human/header.txt déclare ses 5000 loci en <A> (autosomal),
+Confirmé : human/header.txt déclare ses 51250 loci en <A> (autosomal),
 cohérent avec une transmission diploïde classique. ploidy=2 (valeur par
 défaut de msprime.sim_ancestry) est donc le bon choix : chaque "sample
 individual" = 2 lignées génomiques, et l'échelle de temps de la
@@ -72,29 +73,6 @@ indépendants entre eux, ET toute la séquence de K réplicats est
 reproductible si on relance avec la même seed S. Pas besoin de générer
 et passer un tableau de graines à la main (contrairement à l'exemple de
 la doc orienté parallélisation multi-process).
-
-## Modèle de mutation SNP de human : non élucidé précisément, simplifié pour le POC
-
-Découverte importante : human/header.txt n'a AUCUNE section "group priors"
-(pas de MEANMU/MEANSNI/MEANP), contrairement à sequences-mut. Le format
-"5000 <A> G1 from 1" n'active aucune des branches [M]/[S]/[P] de
-header.cpp (qui testent ss[2] contre ces marqueurs -- ici ss[2]="G1",
-donc aucune branche ne matche). "from 1" est un texte libre/commentaire,
-absent de tout parseur C++ (vérifié par grep sur tout le dépôt).
-
-Conséquence : put_mutations() (particuleC.cpp) utiliserait mutrate =
-mut_rate + sni_rate pour ce type de locus (<5), mais ces valeurs ne sont
-jamais déclarées dans header.txt pour human -- donc soit des valeurs par
-défaut codées en dur existent ailleurs dans le C++ (non trouvées), soit
-human suit un algorithme de simulation SNP distinct du modèle de mutation
-à taux fixe (un article tiers, arxiv 2501.17107, mentionne un "algorithme
-de simulation SNP" spécifique à DIYABC-RF v1.0, sans en détailler le
-mécanisme).
-
-DÉCISION POC : reporté. On utilise un modèle de mutation msprime simplifié
-et raisonnable (taux fixe choisi à la main), sans prétendre reproduire
-l'algorithme exact de DIYABC pour les SNP. À creuser sérieusement avant
-toute comparaison statistique fine avec le reftableRF.bin de référence.
 
 ## Format condensé "loci description" pour fichiers SNP -- confirmé (header.cpp::readHeaderLoci, branche SNP)
 
@@ -117,3 +95,40 @@ IMPORTANT : le FICHIER .snp peut contenir bien plus de loci (51250 pour
 human) que ce qui est réellement simulé/comparé (5000 pour le scénario
 de header.txt) -- "loci description" est un FILTRE/SOUS-ÉCHANTILLONNAGE
 des colonnes du fichier de données, pas une description de tout le fichier.
+
+## Modèle de mutation SNP correct (doc DIYABC section 2.4.3) : algorithme de Hudson
+
+Confirmé par la doc utilisateur DIYABC : pour les SNP, "il est supposé
+qu'il y a eu une et une seule mutation dans l'arbre de coalescence" --
+PAS un processus de Poisson à taux variable. C'est l'algorithme "-s"
+de Hudson (2002). Notre précédente approche (msprime.sim_mutations à
+taux fixe, BinaryMutationModel) était donc structurellement incorrecte
+pour les SNP, pas seulement approximative.
+
+Implémentation validée empiriquement (20000 tirages, proportions
+observées vs attendues alignées à <1%) : pour chaque locus,
+1. tirer une branche de l'arbre, avec probabilité proportionnelle à sa
+   longueur (tree.branch_length(u) / tree.total_branch_length)
+2. tous les échantillons descendants de cette branche (tree.samples(u))
+   portent l'allèle dérivé (1), les autres l'allèle ancestral (0)
+
+Garantit par construction : exactement une mutation, donc le locus est
+TOUJOURS polymorphe (jamais besoin de filtrer les monomorphes a
+posteriori, contrairement à notre ancienne approche par taux de Poisson).
+
+## Filtre MAF (Minor Allele Frequency) -- pas nécessaire pour human, à prévoir pour d'autres datasets
+
+Doc DIYABC (section MAF) : <MAF=hudson> = algorithme de Hudson standard,
+SANS filtrage supplémentaire -- notre implémentation actuelle
+(simulate_snp_genotypes, une mutation par locus) est déjà correcte pour
+ce cas. Confirmé : human/human_snp_all22chr_maf5.snp déclare bien
+<MAF=hudson> en première ligne -- malgré le suffixe "maf5" dans le NOM
+du fichier (qui semble faire référence à un prétraitement déjà appliqué
+aux données OBSERVÉES réelles avant export, pas à la simulation).
+
+Pour MAF=N% (non rencontré sur human, mais prévu par la doc) : il
+faudrait calculer la MAF du locus simulé (fréquence de l'allèle le moins
+fréquent, toutes populations confondues) après chaque tirage Hudson, et
+RESIMULER (rejeter et retirer) si elle est sous le seuil -- jusqu'à
+obtenir num_loci loci valides. Pas implémenté : à ajouter si on traite
+un dataset avec MAF != hudson.

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from bridge.scenario_parser import parse_header_scenarios
-from bridge.scenario_types import MergeEvent, VarNeEvent, SampleEvent, OrderConstraint
+from bridge.scenario_types import MergeEvent, VarNeEvent, SampleEvent, SplitEvent, OrderConstraint
 from bridge.prior_parser import parse_priors
 from bridge.loci_parser import parse_loci_description
 from bridge.parameter_sampling import draw_parameter_values, ConstraintsNotSatisfiedError

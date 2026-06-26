@@ -7,6 +7,14 @@ class MergeEvent:
     derived_pop: int        # disparaît (le "b" de merge a b)
 
 @dataclass
+class SplitEvent:
+    time_expr: str
+    derived_pop: int # disparaît
+    ancestral_pop1: int #survit avec le taux d'admixture
+    ancestral_pop2: int #survit avec le taux 1 - admixture
+    admixture_rate: float
+
+@dataclass
 class VarNeEvent:
     time_expr: str
     pop: int

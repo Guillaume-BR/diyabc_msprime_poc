@@ -112,6 +112,16 @@ def _parse_event_line(line: str):
             new_size_expr=args[1],
         )
 
+    #if action == "split":
+    #    # ex: "t3 split 1 2 3 0.2" -> ancestral_pop1=1, ancestral_pop2=2, derived_pop=3, admixture_rate=0.2
+    #    return SplitEvent(
+    #        time_expr=time_expr,
+    #        derived_pop=int(args[0]),
+    #        ancestral_pop1=int(args[1]),
+    #        ancestral_pop2=int(args[2]),
+    #        admixture_rate=float(args[3]),
+    #    )
+
     raise NotImplementedError(
         f"Action '{action}' non gérée par ce parser (limité à sample/merge/varNe "
         f"pour le scénario 1 de human). Ligne : {line!r}"
