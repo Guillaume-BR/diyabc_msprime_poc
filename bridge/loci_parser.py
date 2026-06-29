@@ -64,3 +64,37 @@ def parse_loci_description(header_text: str) -> LociDescription:
         group=group,
         start_index=int(start_1based) - 1,  # conversion 1-based -> 0-based, comme prem = N-1 en C++
     )
+
+
+def rewrite_loci_count(header_text: str, new_total_loci: int) -> str:
+    """Retourne une copie de header_text où le nombre de loci déclaré dans
+    'loci description' est remplacé par new_total_loci -- nécessaire pour
+    tester avec un nombre de loci réduit sans avoir à maintenir un
+    header.txt séparé à la main.
+
+    Limité au même format condensé à un seul type que parse_loci_description
+    (lève NotImplementedError dans les mêmes cas).
+    """
+    lines = header_text.splitlines()
+
+    section_index = next(
+        (i for i, line in enumerate(lines) if _SECTION_HEADER_RE.match(line.strip())),
+        None,
+    )
+    if section_index is None:
+        raise ValueError("Section 'loci description' non trouvée dans header.txt")
+
+    content_index = section_index + 1
+    content_line = lines[content_index].strip()
+    match = _CONDENSED_SINGLE_TYPE_RE.match(content_line)
+    if not match:
+        raise NotImplementedError(
+            f"Format de ligne non géré par rewrite_loci_count : {content_line!r}"
+        )
+
+    _, group, start_1based = match.groups()
+    heritage_match = re.search(r"<[AHXYM]>", content_line)
+    heritage = heritage_match.group(0)
+
+    lines[content_index] = f"{new_total_loci} {heritage} {group} from {start_1based}"
+    return "\n".join(lines)

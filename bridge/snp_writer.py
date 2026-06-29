@@ -91,3 +91,4 @@ def write_snp_file(
             lines.append(" ".join(row))
 
     Path(output_path).write_text("\n".join(lines) + "\n")
+    print(f"Fichier .snp écrit dans {output_path} : {len(lines)-1} individus, {num_loci} loci.")

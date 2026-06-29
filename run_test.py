@@ -1,15 +1,13 @@
-from bridge.pipeline import run_poc_for_directory
-from bridge.snp_writer import write_snp_file
+from bridge.pipeline import compute_summary_statistics
 
-genotypes_per_locus, values = run_poc_for_directory(
-    "reference/human",
+summary_statistics, values = compute_summary_statistics(
+    reference_directory="reference/human",
     scenario_index=1,
     num_loci=10,
     seed=42,
+    general_binary_path="/home/bernardr/Documents/Github/diyabc/build/src-JMC-C++/general",
+    work_directory="./tmp/test_python_stats",
+    stats_filter="ALL",
 )
 
-write_snp_file(list(genotypes_per_locus), "./tmp/test_python_stats/human_snp_all22chr_maf5.snp")
-
 print("Fichier .snp écrit. Valeurs de paramètres tirées :")
-for name, value in values.items():
-    print(f"  {name}: {value:.2f}")

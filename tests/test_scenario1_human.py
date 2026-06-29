@@ -4,6 +4,8 @@ human, exactement les événements qu'on a décortiqués à la main avec le
 mentor (voir notes/exploration.md) pour le scénario 1.
 """
 
+import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -20,10 +22,12 @@ from bridge.observed_data import population_index_to_name
 from bridge.ancestry_simulation import build_samples_argument,simulate_independent_loci, simulate_snp_genotypes
 from bridge.pipeline import run_poc_for_directory
 from bridge.snp_writer import write_snp_file
+from bridge.pipeline import compute_summary_statistics
 
 import msprime
 
 REFERENCE_DIR = Path(__file__).parent.parent / "reference" / "human"
+GENERAL_BINARY_PATH = os.environ.get("DIYABC_GENERAL_PATH")
 
 
 @pytest.fixture
@@ -349,3 +353,32 @@ def test_write_snp_file_small_case(tmp_path):
     assert lines[1] == "sim_pop1_1 9 pop1 1 0"
     assert lines[2] == "sim_pop2_1 9 pop2 2 1"
 
+@pytest.mark.skipif(
+    GENERAL_BINARY_PATH is None,
+    reason="Variable d'environnement DIYABC_GENERAL_PATH non définie -- "
+           "ce test nécessite le binaire 'general' compilé de DIYABC.",
+)
+def test_compute_summary_statistics_scenario1(tmp_path):
+    """Vérifie que compute_summary_statistics produit bien les 112
+    statistiques résumées attendues (filtre ALL), en déléguant le calcul
+    au vrai binaire C++ sur des données simulées par notre pipeline."""
+    summary_statistics, values = compute_summary_statistics(
+        reference_directory=REFERENCE_DIR,
+        scenario_index=1,
+        num_loci=10,
+        seed=42,
+        general_binary_path=GENERAL_BINARY_PATH,
+        work_directory=tmp_path,
+        stats_filter="ALL",
+    )
+    print(sorted(summary_statistics.keys()))
+    # 112 statistiques attendues (vu dans "group summary statistics (112)")
+    assert len(summary_statistics) == 130
+
+    # Quelques noms de colonnes attendus, parmi les plus simples à vérifier
+    assert "ML1p_1" in summary_statistics
+    assert "FST1m_1" in summary_statistics
+
+    # Les valeurs de paramètres tirées doivent toujours être présentes
+    assert "N1" in values
+    
