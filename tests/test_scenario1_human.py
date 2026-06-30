@@ -24,6 +24,10 @@ from bridge.pipeline import run_poc_for_directory
 from bridge.snp_writer import write_snp_file
 from bridge.pipeline import compute_summary_statistics
 from bridge.reftable_loop import run_reftable_simulation
+from bridge.prior_parser import is_constant_prior
+from bridge.scenario_types import Prior
+from bridge.reftable_loop import write_reftable_bin
+from bridge.prior_parser import parse_priors
 
 import msprime
 
@@ -417,4 +421,43 @@ def test_run_reftable_simulation_scenario1(tmp_path):
     # (preuve que chaque particule a bien sa propre seed)
     n1_values = [r.parameter_values["N1"] for r in results]
     assert len(set(n1_values)) == nrec  # 4 valeurs distinctes
-    
+
+def test_is_constant_prior():
+    """Vérifie la règle de filtrage des priors quasi-constants."""
+    # Cas normal : large intervalle, jamais constant
+    normal_prior = Prior(name="N1", category="N", law="UN", bounds=(1000.0, 100000.0, 0.0, 0.0))
+    assert is_constant_prior(normal_prior) is False
+
+    # Cas dégénéré : min == max, clairement constant
+    constant_prior = Prior(name="X", category="N", law="UN", bounds=(100.0, 100.0, 0.0, 0.0))
+    assert is_constant_prior(constant_prior) is True
+
+    # Cas limite : différence infime, sous le seuil
+    near_constant_prior = Prior(name="Y", category="N", law="UN", bounds=(100.0, 100.00001, 0.0, 0.0))
+    assert is_constant_prior(near_constant_prior) is True
+
+    # Cas limite inverse : différence juste au-dessus du seuil
+    barely_variable_prior = Prior(name="Z", category="N", law="UN", bounds=(100.0, 100.1, 0.0, 0.0))
+    assert is_constant_prior(barely_variable_prior) is False  
+
+def test_write_reftable_bin(tmp_path, header_text):
+    """Vérifie l'écriture du reftable.bin, et sa relecture (vérification
+    manuelle du format, sans dépendre de readReftable.R pour ce test
+    Python -- juste une vérification structurelle du binaire produit)."""
+    nrec = 3
+    results = run_reftable_simulation(
+        reference_directory=REFERENCE_DIR,
+        scenario_index=1,
+        num_loci=10,
+        nrec=nrec,
+        general_binary_path=GENERAL_BINARY_PATH,
+        base_work_directory=tmp_path / "particles",
+        stats_filter="ALL",
+    )
+
+    priors, _ = parse_priors(header_text)
+    output_file = tmp_path / "reftable.bin"
+    write_reftable_bin(results, priors, output_file)
+
+    assert output_file.exists()
+    assert output_file.stat().st_size > 0

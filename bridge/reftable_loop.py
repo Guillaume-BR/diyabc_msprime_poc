@@ -14,8 +14,10 @@ processus concurrents sur les mêmes fichiers (.snp, statobsRF.txt...).
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+import struct
 
 from bridge.pipeline import compute_summary_statistics
+from bridge.prior_parser import is_constant_prior
 
 
 @dataclass
@@ -42,6 +44,12 @@ def _run_single_particle(
     La seed utilisée est dérivée de particle_index, garantissant un
     tirage distinct et reproductible par particule (même particle_index
     -> même résultat, peu importe l'ordre d'exécution des workers).
+
+    IMPORTANT : seed = particle_index + 1, jamais particle_index seul.
+    msprime.sim_ancestry rejette explicitement seed=0 (ValueError "seeds
+    must be greater than 0 and less than 2^32") -- vérifié empiriquement.
+    Donc particle_index=0 (le cas le plus probable, première particule)
+    utilise seed=1, pas seed=0.
     """
     work_directory = base_work_directory / f"particle_{particle_index}"
     work_directory.mkdir(parents=True, exist_ok=True)
@@ -114,3 +122,65 @@ def run_reftable_simulation(
             results_by_index[particle_index] = future.result()
 
     return [results_by_index[i] for i in range(nrec)]
+
+
+def write_reftable_bin(
+    results: list[ParticleResult],
+    priors: list,
+    output_path: str | Path,
+) -> None:
+    """Écrit un reftable.bin au format binaire DIYABC (vérifié contre
+    reftable.cpp, readReftable.R, et abcranger/readreftable.cpp -- voir
+    docs/synthese_diyabc_msprime.docx section 5).
+
+    Limité à un SEUL scénario actif (cohérent avec ce POC, qui ne traite
+    que le scénario 1 de human) : nscen=1, donc tous les résultats
+    doivent partager le même scenario_index -- vérifié, lève ValueError
+    sinon.
+
+    Filtre les paramètres quasi-constants (is_constant_prior) des
+    colonnes écrites -- comportement vérifié contre readReftable.R et
+    abcranger. L'ordre des colonnes de paramètres est fixé UNE FOIS,
+    d'après l'ordre de `priors` filtré, et appliqué identiquement à
+    toutes les lignes (cohérence indispensable au format).
+
+    Ne gère PAS les paramètres de mutation (absents de human) -- à
+    ajouter (toujours en dernière position, après les paramètres
+    démographiques -- voir readReftable.R) si un dataset avec
+    microsatellites/séquences est traité plus tard.
+    """
+    if not results:
+        raise ValueError("results est vide : au moins une particule est requise")
+
+    scenario_indices = {r.scenario_index for r in results}
+    if len(scenario_indices) != 1:
+        raise NotImplementedError(
+            f"write_reftable_bin ne gère qu'un seul scénario actif à la "
+            f"fois -- scénarios trouvés dans results : {scenario_indices}"
+        )
+    scenario_index = scenario_indices.pop()
+
+    kept_param_names = [p.name for p in priors if not is_constant_prior(p)]
+    stat_names = sorted(results[0].summary_statistics.keys())
+
+    nrec = len(results)
+    nscen = 1
+    nrecscen = [nrec]
+    nparam = [len(kept_param_names)]
+    nstat = len(stat_names)
+
+    with open(output_path, "wb") as f:
+        f.write(struct.pack("<i", nrec))
+        f.write(struct.pack("<i", nscen))
+        for n in nrecscen:
+            f.write(struct.pack("<i", n))
+        for n in nparam:
+            f.write(struct.pack("<i", n))
+        f.write(struct.pack("<i", nstat))
+
+        for result in results:
+            f.write(struct.pack("<i", scenario_index))
+            for name in kept_param_names:
+                f.write(struct.pack("<f", result.parameter_values[name]))
+            for name in stat_names:
+                f.write(struct.pack("<f", result.summary_statistics[name]))

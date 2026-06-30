@@ -71,3 +71,25 @@ def parse_priors(header_text: str) -> tuple[list[Prior], list[OrderConstraint]]:
     return priors, constraints
 
 
+def is_constant_prior(prior: Prior) -> bool:
+    """Détecte si un prior est quasi-dégénéré (min ≈ max), donc en
+    pratique une constante déguisée en prior -- DIYABC exclut ces
+    paramètres des colonnes du reftable.bin (vérifié indépendamment dans
+    readReftable.R et abcranger/readreftable.cpp, voir notes/
+    exploration.md et docs/synthese_diyabc_msprime.docx section 5.2).
+ 
+    Règle exacte (reproduite des deux sources ci-dessus) :
+        si maxi != 0.0 : constant si (maxi-mini)/maxi <= 0.000001
+        si maxi == 0.0 : jamais considéré comme constant par cette règle
+                         (évite une division par zéro -- comportement de
+                         readReftable.R, où le test est dans un bloc
+                         "if (maxi != 0.0)").
+ 
+    Ne gère que les priors avec au moins 2 bornes numériques (suffisant
+    pour UN/LU/GA, les seules lois rencontrées jusqu'ici -- bounds[0] et
+    bounds[1] sont systématiquement min et max dans header.txt).
+    """
+    mini, maxi = prior.bounds[0], prior.bounds[1]
+    if maxi == 0.0:
+        return False
+    return (maxi - mini) / maxi <= 0.000001
