@@ -19,9 +19,7 @@ from bridge.scenario_types import LociDescription
 _SECTION_HEADER_RE = re.compile(r"^loci description\s*\((\d+)\)\s*$")
 
 # "5000 <A> G1 from 1" -> total_loci=5000, heritage="<A>", group="G1", start=1
-_CONDENSED_SINGLE_TYPE_RE = re.compile(
-    r"^(\d+)\s+<[AHXYM]>\s+(\S+)\s+from\s+(\d+)\s*$"
-)
+_CONDENSED_SINGLE_TYPE_RE = re.compile(r"^(\d+)\s+<[AHXYM]>\s+(\S+)\s+from\s+(\d+)\s*$")
 
 
 def parse_loci_description(header_text: str) -> LociDescription:
@@ -62,7 +60,8 @@ def parse_loci_description(header_text: str) -> LociDescription:
     return LociDescription(
         total_loci=int(total_loci),
         group=group,
-        start_index=int(start_1based) - 1,  # conversion 1-based -> 0-based, comme prem = N-1 en C++
+        start_index=int(start_1based)
+        - 1,  # conversion 1-based -> 0-based, comme prem = N-1 en C++
     )
 
 

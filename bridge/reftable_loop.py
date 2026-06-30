@@ -24,6 +24,7 @@ from bridge.demography_builder import get_parameter_names_used_by_scenario
 @dataclass
 class ParticleResult:
     """Le résultat d'une particule : une future ligne du reftable.bin."""
+
     particle_index: int
     scenario_index: int
     parameter_values: dict[str, float]
@@ -168,7 +169,8 @@ def write_reftable_bin(
 
     used_param_names = get_parameter_names_used_by_scenario(scenario)
     kept_param_names = [
-        p.name for p in priors
+        p.name
+        for p in priors
         if not is_constant_prior(p) and p.name in used_param_names
     ]
     stat_names = sorted(results[0].summary_statistics.keys())

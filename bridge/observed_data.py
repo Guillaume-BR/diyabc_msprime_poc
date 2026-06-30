@@ -44,7 +44,11 @@ def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
     lines = path.read_text().splitlines()
 
     header_index = next(
-        (i for i in range(min(2, len(lines))) if lines[i].split()[:3] == ["IND", "SEX", "POP"]),
+        (
+            i
+            for i in range(min(2, len(lines)))
+            if lines[i].split()[:3] == ["IND", "SEX", "POP"]
+        ),
         None,
     )
     if header_index is None:
@@ -56,7 +60,7 @@ def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
     pop_index = lines[header_index].split().index("POP")
 
     counts = Counter()
-    for line in lines[header_index + 1:]:
+    for line in lines[header_index + 1 :]:
         fields = line.split()
         if not fields:
             continue

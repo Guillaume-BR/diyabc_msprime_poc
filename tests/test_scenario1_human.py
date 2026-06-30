@@ -18,7 +18,11 @@ from bridge.demography_builder import evaluate_expression, build_demography
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.observed_data import count_samples_per_population
 from bridge.observed_data import population_index_to_name
-from bridge.ancestry_simulation import build_samples_argument,simulate_independent_loci, simulate_snp_genotypes
+from bridge.ancestry_simulation import (
+    build_samples_argument,
+    simulate_independent_loci,
+    simulate_snp_genotypes,
+)
 from bridge.pipeline import run_poc_for_directory
 from bridge.snp_writer import write_snp_file
 from bridge.pipeline import compute_summary_statistics
@@ -26,7 +30,10 @@ from bridge.reftable_loop import run_reftable_simulation
 from bridge.prior_parser import is_constant_prior
 from bridge.scenario_types import Prior
 from bridge.reftable_loop import write_reftable_bin
-from bridge.demography_builder import get_parameter_names_used_by_scenario, extract_referenced_names
+from bridge.demography_builder import (
+    get_parameter_names_used_by_scenario,
+    extract_referenced_names,
+)
 
 import msprime
 
@@ -43,13 +50,13 @@ def test_unimplemented_scenarios_are_skipped_with_warning(header_text):
     """Les scénarios 2,3,5,6 utilisent 'split' (pas encore implémenté) :
     ils doivent être ignorés avec un avertissement, pas faire planter le
     parsing des autres scénarios."""
-    #with pytest.warns(UserWarning, match="split"):
+    # with pytest.warns(UserWarning, match="split"):
     scenarios = parse_header_scenarios(header_text)
 
     # Scénarios gérables aujourd'hui : 1 (merge/varNe) et 4 (idem,
     # numérotation t11..t44). Les 4 autres utilisent split -> ignorés.
     found_indices = {s.index for s in scenarios}
-    assert found_indices == {1,2,3,4,5,6}
+    assert found_indices == {1, 2, 3, 4, 5, 6}
 
 
 def test_scenario1_metadata(header_text):
@@ -81,9 +88,10 @@ def test_scenario1_events(header_text):
 
     assert scenario1.events == expected
 
+
 def test_scenario4_events(header_text):
     scenarios = parse_header_scenarios(header_text)
-    scenario4 = next(s for s in scenarios if s.index==4)
+    scenario4 = next(s for s in scenarios if s.index == 4)
 
     expected = [
         SampleEvent(time_expr="0", pop=1),
@@ -120,6 +128,7 @@ def test_priors_and_constraints(header_text):
     assert OrderConstraint(param1="t44", operator=">", param2="t33") in constraints
     assert OrderConstraint(param1="t44", operator=">", param2="t22") in constraints
 
+
 def test_draw_parameter_values(header_text):
     """Vérifie que draw_parameter_values tire bien une valeur pour chaque
     prior, et que le tirage retourné respecte toutes les contraintes
@@ -136,6 +145,7 @@ def test_draw_parameter_values(header_text):
     for constraint in constraints:
         assert constraint.is_satisfied(values)
 
+
 def test_draw_parameter_values_reproducible(header_text):
     """Même graine -> même tirage (déterminisme attendu pour la
     reproductibilité scientifique)."""
@@ -145,6 +155,7 @@ def test_draw_parameter_values_reproducible(header_text):
     values2 = draw_parameter_values(priors, constraints, seed=123)
 
     assert values1 == values2
+
 
 def test_evaluate_expression():
     values = {"t1": 12.3, "t2": 4881.0, "d3": 35.0}
@@ -156,6 +167,7 @@ def test_evaluate_expression():
 
     with pytest.raises(ValueError):
         evaluate_expression("inconnu", values)
+
 
 def test_build_demography_scenario1(header_text):
     """Vérifie que build_demography produit la bonne structure
@@ -182,11 +194,22 @@ def test_build_demography_scenario1(header_text):
     # Valeurs choisies à la main, cohérentes avec les contraintes
     # (t4 > t3 > t2 > t2-d3, t2-d4 ; t3 > t3-d34)
     values = {
-        "N1": 50000, "N2": 50000, "N3": 50000, "N4": 50000,
-        "t1": 10, "t2": 5000, "d3": 30, "Nbn3": 200,
-        "d4": 20, "Nbn4": 300, "N34": 60000,
-        "t3": 8000, "d34": 25, "Nbn34": 250,
-        "t4": 9000, "Na": 40000,
+        "N1": 50000,
+        "N2": 50000,
+        "N3": 50000,
+        "N4": 50000,
+        "t1": 10,
+        "t2": 5000,
+        "d3": 30,
+        "Nbn3": 200,
+        "d4": 20,
+        "Nbn4": 300,
+        "N34": 60000,
+        "t3": 8000,
+        "d34": 25,
+        "Nbn34": 250,
+        "t4": 9000,
+        "Na": 40000,
     }
 
     demography = build_demography(scenario1, values)
@@ -196,13 +219,26 @@ def test_build_demography_scenario1(header_text):
     assert {p.name for p in demography.populations} == {"pop1", "pop2", "pop3", "pop4"}
 
     # Les événements de fusion sont bien présents, avec les bons temps
-    splits = [e for e in demography.events if isinstance(e, __import__("msprime").demography.PopulationSplit)]
+    splits = [
+        e
+        for e in demography.events
+        if isinstance(e, __import__("msprime").demography.PopulationSplit)
+    ]
     assert len(splits) == 3
 
     split_by_time = {s.time: s for s in splits}
-    assert split_by_time[10].derived == ["pop1"] and split_by_time[10].ancestral == "pop2"
-    assert split_by_time[5000].derived == ["pop4"] and split_by_time[5000].ancestral == "pop3"
-    assert split_by_time[8000].derived == ["pop3"] and split_by_time[8000].ancestral == "pop2"
+    assert (
+        split_by_time[10].derived == ["pop1"] and split_by_time[10].ancestral == "pop2"
+    )
+    assert (
+        split_by_time[5000].derived == ["pop4"]
+        and split_by_time[5000].ancestral == "pop3"
+    )
+    assert (
+        split_by_time[8000].derived == ["pop3"]
+        and split_by_time[8000].ancestral == "pop2"
+    )
+
 
 def test_parse_loci_description(header_text):
     """Vérifie le parsing de la section 'loci description' de human,
@@ -213,18 +249,23 @@ def test_parse_loci_description(header_text):
     assert description.group == "G1"
     assert description.start_index == 0  # "from 1" en 1-based -> 0 en 0-based
 
+
 def test_pipeline_scenario1(header_text):
     """Vérifie que le pipeline complet (header.txt -> Demography) fonctionne
     de bout en bout sur le scénario 1, et que la démographie produite a la
     structure attendue (4 populations, 3 fusions)."""
-    
+
     demography, values = build_random_demography_for_scenario_index(
         header_text, scenario_index=1, seed=42
     )
 
     assert len(demography.populations) == 4
 
-    splits = [e for e in demography.events if isinstance(e, msprime.demography.PopulationSplit)]
+    splits = [
+        e
+        for e in demography.events
+        if isinstance(e, msprime.demography.PopulationSplit)
+    ]
     assert len(splits) == 3
 
     # Les valeurs tirées doivent inclure tous les paramètres du header
@@ -232,8 +273,8 @@ def test_pipeline_scenario1(header_text):
     assert "t1" in values
 
 
-
 OBSERVED_SNP_FILE = REFERENCE_DIR / "human_snp_all22chr_maf5.snp"
+
 
 def test_count_samples_per_population():
     """Vérifie que le comptage retrouve bien les 4 populations à 30
@@ -251,11 +292,12 @@ def test_population_index_to_name():
 
     assert mapping == {1: "ASW", 2: "YRI", 3: "CHB", 4: "GBR"}
 
+
 def test_simulate_independent_loci_scenario1(header_text):
     """Vérifie que build_samples_argument construit bien le dict attendu
     par msprime.sim_ancestry, avec les bons noms de populations et le bon
     nombre d'individus par population."""
-    
+
     demography, _ = build_random_demography_for_scenario_index(
         header_text, scenario_index=1, seed=42
     )
@@ -265,9 +307,9 @@ def test_simulate_independent_loci_scenario1(header_text):
     assert samples == {"pop1": 30, "pop2": 30, "pop3": 30, "pop4": 30}
 
     num_loci = 10  # petit nombre pour un test rapide, pas les 51250 réels
-    tree_sequences = list(simulate_independent_loci(
-        demography, samples, num_loci=num_loci, seed=123
-    ))
+    tree_sequences = list(
+        simulate_independent_loci(demography, samples, num_loci=num_loci, seed=123)
+    )
 
     # On doit obtenir exactement num_loci arbres indépendants
     assert len(tree_sequences) == num_loci
@@ -277,7 +319,7 @@ def test_simulate_independent_loci_scenario1(header_text):
     for ts in tree_sequences:
         assert ts.num_samples == 30 * 4 * 2
 
-    
+
 def test_simulate_snp_genotypes_scenario1(header_text):
     """Vérifie que chaque locus simulé est polymorphe (au moins un 0 et
     un 1 parmi les génotypes), garantissant la propriété centrale de
@@ -297,6 +339,7 @@ def test_simulate_snp_genotypes_scenario1(header_text):
     for locus_genotypes in genotypes_per_locus:
         all_genotypes = [g for genos in locus_genotypes.values() for g in genos]
         assert set(all_genotypes) == {0, 1}, f"Locus non polymorphe : {locus_genotypes}"
+
 
 def test_simulate_snp_genotypes_grouped_by_population(header_text):
     """Vérifie que les génotypes sont bien regroupés par nom de
@@ -323,6 +366,7 @@ def test_simulate_snp_genotypes_grouped_by_population(header_text):
         all_genotypes = [g for genos in locus_genotypes.values() for g in genos]
         assert set(all_genotypes) == {0, 1}
 
+
 def test_run_poc_for_directory():
     """Vérifie le point d'entrée de haut niveau : à partir d'un simple
     chemin de dossier (comme le -p ./ de DIYABC), tout le pipeline doit
@@ -339,12 +383,19 @@ def test_run_poc_for_directory():
     assert len(mutated_list) == 15
     assert "N1" in values
 
+
 def test_write_snp_file_small_case(tmp_path):
     """Vérifie l'écriture du fichier .snp sur un cas minimal : 2 loci,
     2 populations, 2 lignées (1 individu) chacune."""
     genotypes_per_locus = [
-        {"pop1": [0, 1], "pop2": [1, 1]},   # locus 0 : pop1 hétérozygote (1), pop2 homozygote dérivé (2)
-        {"pop1": [0, 0], "pop2": [0, 1]},   # locus 1 : pop1 homozygote ancestral (0), pop2 hétérozygote (1)
+        {
+            "pop1": [0, 1],
+            "pop2": [1, 1],
+        },  # locus 0 : pop1 hétérozygote (1), pop2 homozygote dérivé (2)
+        {
+            "pop1": [0, 0],
+            "pop2": [0, 1],
+        },  # locus 1 : pop1 homozygote ancestral (0), pop2 hétérozygote (1)
     ]
 
     output_file = tmp_path / "test.snp"
@@ -357,10 +408,11 @@ def test_write_snp_file_small_case(tmp_path):
     assert lines[1] == "sim_pop1_1 9 pop1 1 0"
     assert lines[2] == "sim_pop2_1 9 pop2 2 1"
 
+
 @pytest.mark.skipif(
     GENERAL_BINARY_PATH is None,
     reason="Variable d'environnement DIYABC_GENERAL_PATH non définie -- "
-           "ce test nécessite le binaire 'general' compilé de DIYABC.",
+    "ce test nécessite le binaire 'general' compilé de DIYABC.",
 )
 def test_compute_summary_statistics_scenario1(tmp_path):
     """Vérifie que compute_summary_statistics produit bien les 112
@@ -421,23 +473,33 @@ def test_run_reftable_simulation_scenario1(tmp_path):
     n1_values = [r.parameter_values["N1"] for r in results]
     assert len(set(n1_values)) == nrec  # 4 valeurs distinctes
 
+
 def test_is_constant_prior():
     """Vérifie la règle de filtrage des priors quasi-constants."""
     # Cas normal : large intervalle, jamais constant
-    normal_prior = Prior(name="N1", category="N", law="UN", bounds=(1000.0, 100000.0, 0.0, 0.0))
+    normal_prior = Prior(
+        name="N1", category="N", law="UN", bounds=(1000.0, 100000.0, 0.0, 0.0)
+    )
     assert is_constant_prior(normal_prior) is False
 
     # Cas dégénéré : min == max, clairement constant
-    constant_prior = Prior(name="X", category="N", law="UN", bounds=(100.0, 100.0, 0.0, 0.0))
+    constant_prior = Prior(
+        name="X", category="N", law="UN", bounds=(100.0, 100.0, 0.0, 0.0)
+    )
     assert is_constant_prior(constant_prior) is True
 
     # Cas limite : différence infime, sous le seuil
-    near_constant_prior = Prior(name="Y", category="N", law="UN", bounds=(100.0, 100.00001, 0.0, 0.0))
+    near_constant_prior = Prior(
+        name="Y", category="N", law="UN", bounds=(100.0, 100.00001, 0.0, 0.0)
+    )
     assert is_constant_prior(near_constant_prior) is True
 
     # Cas limite inverse : différence juste au-dessus du seuil
-    barely_variable_prior = Prior(name="Z", category="N", law="UN", bounds=(100.0, 100.1, 0.0, 0.0))
-    assert is_constant_prior(barely_variable_prior) is False  
+    barely_variable_prior = Prior(
+        name="Z", category="N", law="UN", bounds=(100.0, 100.1, 0.0, 0.0)
+    )
+    assert is_constant_prior(barely_variable_prior) is False
+
 
 def test_write_reftable_bin(tmp_path, header_text):
     """Vérifie l'écriture du reftable.bin, et sa relecture (vérification
@@ -463,6 +525,7 @@ def test_write_reftable_bin(tmp_path, header_text):
     assert output_file.exists()
     assert output_file.stat().st_size > 0
 
+
 def test_extract_referenced_names():
     """Vérifie l'extraction de noms sur des cas simples."""
     assert extract_referenced_names("t1") == {"t1"}
@@ -481,9 +544,22 @@ def test_get_parameter_names_used_by_scenario1(header_text):
     used_names = get_parameter_names_used_by_scenario(scenario1)
 
     expected = {
-        "N1", "N2", "N3", "N4",
-        "t1", "t2", "d3", "Nbn3", "d4", "Nbn4", "N34",
-        "t3", "d34", "Nbn34", "t4", "Na",
+        "N1",
+        "N2",
+        "N3",
+        "N4",
+        "t1",
+        "t2",
+        "d3",
+        "Nbn3",
+        "d4",
+        "Nbn4",
+        "N34",
+        "t3",
+        "d34",
+        "Nbn34",
+        "t4",
+        "Na",
     }
     assert used_names == expected
     assert len(used_names) == 16

@@ -48,14 +48,16 @@ def evaluate_expression(expr: str, values: dict[str, float]) -> float:
         )
 
 
-def build_demography(scenario: Scenario, values: dict[str, float]) -> msprime.Demography:
+def build_demography(
+    scenario: Scenario, values: dict[str, float]
+) -> msprime.Demography:
     """Construit la Demography msprime correspondant au scenario, avec les
     valeurs numériques déjà tirées dans `values`.
 
     Les populations sont nommées "pop1", "pop2", ... d'après leur indice
     dans header.txt (1-indexed, comme dans le fichier).
     """
-    #n_pops = len(scenario.initial_pop_size_exprs)
+    # n_pops = len(scenario.initial_pop_size_exprs)
     demography = msprime.Demography()
 
     for i, size_expr in enumerate(scenario.initial_pop_size_exprs, start=1):
@@ -91,7 +93,9 @@ def build_demography(scenario: Scenario, values: dict[str, float]) -> msprime.De
             )
             continue
 
-        raise NotImplementedError(f"Type d'événement non géré par build_demography : {event!r}")
+        raise NotImplementedError(
+            f"Type d'événement non géré par build_demography : {event!r}"
+        )
 
     demography.sort_events()
     return demography

@@ -22,9 +22,7 @@ from bridge.scenario_types import (
 )
 
 # Capture : "scenario 1 [0.16667] (16)" -> index=1, weight=0.16667, nlines=16
-_SCENARIO_HEADER_RE = re.compile(
-    r"^scenario\s+(\d+)\s+\[([\d.]+)\]\s+\((\d+)\)\s*$"
-)
+_SCENARIO_HEADER_RE = re.compile(r"^scenario\s+(\d+)\s+\[([\d.]+)\]\s+\((\d+)\)\s*$")
 
 
 def split_scenario_blocks(header_text: str) -> list[str]:
@@ -36,22 +34,29 @@ def split_scenario_blocks(header_text: str) -> list[str]:
 
     # Repère les lignes d'index où démarre chaque scénario
     start_indices = [
-        i for i, line in enumerate(lines)
-        if _SCENARIO_HEADER_RE.match(line.strip())
+        i for i, line in enumerate(lines) if _SCENARIO_HEADER_RE.match(line.strip())
     ]
     if not start_indices:
-        raise ValueError("Aucun bloc 'scenario N [...] (...)' trouvé dans le texte fourni")
+        raise ValueError(
+            "Aucun bloc 'scenario N [...] (...)' trouvé dans le texte fourni"
+        )
 
     # Borne de fin pour le tout dernier scénario : la section des priors,
     # si elle est présente, sinon la fin du fichier.
     priors_section_index = next(
-        (i for i, line in enumerate(lines) if line.strip().startswith("historical parameters priors")),
+        (
+            i
+            for i, line in enumerate(lines)
+            if line.strip().startswith("historical parameters priors")
+        ),
         len(lines),
     )
 
     blocks = []
     for k, start in enumerate(start_indices):
-        end = start_indices[k + 1] if k + 1 < len(start_indices) else priors_section_index
+        end = (
+            start_indices[k + 1] if k + 1 < len(start_indices) else priors_section_index
+        )
         block = "\n".join(lines[start:end]).strip()
         blocks.append(block)
     return blocks
@@ -64,7 +69,9 @@ def parse_scenario_block(block_text: str) -> Scenario:
 
     header_match = _SCENARIO_HEADER_RE.match(lines[0])
     if not header_match:
-        raise ValueError(f"Première ligne inattendue, pas un en-tête de scénario : {lines[0]!r}")
+        raise ValueError(
+            f"Première ligne inattendue, pas un en-tête de scénario : {lines[0]!r}"
+        )
     index = int(header_match.group(1))
     weight = float(header_match.group(2))
 
@@ -85,7 +92,7 @@ def parse_scenario_block(block_text: str) -> Scenario:
 
 def _parse_event_line(line: str):
     """Transforme une ligne d'événement, ex: 't1 merge 2 1', en
-    SampleEvent / MergeEvent / VarNeEvent selon le mot-clé rencontré.
+    SampleEvent / MergeEventn_pops / VarNeEvent selon le mot-clé rencontré.
 
     Vocabulaire de référence : src-JMC-C++/history.cpp (ScenarioC::read_events).
     """

@@ -38,8 +38,7 @@ def build_samples_argument(
     counts_by_name = count_samples_per_population(snp_file_path)
 
     return {
-        f"pop{index}": counts_by_name[name]
-        for index, name in index_to_name.items()
+        f"pop{index}": counts_by_name[name] for index, name in index_to_name.items()
     }
 
 
