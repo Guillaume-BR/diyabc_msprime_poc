@@ -20,7 +20,6 @@ from bridge.prior_parser import parse_priors
 from bridge.parameter_sampling import draw_parameter_values
 from bridge.demography_builder import build_demography
 from bridge.scenario_types import Scenario
-from bridge.observed_data import count_samples_per_population, population_index_to_name
 from bridge.ancestry_simulation import (
     build_samples_argument,
     simulate_independent_loci,

@@ -60,7 +60,7 @@ def split_scenario_blocks(header_text: str) -> list[str]:
 def parse_scenario_block(block_text: str) -> Scenario:
     """Transforme un bloc brut (en commençant par la ligne 'scenario N [...]')
     en objet Scenario rempli."""
-    lines = [l.strip() for l in block_text.splitlines() if l.strip()]
+    lines = [line.strip() for line in block_text.splitlines() if line.strip()]
 
     header_match = _SCENARIO_HEADER_RE.match(lines[0])
     if not header_match:

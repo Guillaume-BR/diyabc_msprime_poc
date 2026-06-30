@@ -5,16 +5,15 @@ mentor (voir notes/exploration.md) pour le scénario 1.
 """
 
 import os
-import shutil
 from pathlib import Path
 
 import pytest
 
 from bridge.scenario_parser import parse_header_scenarios
-from bridge.scenario_types import MergeEvent, VarNeEvent, SampleEvent, SplitEvent, OrderConstraint
+from bridge.scenario_types import MergeEvent, VarNeEvent, SampleEvent, OrderConstraint
 from bridge.prior_parser import parse_priors
 from bridge.loci_parser import parse_loci_description
-from bridge.parameter_sampling import draw_parameter_values, ConstraintsNotSatisfiedError
+from bridge.parameter_sampling import draw_parameter_values
 from bridge.demography_builder import evaluate_expression, build_demography
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.observed_data import count_samples_per_population
@@ -27,7 +26,6 @@ from bridge.reftable_loop import run_reftable_simulation
 from bridge.prior_parser import is_constant_prior
 from bridge.scenario_types import Prior
 from bridge.reftable_loop import write_reftable_bin
-from bridge.prior_parser import parse_priors
 from bridge.demography_builder import get_parameter_names_used_by_scenario, extract_referenced_names
 
 import msprime

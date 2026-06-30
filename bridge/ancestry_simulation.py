@@ -20,7 +20,6 @@ from collections.abc import Iterator
 import random
 
 import msprime
-import tskit
 
 from bridge.observed_data import population_index_to_name, count_samples_per_population
 

@@ -1,5 +1,4 @@
 import re
-import warnings
 
 from bridge.scenario_types import Prior, OrderConstraint
 
