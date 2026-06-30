@@ -23,6 +23,7 @@ from bridge.ancestry_simulation import build_samples_argument,simulate_independe
 from bridge.pipeline import run_poc_for_directory
 from bridge.snp_writer import write_snp_file
 from bridge.pipeline import compute_summary_statistics
+from bridge.reftable_loop import run_reftable_simulation
 
 import msprime
 
@@ -381,4 +382,39 @@ def test_compute_summary_statistics_scenario1(tmp_path):
 
     # Les valeurs de paramètres tirées doivent toujours être présentes
     assert "N1" in values
+
+
+@pytest.mark.skipif(
+    GENERAL_BINARY_PATH is None,
+    reason="Variable d'environnement DIYABC_GENERAL_PATH non définie.",
+)
+def test_run_reftable_simulation_scenario1(tmp_path):
+    """Vérifie que run_reftable_simulation produit bien nrec particules
+    distinctes (tirages de paramètres différents), chacune avec ses 130
+    statistiques résumées calculées."""
+    nrec = 4
+    results = run_reftable_simulation(
+        reference_directory=REFERENCE_DIR,
+        scenario_index=1,
+        num_loci=10,
+        nrec=nrec,
+        general_binary_path=GENERAL_BINARY_PATH,
+        base_work_directory=tmp_path,
+        stats_filter="ALL",
+    )
+
+    assert len(results) == nrec
+
+    # Les résultats doivent être dans l'ordre des indices de particule
+    assert [r.particle_index for r in results] == list(range(nrec))
+
+    # Chaque particule doit avoir ses 130 stats et tous les paramètres
+    for result in results:
+        assert len(result.summary_statistics) == 130
+        assert "N1" in result.parameter_values
+
+    # Les tirages de paramètres doivent être DIFFÉRENTS entre particules
+    # (preuve que chaque particule a bien sa propre seed)
+    n1_values = [r.parameter_values["N1"] for r in results]
+    assert len(set(n1_values)) == nrec  # 4 valeurs distinctes
     

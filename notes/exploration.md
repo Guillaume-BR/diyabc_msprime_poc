@@ -105,7 +105,7 @@ de Hudson (2002). Notre précédente approche (msprime.sim_mutations à
 taux fixe, BinaryMutationModel) était donc structurellement incorrecte
 pour les SNP, pas seulement approximative.
 
-Implémentation validée empiriquement (20000 tirages, proportions
+Implémentation validée empiriqfloat(uement (20000 tirages, proportions
 observées vs attendues alignées à <1%) : pour chaque locus,
 1. tirer une branche de l'arbre, avec probabilité proportionnelle à sa
    longueur (tree.branch_length(u) / tree.total_branch_length)
@@ -132,3 +132,76 @@ fréquent, toutes populations confondues) après chaque tirage Hudson, et
 RESIMULER (rejeter et retirer) si elle est sous le seuil -- jusqu'à
 obtenir num_loci loci valides. Pas implémenté : à ajouter si on traite
 un dataset avec MAF != hudson.
+
+## Colonne SEX du fichier .snp -- valeur arbitraire acceptée sans élucidation complète
+
+Décision pragmatique : on écrit "9" (valeur observée dans human réel)
+pour tous les individus simulés, sans avoir confirmé dans le C++ que
+cette colonne n'est jamais lue pour des loci <A> (autosomaux). Justifié
+par : (1) aucune des 6 catégories de stats SNP listées dans la doc
+DIYABC (ML, HW/HB, FST, F3/F4, Nei, AML) ne mentionne le sexe comme
+paramètre ; (2) readheaderdata (data.cpp) ne semble utiliser SEX que
+pour la DÉTECTION du format de fichier, jamais comme donnée individuelle
+exploitée -- vérification incomplète, fonction de lecture ligne-par-ligne
+non localisée avec certitude. À revoir si un résultat statistique
+incohérent apparaît plus tard.
+
+## Validation empirique de l'architecture "déléguer au C++" -- SUCCÈS
+
+Test manuel réussi : header.txt modifié (5000->10 loci) + .snp généré
+depuis nos génotypes simulés msprime + RNG_state_0000.bin, dans un même
+dossier, lancé avec le vrai binaire `general -p ./ -R "FST1;ML1" -r 1
+-g 50 -m -t 1`. statobsRF.txt produit des valeurs ML1p_1..4 cohérentes
+et DIFFÉRENTES de celles obtenues sur les vraies données humaines --
+preuve que le calcul tourne bien sur NOS données simulées.
+
+Confirme : ML1p peut être < 1 même avec un locus garanti polymorphe
+GLOBALEMENT par l'algorithme de Hudson -- le polymorphisme global
+n'implique pas le polymorphisme PAR POPULATION (la mutation peut être
+confinée à une seule population selon la branche tirée).
+
+Prochaine étape : automatiser ce processus manuel (appel subprocess à
+`general`, parsing de statobsRF.txt) dans bridge/, plutôt que des
+scripts/chemins ad hoc.
+
+## compute_summary_statistics validé empiriquement sur les 112 statistiques
+
+Premier appel complet réussi avec stats_filter="ALL" : les 112 colonnes
+attendues (ML1/ML2/ML3, HW, HB, FST1-4, NEI, AML, F3, F4) sont produites
+par le vrai binaire C++, sur des données simulées par notre pipeline.
+
+Note : des valeurs légèrement négatives apparaissent (ex: FST1m_3=-0.22)
+-- NORMAL pour un estimateur de Fst avec peu de loci (variance
+d'échantillonnage), contrairement au -1.19 aberrant obtenu lors de notre
+tentative de réimplémentation Python (qui était un vrai bug de formule,
+pas du bruit statistique légitime).
+
+## "112" dans header.txt != nombre réel de stats produites par general -R "ALL"
+
+header.txt déclare "group summary statistics (112)" avec un vocabulaire
+ancien (HP0/HM1/HV1/HMO/FP0...), retrouvé en tant que TABLEAU COMMENTÉ
+(stat_type0, désactivé) dans general.cpp -- vestige d'une version
+antérieure du format. Le binaire general actuel, avec -R "ALL", produit
+en réalité 130 statistiques avec le vocabulaire moderne (ML1-3, HW, HB,
+FST1-4, NEI, AML, F3, F4) -- confirmé empiriquement (compute_summary_
+statistics, test pytest). Ne jamais se fier au nombre annoncé dans
+header.txt pour ce champ -- toujours vérifier empiriquement contre la
+sortie réelle de statobsRF.txt.
+
+## Détournement architectural : .snp intermédiaire pour calculer les stats sur données SIMULÉES
+
+IMPORTANT, à ne pas oublier : dans le vrai DIYABC, calstatobs() (header.cpp)
+est conçu pour calculer les stats sur les VRAIES données OBSERVÉES,
+lues UNE SEULE FOIS depuis un fichier .snp sur disque. Les stats sur
+données SIMULÉES sont normalement calculées directement en mémoire
+(ParticleC, sans jamais réécrire sur disque), des milliers de fois.
+
+Notre pipeline détourne ce mécanisme : on écrit nos génotypes SIMULÉS
+dans un faux fichier .snp, pour réutiliser calstatobs() sans toucher au
+C++. Ça fonctionne (validé empiriquement), mais introduit un coût I/O
+(écriture + relecture disque) à CHAQUE particule -- absent du vrai
+DIYABC. Acceptable pour ce POC (objectif : prouver la faisabilité),
+mais à corriger avant toute mise en production réelle (nécessiterait
+soit une vraie modification du C++ pour accepter des données simulées
+en mémoire depuis Python, soit reproduire intégralement les formules
+en C++/Python sans repasser par le format .snp).

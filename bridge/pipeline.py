@@ -123,8 +123,7 @@ def compute_summary_statistics(
     """Calcule les statistiques résumées sur des données SIMULÉES par
     notre pipeline, en délégant le calcul au binaire C++ `general`
     existant (HeaderC::calstatobs) -- plutôt que de réimplémenter
-    FST1/ML1/F3/F4/NEI/AML en Python (décision prise après une tentative
-    ratée de réimplémentation de FST1, voir notes/exploration.md).
+    FST1/ML1/F3/F4/NEI/AML en Python.
 
     Étapes :
     1. Simule num_loci génotypes SNP sous un tirage de paramètres pour
@@ -164,6 +163,7 @@ def compute_summary_statistics(
     rng_state_source = reference_directory / "RNG_state_0000.bin"
     if rng_state_source.exists():
         shutil.copy(rng_state_source, work_directory / "RNG_state_0000.bin")
+        print(f"Copié {rng_state_source} -> {work_directory / 'RNG_state_0000.bin'}")
 
     subprocess.run(
         [

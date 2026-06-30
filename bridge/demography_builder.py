@@ -64,7 +64,7 @@ def build_demography(scenario: Scenario, values: dict[str, float]) -> msprime.De
             # (samples) dans la Demography : on les fournit à part
             # dans msprime.sim_ancestry() via l'argument samples.
             continue
-        if isinstance(event, MergeEvent):
+        if isinstance(event, MergeEvent): #attention à la dénomination, split en msprime correspond à l'addmixture, merge correspond à l'add_population_split
             demography.add_population_split(
             time=time,
             derived=[f"pop{event.derived_pop}"],
