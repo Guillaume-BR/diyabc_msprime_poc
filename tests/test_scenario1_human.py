@@ -28,6 +28,7 @@ from bridge.prior_parser import is_constant_prior
 from bridge.scenario_types import Prior
 from bridge.reftable_loop import write_reftable_bin
 from bridge.prior_parser import parse_priors
+from bridge.demography_builder import get_parameter_names_used_by_scenario, extract_referenced_names
 
 import msprime
 
@@ -457,7 +458,34 @@ def test_write_reftable_bin(tmp_path, header_text):
 
     priors, _ = parse_priors(header_text)
     output_file = tmp_path / "reftable.bin"
-    write_reftable_bin(results, priors, output_file)
+    scenarios = parse_header_scenarios(header_text)
+    scenario1 = next(s for s in scenarios if s.index == 1)
+    write_reftable_bin(results, priors, scenario1, output_file)
 
     assert output_file.exists()
     assert output_file.stat().st_size > 0
+
+def test_extract_referenced_names():
+    """Vérifie l'extraction de noms sur des cas simples."""
+    assert extract_referenced_names("t1") == {"t1"}
+    assert extract_referenced_names("0") == set()
+    assert extract_referenced_names("t2-d3") == {"t2", "d3"}
+    assert extract_referenced_names("t2+d3") == {"t2", "d3"}
+
+
+def test_get_parameter_names_used_by_scenario1(header_text):
+    """Vérifie que le scénario 1 référence bien exactement les 16
+    paramètres attendus (21 priors déclarés au total dans header.txt,
+    moins ra/t11/t22/t33/t44 qui appartiennent aux scénarios 2-6)."""
+    scenarios = parse_header_scenarios(header_text)
+    scenario1 = next(s for s in scenarios if s.index == 1)
+
+    used_names = get_parameter_names_used_by_scenario(scenario1)
+
+    expected = {
+        "N1", "N2", "N3", "N4",
+        "t1", "t2", "d3", "Nbn3", "d4", "Nbn4", "N34",
+        "t3", "d34", "Nbn34", "t4", "Na",
+    }
+    assert used_names == expected
+    assert len(used_names) == 16

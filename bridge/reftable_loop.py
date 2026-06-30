@@ -18,6 +18,7 @@ import struct
 
 from bridge.pipeline import compute_summary_statistics
 from bridge.prior_parser import is_constant_prior
+from bridge.demography_builder import get_parameter_names_used_by_scenario
 
 
 @dataclass
@@ -127,6 +128,7 @@ def run_reftable_simulation(
 def write_reftable_bin(
     results: list[ParticleResult],
     priors: list,
+    scenario,
     output_path: str | Path,
 ) -> None:
     """Écrit un reftable.bin au format binaire DIYABC (vérifié contre
@@ -138,11 +140,15 @@ def write_reftable_bin(
     doivent partager le même scenario_index -- vérifié, lève ValueError
     sinon.
 
-    Filtre les paramètres quasi-constants (is_constant_prior) des
-    colonnes écrites -- comportement vérifié contre readReftable.R et
-    abcranger. L'ordre des colonnes de paramètres est fixé UNE FOIS,
-    d'après l'ordre de `priors` filtré, et appliqué identiquement à
-    toutes les lignes (cohérence indispensable au format).
+    Filtre les colonnes de paramètres sur DEUX critères, dans cet ordre :
+    1. is_constant_prior : exclut les priors quasi-dégénérés (comme
+       readReftable.R / abcranger)
+    2. get_parameter_names_used_by_scenario(scenario) : exclut les
+       priors non référencés par CE scénario précis -- correction d'un
+       bug découvert empiriquement (readReftable.R levait "indice hors
+       limites" : notre code gardait les 21 priors du header.txt entier,
+       alors que le scénario 1 n'en référence que 16 -- voir notes/
+       exploration.md).
 
     Ne gère PAS les paramètres de mutation (absents de human) -- à
     ajouter (toujours en dernière position, après les paramètres
@@ -160,7 +166,11 @@ def write_reftable_bin(
         )
     scenario_index = scenario_indices.pop()
 
-    kept_param_names = [p.name for p in priors if not is_constant_prior(p)]
+    used_param_names = get_parameter_names_used_by_scenario(scenario)
+    kept_param_names = [
+        p.name for p in priors
+        if not is_constant_prior(p) and p.name in used_param_names
+    ]
     stat_names = sorted(results[0].summary_statistics.keys())
 
     nrec = len(results)
