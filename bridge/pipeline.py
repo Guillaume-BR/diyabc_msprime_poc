@@ -9,8 +9,6 @@ Ce module ne contient aucune nouvelle logique de parsing ou de
 construction : il orchestre uniquement.
 """
 
-import subprocess
-import shutil
 from pathlib import Path
 
 import msprime
@@ -25,9 +23,7 @@ from bridge.ancestry_simulation import (
     simulate_independent_loci,
     simulate_snp_genotypes,
 )
-from bridge.snp_writer import write_snp_file
-from bridge.loci_parser import rewrite_loci_count
-from bridge.statobs_parser import parse_statobs
+from bridge.summary_statistics import compute_all_statistics
 
 
 def build_random_demography(
@@ -115,76 +111,30 @@ def compute_summary_statistics(
     scenario_index: int,
     num_loci: int,
     seed: int,
-    general_binary_path: str | Path,
-    work_directory: str | Path,
+    work_directory: str | Path = None,      # gardé pour compatibilité, ignoré
+    general_binary_path: str | Path = None, # gardé pour compatibilité, ignoré
     stats_filter: str = "ALL",
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Calcule les statistiques résumées sur des données SIMULÉES par
-    notre pipeline, en délégant le calcul au binaire C++ `general`
-    existant (HeaderC::calstatobs) -- plutôt que de réimplémenter
-    FST1/ML1/F3/F4/NEI/AML en Python.
+    notre pipeline, en utilisant nos formules Python validées
+    (summary_statistics.py) -- remplace la délégation au binaire C++
+    (subprocess + fichier .snp intermédiaire).
 
-    Étapes :
-    1. Simule num_loci génotypes SNP sous un tirage de paramètres pour
-       scenario_index (via run_poc_for_directory)
-    2. Écrit ces génotypes dans un fichier .snp (write_snp_file)
-    3. Copie header.txt (en adaptant son nombre de loci déclaré à
-       num_loci -- rewrite_loci_count) et RNG_state_0000.bin dans
-       work_directory
-    4. Appelle `general -p <work_directory> -R <stats_filter> -r 1 ...`
-       en sous-processus -- -r 1 suffit, calstatobs() s'exécute avant
-       même la boucle de simulation (voir notes/exploration.md)
-    5. Parse statobsRF.txt en dict {nom_stat: valeur}
-
-    work_directory doit déjà exister (n'est PAS créé automatiquement).
-
-    Retourne (summary_statistics, parameter_values) : les statistiques
-    calculées par le C++, et les valeurs de paramètres tirées par notre
-    pipeline (pour constituer plus tard une ligne complète du
-    reftable.bin : param[] + stat[]).
+    Retourne (summary_statistics, parameter_values).
     """
     reference_directory = Path(reference_directory)
-    work_directory = Path(work_directory)
-    general_binary_path = Path(general_binary_path)
-
-    original_header_text = (reference_directory / "header.txt").read_text()
-    snp_filename = original_header_text.splitlines()[0].strip()
+    header_text = (reference_directory / "header.txt").read_text()
+    snp_filename = header_text.splitlines()[0].strip()
+    snp_path = reference_directory / snp_filename
 
     genotypes_per_locus, values = run_poc_for_directory(
         reference_directory, scenario_index, num_loci, seed
     )
+    genotypes_list = list(genotypes_per_locus)
 
-    write_snp_file(list(genotypes_per_locus), work_directory / snp_filename)
+    samples = build_samples_argument(snp_path)
+    population_names = list(samples.keys())
 
-    adapted_header_text = rewrite_loci_count(original_header_text, num_loci)
-    (work_directory / "header.txt").write_text(adapted_header_text)
+    summary_stats = compute_all_statistics(genotypes_list, population_names)
 
-    rng_state_source = reference_directory / "RNG_state_0000.bin"
-    if rng_state_source.exists():
-        shutil.copy(rng_state_source, work_directory / "RNG_state_0000.bin")
-        print(f"Copié {rng_state_source} -> {work_directory / 'RNG_state_0000.bin'}")
-
-    subprocess.run(
-        [
-            str(general_binary_path),
-            "-p",
-            "./",
-            "-R",
-            stats_filter,
-            "-r",
-            "1",
-            "-g",
-            "50",
-            "-m",
-            "-t",
-            "1",
-        ],
-        cwd=work_directory,
-        check=True,
-        capture_output=True,
-    )
-
-    statobs_text = (work_directory / "statobsRF.txt").read_text()
-    summary_statistics = parse_statobs(statobs_text)
-
-    return summary_statistics, values
+    return summary_stats, values

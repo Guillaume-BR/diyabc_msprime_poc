@@ -35,12 +35,16 @@ adapted = rewrite_loci_count(header_text, num_loci)
 shutil.copy("reference/human/RNG_state_0000.bin", WORK / "RNG_state_0000.bin")
 subprocess.run(
     [GENERAL, "-p", "./", "-R", "ALL", "-r", "1", "-g", "1", "-m", "-t", "1"],
-    cwd=WORK, check=True, capture_output=True,
+    cwd=WORK,
+    check=True,
+    capture_output=True,
 )
 general_stats = parse_statobs((WORK / "statobsRF.txt").read_text())
 
 # 4. Comparer terme à terme
-print(f"\n{'Statistique':<20} {'Nos formules':>15} {'general':>15} {'écart relatif':>15}")
+print(
+    f"\n{'Statistique':<20} {'Nos formules':>15} {'general':>15} {'écart relatif':>15}"
+)
 print("-" * 70)
 for key in sorted(our_stats):
     if key in general_stats:
@@ -57,13 +61,18 @@ for key in sorted(our_stats):
 
 # Ajoute temporairement dans validate_stats.py, après avoir récupéré genotypes_list :
 na = nb = 60.0
-pa = [1-1/60, 1/60]   # freq1_a = 0.017
-pb = [1.0, 0.0]        # freq1_b = 0.000
-S_1 = 120; S_2 = 7200
-pi_hat = [(na*pa[k]+nb*pb[k])/S_1 for k in range(2)]
-SSI = sum(na*pa[k]*(1-pa[k]) + nb*pb[k]*(1-pb[k]) for k in range(2))
-SSP = sum(na*(pa[k]-pi_hat[k])**2 + nb*(pb[k]-pi_hat[k])**2 for k in range(2))
-n_c = (S_1 - S_2/S_1)/(2-1)
-MSI = SSI/(S_1-2); MSP = SSP/(2-1)
-num = MSP-MSI; den = MSP+(n_c-1)*MSI
+pa = [1 - 1 / 60, 1 / 60]  # freq1_a = 0.017
+pb = [1.0, 0.0]  # freq1_b = 0.000
+S_1 = 120
+S_2 = 7200
+pi_hat = [(na * pa[k] + nb * pb[k]) / S_1 for k in range(2)]
+SSI = sum(na * pa[k] * (1 - pa[k]) + nb * pb[k] * (1 - pb[k]) for k in range(2))
+SSP = sum(
+    na * (pa[k] - pi_hat[k]) ** 2 + nb * (pb[k] - pi_hat[k]) ** 2 for k in range(2)
+)
+n_c = (S_1 - S_2 / S_1) / (2 - 1)
+MSI = SSI / (S_1 - 2)
+MSP = SSP / (2 - 1)
+num = MSP - MSI
+den = MSP + (n_c - 1) * MSI
 print(f"num={num:.6f}, den={den:.6f}")

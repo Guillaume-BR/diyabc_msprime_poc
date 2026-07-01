@@ -25,6 +25,7 @@ import numpy as np
 # Utilitaires internes
 # ---------------------------------------------------------------------------
 
+
 def _allele_freq(haploid_genotypes: list[int]) -> float:
     """Fréquence de l'allèle dérivé (1) dans une population -- équivalent
     de locuslist[loc].freq[pop][1] dans le code C++."""
@@ -43,8 +44,8 @@ def _q1(haploid_genotypes: list[int]) -> float:
     n = len(haploid_genotypes)
     if n <= 1:
         return float("nan")
-    y2 = sum(haploid_genotypes)   # count of allele 1
-    y1 = n - y2                    # count of allele 0
+    y2 = sum(haploid_genotypes)  # count of allele 1
+    y1 = n - y2  # count of allele 0
     return (y1 * (y1 - 1) + y2 * (y2 - 1)) / (n * (n - 1))
 
 
@@ -57,10 +58,10 @@ def _q2(haploid_genotypes_a: list[int], haploid_genotypes_b: list[int]) -> float
     n2 = len(haploid_genotypes_b)
     if n1 == 0 or n2 == 0:
         return float("nan")
-    y12 = sum(haploid_genotypes_a)   # allele 1 in pop a
-    y11 = n1 - y12                    # allele 0 in pop a
-    y22 = sum(haploid_genotypes_b)   # allele 1 in pop b
-    y21 = n2 - y22                    # allele 0 in pop b
+    y12 = sum(haploid_genotypes_a)  # allele 1 in pop a
+    y11 = n1 - y12  # allele 0 in pop a
+    y22 = sum(haploid_genotypes_b)  # allele 1 in pop b
+    y21 = n2 - y22  # allele 0 in pop b
     return (y11 * y21 + y12 * y22) / (n1 * n2)
 
 
@@ -68,6 +69,7 @@ def _q2(haploid_genotypes_a: list[int], haploid_genotypes_b: list[int]) -> float
 # ML1 : proportion de loci monomorphes, par population
 # Référence : sumstat.cpp::cal_snfl (npop=1)
 # ---------------------------------------------------------------------------
+
 
 def compute_ML1(
     genotypes_per_locus: list[dict[str, list[int]]],
@@ -93,9 +95,10 @@ def compute_ML1(
                 monomorphic_counts[pop] += 1
 
     return {
-        f"ML1p_{i+1}": monomorphic_counts[pop] / total_loci
+        f"ML1p_{i + 1}": monomorphic_counts[pop] / total_loci
         for i, pop in enumerate(population_names)
     }
+
 
 def compute_ML2(
     genotypes_per_locus: list[dict[str, list[int]]],
@@ -117,10 +120,10 @@ def compute_ML2(
                 sa, sb = sum(lg[pa]), sum(lg[pb])
                 freq_a = sa / na if na else float("nan")
                 freq_b = sb / nb if nb else float("nan")
-                fixed_a = (freq_a == 0.0 or freq_a == 1.0)
+                fixed_a = freq_a == 0.0 or freq_a == 1.0
                 if fixed_a and freq_a == freq_b:
                     count += 1
-            results[f"ML2p_{i+1}.{j+1}"] = count / total
+            results[f"ML2p_{i + 1}.{j + 1}"] = count / total
     return results
 
 
@@ -134,9 +137,13 @@ def compute_ML3(
     total = len(genotypes_per_locus)
     n = len(population_names)
     for i in range(n):
-        for j in range(i+1, n):
-            for k in range(j+1, n):
-                pa, pb, pc = population_names[i], population_names[j], population_names[k]
+        for j in range(i + 1, n):
+            for k in range(j + 1, n):
+                pa, pb, pc = (
+                    population_names[i],
+                    population_names[j],
+                    population_names[k],
+                )
                 count = 0
                 for lg in genotypes_per_locus:
                     na, nb, nc = len(lg[pa]), len(lg[pb]), len(lg[pc])
@@ -145,7 +152,7 @@ def compute_ML3(
                     freq_c = sum(lg[pc]) / nc if nc else float("nan")
                     if (freq_a == 0.0 or freq_a == 1.0) and freq_a == freq_b == freq_c:
                         count += 1
-                results[f"ML3p_{i+1}.{j+1}.{k+1}"] = count / total
+                results[f"ML3p_{i + 1}.{j + 1}.{k + 1}"] = count / total
     return results
 
 
@@ -154,6 +161,7 @@ def compute_ML3(
 # HB : hétérozygotie inter-population (between, par paire)
 # Référence : sumstat.cpp::cal_snhw, cal_snhb
 # ---------------------------------------------------------------------------
+
 
 def compute_HW_HB(
     genotypes_per_locus: list[dict[str, list[int]]],
@@ -169,14 +177,17 @@ def compute_HW_HB(
     """
     npop = len(population_names)
     hw_per_locus = {pop: [] for pop in population_names}
-    hb_per_locus = {(pa, pb): [] for i, pa in enumerate(population_names)
-                    for pb in population_names[i+1:]}
+    hb_per_locus = {
+        (pa, pb): []
+        for i, pa in enumerate(population_names)
+        for pb in population_names[i + 1 :]
+    }
 
     for locus_genotypes in genotypes_per_locus:
         for pop in population_names:
             hw_per_locus[pop].append(1 - _q1(locus_genotypes[pop]))
         for i, pa in enumerate(population_names):
-            for pb in population_names[i+1:]:
+            for pb in population_names[i + 1 :]:
                 hb_per_locus[(pa, pb)].append(
                     1 - _q2(locus_genotypes[pa], locus_genotypes[pb])
                 )
@@ -184,15 +195,15 @@ def compute_HW_HB(
     results = {}
     for i, pop in enumerate(population_names):
         vals = hw_per_locus[pop]
-        results[f"HWm_{i+1}"] = float(np.mean(vals))
-        results[f"HWv_{i+1}"] = float(np.var(vals, ddof=1))
+        results[f"HWm_{i + 1}"] = float(np.mean(vals))
+        results[f"HWv_{i + 1}"] = float(np.var(vals, ddof=1))
 
     for i, pa in enumerate(population_names):
         for j, pb in enumerate(population_names):
             if j <= i:
                 continue
             vals = hb_per_locus[(pa, pb)]
-            key = f"{i+1}.{j+1}"
+            key = f"{i + 1}.{j + 1}"
             results[f"HBm_{key}"] = float(np.mean(vals))
             results[f"HBv_{key}"] = float(np.var(vals, ddof=1))
 
@@ -204,6 +215,7 @@ def compute_HW_HB(
 # Référence : sumstat.cpp::cal_snfsti
 # FST1 = 1 - HW / HBmoy, où HBmoy est la moyenne des HB impliquant cette pop
 # ---------------------------------------------------------------------------
+
 
 def compute_FST1(
     genotypes_per_locus: list[dict[str, list[int]]],
@@ -229,7 +241,7 @@ def compute_FST1(
     pairs = [
         (pa, pb)
         for i, pa in enumerate(population_names)
-        for pb in population_names[i+1:]
+        for pb in population_names[i + 1 :]
     ]
 
     hw_per_locus = {pop: [] for pop in population_names}
@@ -238,7 +250,7 @@ def compute_FST1(
     for locus_genotypes in genotypes_per_locus:
         for pop in population_names:
             hw_per_locus[pop].append(1 - _q1(locus_genotypes[pop]))
-        for (pa, pb) in pairs:
+        for pa, pb in pairs:
             hb_per_locus[(pa, pb)].append(
                 1 - _q2(locus_genotypes[pa], locus_genotypes[pb])
             )
@@ -253,12 +265,13 @@ def compute_FST1(
         hwv = float(np.var(hw_per_locus[pop], ddof=1))
 
         fst1m = (1 - hwm / hbmoy_global) if hbmoy_global != 0 else float("nan")
-        fst1v = (hwv / (hbmoy_global ** 2)) if hbmoy_global != 0 else float("nan")
+        fst1v = (hwv / (hbmoy_global**2)) if hbmoy_global != 0 else float("nan")
 
-        results[f"FST1m_{i+1}"] = fst1m
-        results[f"FST1v_{i+1}"] = fst1v
+        results[f"FST1m_{i + 1}"] = fst1m
+        results[f"FST1v_{i + 1}"] = fst1v
 
     return results
+
 
 def _fst_wc(loci, pops):
     """Weir & Cockerham sur un ensemble de populations -- formule générale
@@ -276,37 +289,42 @@ def _fst_wc(loci, pops):
             n = float(len(g))
             if n > 0:
                 s = float(sum(g))
-                p = [1-s/n, s/n]
-                S_1 += n; S_2 += n*n
+                p = [1 - s / n, s / n]
+                S_1 += n
+                S_2 += n * n
                 for k in range(2):
-                    pi_hat[k] += n*p[k]
-                    SSI += n*p[k]*(1-p[k])
+                    pi_hat[k] += n * p[k]
+                    SSI += n * p[k] * (1 - p[k])
                 samples_data.append((n, p))
             else:
                 n0 += 1
         if not samples_data:
-            xs.append(x_prev); continue
-        for k in range(2): pi_hat[k] /= S_1
+            xs.append(x_prev)
+            continue
+        for k in range(2):
+            pi_hat[k] /= S_1
         for n, p in samples_data:
             for k in range(2):
-                r = p[k]-pi_hat[k]
-                SSP += n*(r*r)
+                r = p[k] - pi_hat[k]
+                SSP += n * (r * r)
         n_d = float(len(samples_data))
-        n_c = (S_1-S_2/S_1)/(n_d-1.0)
-        MSI = SSI/(S_1-n_d)
-        MSP = SSP/(n_d-1.0)
-        num = MSP-MSI
-        den = MSP+(n_c-1.0)*MSI
+        n_c = (S_1 - S_2 / S_1) / (n_d - 1.0)
+        MSI = SSI / (S_1 - n_d)
+        MSP = SSP / (n_d - 1.0)
+        num = MSP - MSI
+        den = MSP + (n_c - 1.0) * MSI
         if abs(den) > 0:
-            x_prev = num/den
+            x_prev = num / den
         xs.append(x_prev)
-        numt += num; dent += den
-    fstm = numt/dent if abs(dent) > 0 else 0.0
+        numt += num
+        dent += den
+    fstm = numt / dent if abs(dent) > 0 else 0.0
     n = len(xs)
-    sw2diff = n*n-n
-    mx2 = sum((x-sum(xs)/n)**2 for x in xs)
-    fstv = mx2*n/sw2diff if sw2diff > 0 else 0.0
+    sw2diff = n * n - n
+    mx2 = sum((x - sum(xs) / n) ** 2 for x in xs)
+    fstv = mx2 * n / sw2diff if sw2diff > 0 else 0.0
     return fstm, fstv
+
 
 def compute_FST2(
     genotypes_per_locus: list[dict[str, list[int]]],
@@ -314,10 +332,11 @@ def compute_FST2(
 ) -> dict[str, float]:
     """FST2 via _fst_wc -- même code que FST3/FST4."""
     from itertools import combinations
+
     results = {}
     for i, pa in enumerate(population_names):
-        for j, pb in enumerate(population_names[i+1:], i+1):
-            key = f"{i+1}.{j+1}"
+        for j, pb in enumerate(population_names[i + 1 :], i + 1):
+            key = f"{i + 1}.{j + 1}"
             m, v = _fst_wc(genotypes_per_locus, [pa, pb])
             results[f"FST2m_{key}"] = m
             results[f"FST2v_{key}"] = v
@@ -332,13 +351,14 @@ def compute_FST3_FST4_FSTG(
     Référence : cal_snfstd(npop=3/4/0) dans sumstat.cpp.
     Ordre COMB pour FST3/FST4/FSTG."""
     from itertools import combinations
+
     results = {}
     npop = len(population_names)
 
     # FST3 -- triplets COMB
     for combo in combinations(range(npop), 3):
         pops = [population_names[i] for i in combo]
-        key = ".".join(str(i+1) for i in combo)
+        key = ".".join(str(i + 1) for i in combo)
         m, v = _fst_wc(genotypes_per_locus, pops)
         results[f"FST3m_{key}"] = m
         results[f"FST3v_{key}"] = v
@@ -346,22 +366,22 @@ def compute_FST3_FST4_FSTG(
     # FST4 -- quadruplets COMB
     for combo in combinations(range(npop), 4):
         pops = [population_names[i] for i in combo]
-        key = ".".join(str(i+1) for i in combo)
+        key = ".".join(str(i + 1) for i in combo)
         m, v = _fst_wc(genotypes_per_locus, pops)
         results[f"FST4m_{key}"] = m
         results[f"FST4v_{key}"] = v
 
     # FSTG -- toutes populations
-    m, v = _fst_wc(genotypes_per_locus, population_names)
-    results["FSTGm"] = m
-    results["FSTGv"] = v
+    #m, v = _fst_wc(genotypes_per_locus, population_names)
+    #results["FSTGm"] = m
+    #results["FSTGv"] = v
 
     return results
 
 
-#----------------------------------------------------------------------------
-#NEI
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# NEI
+# ----------------------------------------------------------------------------
 def compute_NEI(
     genotypes_per_locus: list[dict[str, list[int]]],
     population_names: list[str],
@@ -371,9 +391,13 @@ def compute_NEI(
     NEI = 1 - (fi*fj + gi*gj) / sqrt(fi²+gi²) / sqrt(fj²+gj²)
     x_prev persiste si n==0 (comportement C++ non réinitialisé)."""
     import math
+
     results = {}
-    pairs = [(pa, pb) for i, pa in enumerate(population_names)
-             for pb in population_names[i+1:]]
+    pairs = [
+        (pa, pb)
+        for i, pa in enumerate(population_names)
+        for pb in population_names[i + 1 :]
+    ]
 
     for pa, pb in pairs:
         x_prev = 0.0
@@ -382,29 +406,31 @@ def compute_NEI(
             ga, gb = lg[pa], lg[pb]
             na, nb = len(ga), len(gb)
             if na > 0 and nb > 0:
-                fi = 1 - sum(ga)/na  # freq allele 0 in pa
-                gi = sum(ga)/na      # freq allele 1 in pa
-                fj = 1 - sum(gb)/nb  # freq allele 0 in pb
-             
-                gj = sum(gb)/nb      # freq allele 1 in pb
-                denom = math.sqrt(fi*fi + gi*gi) * math.sqrt(fj*fj + gj*gj)
+                fi = 1 - sum(ga) / na  # freq allele 0 in pa
+                gi = sum(ga) / na  # freq allele 1 in pa
+                fj = 1 - sum(gb) / nb  # freq allele 0 in pb
+
+                gj = sum(gb) / nb  # freq allele 1 in pb
+                denom = math.sqrt(fi * fi + gi * gi) * math.sqrt(fj * fj + gj * gj)
                 if denom > 0:
-                    x_prev = 1 - (fi*fj + gi*gj) / denom
+                    x_prev = 1 - (fi * fj + gi * gj) / denom
             xs.append(x_prev)
 
         i = population_names.index(pa) + 1
         j = population_names.index(pb) + 1
         key = f"{i}.{j}"
         n = len(xs)
-        sw2diff = n*n - n
-        mx2 = sum((x - sum(xs)/n)**2 for x in xs)
+        sw2diff = n * n - n
+        mx2 = sum((x - sum(xs) / n) ** 2 for x in xs)
         results[f"NEIm_{key}"] = sum(xs) / n
         results[f"NEIv_{key}"] = mx2 * n / sw2diff if sw2diff > 0 else 0.0
     return results
 
-#----------------------------------------------------------------------------
-#AML : admixture maximum likelihood sur triplets
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# AML : admixture maximum likelihood sur triplets
+# ----------------------------------------------------------------------------
+
 
 def compute_AML(
     genotypes_per_locus: list[dict[str, list[int]]],
@@ -420,10 +446,10 @@ def compute_AML(
 
     def halfsortedbypairs(v):
         n = len(v)
-        for i in range(n-1, 0, -2):
-            if not (v[i-1] <= v[i]):
+        for i in range(n - 1, 0, -2):
+            if not (v[i - 1] <= v[i]):
                 return False
-            if (i-2) > 0 and not (v[i-3] <= v[i-1]):
+            if (i - 2) > 0 and not (v[i - 3] <= v[i - 1]):
                 return False
         return True
 
@@ -439,39 +465,43 @@ def compute_AML(
         hybrid = population_names[t[0]]
         p1 = population_names[t[1]]
         p2 = population_names[t[2]]
-        key = f"{t[0]+1}.{t[1]+1}.{t[2]+1}"
+        key = f"{t[0] + 1}.{t[1] + 1}.{t[2] + 1}"
 
         x_prev = 0.0
         sw = sw2 = mx = mx2 = 0.0
         for lg in genotypes_per_locus:
-            n1 = len(lg[p1]); n2 = len(lg[p2])
+            n1 = len(lg[p1])
+            n2 = len(lg[p2])
             if n1 > 0 and n2 > 0:
-                f1 = 1 - sum(lg[p1])/n1  # freq allele 0 in parent1
-                f2 = 1 - sum(lg[p2])/n2  # freq allele 0 in parent2
+                f1 = 1 - sum(lg[p1]) / n1  # freq allele 0 in parent1
+                f2 = 1 - sum(lg[p2]) / n2  # freq allele 0 in parent2
                 n3 = len(lg[hybrid])
-                f3 = 1 - sum(lg[hybrid])/n3 if n3 > 0 else 0.0
+                f3 = 1 - sum(lg[hybrid]) / n3 if n3 > 0 else 0.0
                 w = 1.0
                 if f1 != f2:
                     aml = (f3 - f2) / (f1 - f2)
                     x_prev = max(0.0, min(1.0, aml)) if (aml < 0 or aml > 1) else aml
                 else:
-                    x_prev = 0.5; w = 0.0
+                    x_prev = 0.5
+                    w = 0.0
             # Welford pondéré
             if w > 0:
-                sw += w; sw2 += w*w
+                sw += w
+                sw2 += w * w
                 mo = mx
-                mx += (w/sw) * (x_prev - mo)
+                mx += (w / sw) * (x_prev - mo)
                 mx2 += w * (x_prev - mo) * (x_prev - mx)
 
-        sw2diff = sw*sw - sw2
+        sw2diff = sw * sw - sw2
         results[f"AMLm_{key}"] = float(mx)
         results[f"AMLv_{key}"] = float(mx2 * sw / sw2diff) if sw2diff > 1e-9 else 0.0
 
     return results
 
-#----------------------------------------------------------------------------
-#F3-F4 : Patterson statistics sur triplets et quadruplets
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# F3-F4 : Patterson statistics sur triplets et quadruplets
+# ----------------------------------------------------------------------------
 
 
 def compute_F3_F4(
@@ -488,10 +518,10 @@ def compute_F3_F4(
 
     def halfsortedbypairs(v):
         n = len(v)
-        for i in range(n-1, 0, -2):
-            if not (v[i-1] <= v[i]):
+        for i in range(n - 1, 0, -2):
+            if not (v[i - 1] <= v[i]):
                 return False
-            if (i-2) > 0 and not (v[i-3] <= v[i-1]):
+            if (i - 2) > 0 and not (v[i - 3] <= v[i - 1]):
                 return False
         return True
 
@@ -512,30 +542,31 @@ def compute_F3_F4(
         sw = sw2 = mx = mx2 = 0.0
         for x, w in xs_w:
             if w > 0:
-                sw += w; sw2 += w*w
+                sw += w
+                sw2 += w * w
                 mo = mx
-                mx += (w/sw)*(x - mo)
-                mx2 += w*(x - mo)*(x - mx)
-        sw2diff = sw*sw - sw2
-        var = mx2*sw/sw2diff if sw2diff > 1e-9 else 0.0
+                mx += (w / sw) * (x - mo)
+                mx2 += w * (x - mo) * (x - mx)
+        sw2diff = sw * sw - sw2
+        var = mx2 * sw / sw2diff if sw2diff > 1e-9 else 0.0
         return mx, var
 
     for t in get_half_arrangements(npop, 3):
         pop0 = population_names[t[0]]  # hybride (sample)
         pop1 = population_names[t[1]]  # parent1 (sample1)
         pop2 = population_names[t[2]]  # parent2 (sample2)
-        key = f"{t[0]+1}.{t[1]+1}.{t[2]+1}"
+        key = f"{t[0] + 1}.{t[1] + 1}.{t[2] + 1}"
         xs_w = []
         x_prev = 0.0
         for lg in genotypes_per_locus:
             n1, n2 = len(lg[pop1]), len(lg[pop2])
             if n1 > 0 and n2 > 0:
                 np_ = float(len(lg[pop0]))
-                f1 = 1 - sum(lg[pop0])/np_ if np_ > 0 else 0.0
-                f2 = 1 - sum(lg[pop1])/n1
-                f3 = 1 - sum(lg[pop2])/n2
-                alpha = f1*(1-f1)/(np_-1) if np_ > 1 else 0.0
-                x_prev = (f1-f2)*(f1-f3) - alpha
+                f1 = 1 - sum(lg[pop0]) / np_ if np_ > 0 else 0.0
+                f2 = 1 - sum(lg[pop1]) / n1
+                f3 = 1 - sum(lg[pop2]) / n2
+                alpha = f1 * (1 - f1) / (np_ - 1) if np_ > 1 else 0.0
+                x_prev = (f1 - f2) * (f1 - f3) - alpha
             xs_w.append((x_prev, 1.0))
         mx, vx = welford_stats(xs_w)
         results[f"F3m_{key}"] = mx
@@ -547,26 +578,29 @@ def compute_F3_F4(
         pb = population_names[t[1]]
         pc = population_names[t[2]]
         pd = population_names[t[3]]
-        key = f"{t[0]+1}.{t[1]+1}.{t[2]+1}.{t[3]+1}"
+        key = f"{t[0] + 1}.{t[1] + 1}.{t[2] + 1}.{t[3] + 1}"
         xs_w = []
         x_prev = 0.0
         for lg in genotypes_per_locus:
-            n1,n2,n3 = len(lg[pb]),len(lg[pc]),len(lg[pd])
-            if n1>0 and n2>0 and n3>0:
-                a = 1 - sum(lg[pa])/len(lg[pa]) if lg[pa] else 0.0
-                b = 1 - sum(lg[pb])/n1
-                c = 1 - sum(lg[pc])/n2
-                d = 1 - sum(lg[pd])/n3
-                x_prev = (a-b)*(c-d)
+            n1, n2, n3 = len(lg[pb]), len(lg[pc]), len(lg[pd])
+            if n1 > 0 and n2 > 0 and n3 > 0:
+                a = 1 - sum(lg[pa]) / len(lg[pa]) if lg[pa] else 0.0
+                b = 1 - sum(lg[pb]) / n1
+                c = 1 - sum(lg[pc]) / n2
+                d = 1 - sum(lg[pd]) / n3
+                x_prev = (a - b) * (c - d)
             xs_w.append((x_prev, 1.0))
         mx, vx = welford_stats(xs_w)
         results[f"F4m_{key}"] = mx
         results[f"F4v_{key}"] = vx
 
     return results
-#------------------------------------------------------------------
+
+
+# ------------------------------------------------------------------
 # Point d'entrée principal
 # ---------------------------------------------------------------------------
+
 
 def compute_all_statistics(
     genotypes_per_locus: list[dict[str, list[int]]],
