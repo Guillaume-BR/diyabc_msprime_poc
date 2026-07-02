@@ -111,8 +111,8 @@ def compute_summary_statistics(
     scenario_index: int,
     num_loci: int,
     seed: int,
-    work_directory: str | Path = None,      # gardé pour compatibilité, ignoré
-    general_binary_path: str | Path = None, # gardé pour compatibilité, ignoré
+    work_directory: str | Path = None,  # gardé pour compatibilité, ignoré
+    general_binary_path: str | Path = None,  # gardé pour compatibilité, ignoré
     stats_filter: str = "ALL",
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Calcule les statistiques résumées sur des données SIMULÉES par

@@ -10,6 +10,8 @@ stats, values = compute_summary_statistics(
     seed=1,
 )
 t1 = time.time()
-print(f"Temps total (5000 loci, 130 stats Python) : {t1-t0:.1f}s")
+print(f"Temps total (5000 loci, 130 stats Python) : {t1 - t0:.1f}s")
 print(f"Nombre de stats calculées : {len(stats)}")
-print(f"Estimation pour 1000 particules (séquentiel) : {(t1-t0)*1000/60:.1f} minutes")
+print(
+    f"Estimation pour 1000 particules (séquentiel) : {(t1 - t0) * 1000 / 60:.1f} minutes"
+)

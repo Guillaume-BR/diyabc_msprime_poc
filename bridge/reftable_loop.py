@@ -31,7 +31,7 @@ class ParticleResult:
     summary_statistics: dict[str, float]
 
 
-#def _run_single_particle(
+# def _run_single_particle(
 #    particle_index: int,
 #    reference_directory: Path,
 #    scenario_index: int,
@@ -39,7 +39,7 @@ class ParticleResult:
 #    general_binary_path: Path,
 #    base_work_directory: Path,
 #    stats_filter: str,
-#) -> ParticleResult:
+# ) -> ParticleResult:
 #    """Calcule une seule particule -- fonction top-level (picklable),
 #    appelée par chaque worker du ProcessPoolExecutor.
 #
@@ -72,6 +72,7 @@ class ParticleResult:
 #        parameter_values=parameter_values,
 #        summary_statistics=summary_statistics,
 #    )
+
 
 def _run_single_particle(
     particle_index: int,
@@ -127,7 +128,9 @@ def run_reftable_simulation(
     ProcessPoolExecutor, généralement le nombre de cœurs disponibles).
     """
     reference_directory = Path(reference_directory)
-    general_binary_path = Path(general_binary_path) if general_binary_path is not None else None
+    general_binary_path = (
+        Path(general_binary_path) if general_binary_path is not None else None
+    )
     base_work_directory = Path(base_work_directory)
 
     results_by_index: dict[int, ParticleResult] = {}

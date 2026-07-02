@@ -273,7 +273,7 @@ def compute_FST1(
     return results
 
 
-#def _fst_wc(loci, pops):
+# def _fst_wc(loci, pops):
 #    """Weir & Cockerham sur un ensemble de populations -- formule générale
 #    de cal_snfstd (sumstat.cpp), npop quelconque.
 #    Retourne (FST2m, FST2v) via ratio sum(num)/sum(den) et Welford."""
@@ -325,6 +325,7 @@ def compute_FST1(
 #    fstv = mx2 * n / sw2diff if sw2diff > 0 else 0.0
 #    return fstm, fstv
 
+
 def _fst_wc(loci, pops):
     """Weir & Cockerham vectorisé sur tous les loci.
     Retourne (FSTm, FSTv). Formule identique à cal_snfstd, mais toutes
@@ -337,10 +338,10 @@ def _fst_wc(loci, pops):
     counts = np.array([[sum(lg[p]) for lg in loci] for p in pops], dtype=float)
     ns = np.array([[len(lg[p]) for lg in loci] for p in pops], dtype=float)
 
-    p1 = counts / ns          # freq allèle 1, shape (npop, nloci)
-    p0 = 1.0 - p1             # freq allèle 0
+    p1 = counts / ns  # freq allèle 1, shape (npop, nloci)
+    p0 = 1.0 - p1  # freq allèle 0
 
-    S_1 = ns.sum(axis=0)      # (nloci,)
+    S_1 = ns.sum(axis=0)  # (nloci,)
     S_2 = (ns**2).sum(axis=0)
     n_d = float(npop)
 
@@ -349,7 +350,7 @@ def _fst_wc(loci, pops):
     pi1 = (ns * p1).sum(axis=0) / S_1
 
     SSI = (ns * p0 * (1 - p0) + ns * p1 * (1 - p1)).sum(axis=0)
-    SSP = (ns * (p0 - pi0)**2 + ns * (p1 - pi1)**2).sum(axis=0)
+    SSP = (ns * (p0 - pi0) ** 2 + ns * (p1 - pi1) ** 2).sum(axis=0)
 
     n_c = (S_1 - S_2 / S_1) / (n_d - 1.0)
     MSI = SSI / (S_1 - n_d)
@@ -428,9 +429,9 @@ def compute_FST3_FST4_FSTG(
         results[f"FST4v_{key}"] = v
 
     # FSTG -- toutes populations
-    #m, v = _fst_wc(genotypes_per_locus, population_names)
-    #results["FSTGm"] = m
-    #results["FSTGv"] = v
+    # m, v = _fst_wc(genotypes_per_locus, population_names)
+    # results["FSTGm"] = m
+    # results["FSTGv"] = v
 
     return results
 
@@ -438,10 +439,10 @@ def compute_FST3_FST4_FSTG(
 # ----------------------------------------------------------------------------
 # NEI
 # ----------------------------------------------------------------------------
-#def compute_NEI(
+# def compute_NEI(
 #    genotypes_per_locus: list[dict[str, list[int]]],
 #    population_names: list[str],
-#) -> dict[str, float]:
+# ) -> dict[str, float]:
 #    """NEIm_i.j et NEIv_i.j : distance de Nei (1972) par paire.
 #    Référence : cal_snnei dans sumstat.cpp.
 #    NEI = 1 - (fi*fj + gi*gj) / sqrt(fi²+gi²) / sqrt(fj²+gj²)
@@ -482,6 +483,7 @@ def compute_FST3_FST4_FSTG(
 #        results[f"NEIv_{key}"] = mx2 * n / sw2diff if sw2diff > 0 else 0.0
 #    return results
 
+
 def compute_NEI(
     genotypes_per_locus: list[dict[str, list[int]]],
     population_names: list[str],
@@ -493,18 +495,26 @@ def compute_NEI(
     nloci = len(genotypes_per_locus)
 
     # Fréquences allèle 0 (f) et allèle 1 (g) pour chaque pop : (npop, nloci)
-    counts = np.array([[sum(lg[p]) for lg in genotypes_per_locus] for p in pops], dtype=float)
-    ns = np.array([[len(lg[p]) for lg in genotypes_per_locus] for p in pops], dtype=float)
-    g = counts / ns          # freq allèle 1
-    f = 1.0 - g              # freq allèle 0
-    norm = np.sqrt(f*f + g*g)  # (npop, nloci)
+    counts = np.array(
+        [[sum(lg[p]) for lg in genotypes_per_locus] for p in pops], dtype=float
+    )
+    ns = np.array(
+        [[len(lg[p]) for lg in genotypes_per_locus] for p in pops], dtype=float
+    )
+    g = counts / ns  # freq allèle 1
+    f = 1.0 - g  # freq allèle 0
+    norm = np.sqrt(f * f + g * g)  # (npop, nloci)
 
     results = {}
     for i in range(len(pops)):
-        for j in range(i+1, len(pops)):
+        for j in range(i + 1, len(pops)):
             denom = norm[i] * norm[j]
             valid = denom > 0
-            nei = np.where(valid, 1.0 - (f[i]*f[j] + g[i]*g[j]) / np.where(valid, denom, 1.0), 0.0)
+            nei = np.where(
+                valid,
+                1.0 - (f[i] * f[j] + g[i] * g[j]) / np.where(valid, denom, 1.0),
+                0.0,
+            )
 
             # forward-fill quand invalide
             xs = np.empty(nloci)
@@ -514,14 +524,16 @@ def compute_NEI(
                     x_prev = nei[k]
                 xs[k] = x_prev
 
-            key = f"{i+1}.{j+1}"
+            key = f"{i + 1}.{j + 1}"
             n = nloci
-            sw2diff = n*n - n
+            sw2diff = n * n - n
             mean = xs.mean()
-            mx2 = ((xs - mean)**2).sum()
+            mx2 = ((xs - mean) ** 2).sum()
             results[f"NEIm_{key}"] = float(mean)
             results[f"NEIv_{key}"] = float(mx2 * n / sw2diff) if sw2diff > 0 else 0.0
     return results
+
+
 # ----------------------------------------------------------------------------
 # AML : admixture maximum likelihood sur triplets
 # ----------------------------------------------------------------------------
