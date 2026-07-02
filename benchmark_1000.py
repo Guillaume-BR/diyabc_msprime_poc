@@ -1,5 +1,6 @@
 import os, time
-from bridge.reftable_loop import run_reftable_simulation, write_reftable_bin
+from bridge.reftable_loop import run_reftable_simulation
+from bridge.reftable_loop import write_reftable_bin
 from bridge.prior_parser import parse_priors
 from bridge.scenario_parser import parse_header_scenarios
 from pathlib import Path
@@ -9,7 +10,7 @@ priors, _ = parse_priors(header_text)
 scenarios = parse_header_scenarios(header_text)
 scenario1 = next(s for s in scenarios if s.index == 1)
 
-Path("./tmp/bench_particles").mkdir(parents=True, exist_ok=True)
+Path("./tmp/bench_particles").mkdir(parents = True, exist_ok=True)
 
 t0 = time.time()
 results = run_reftable_simulation(
