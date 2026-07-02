@@ -16,13 +16,13 @@ générations diploïdes -- cohérent avec les bornes des priors de temps
 (en générations) de header.txt.
 """
 
-from collections.abc import Iterator
 import random
+from collections.abc import Iterator
 
 import msprime
 import numpy as np
 
-from bridge.observed_data import population_index_to_name, count_samples_per_population
+from bridge.observed_data import count_samples_per_population, population_index_to_name
 
 
 def build_samples_argument(
