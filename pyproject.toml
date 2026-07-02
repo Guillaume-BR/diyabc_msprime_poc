@@ -1,2 +1,44 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.ruff]
+# Version Python cible (pour les règles de modernisation)
+target-version = "py311"
+
+# Longueur de ligne (88 = défaut de Black)
+line-length = 88
+
+# Dossiers à ignorer
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+# Règles à activer
+select = [
+    "E",      # Erreurs de style pycodestyle
+    "F",      # Erreurs Pyflakes (variables non utilisées, etc.)
+    "I",      # Tri des imports (isort)
+    "B",      # Bugs potentiels (flake8-bugbear)
+    "UP",     # Modernisation syntaxe (pyupgrade)
+    "SIM",    # Simplifications possibles
+]
+
+# Règles à ignorer
+ignore = [
+    "E501",   # Ligne trop longue (géré par le formatter)
+]
+
+# Règles que --fix peut corriger automatiquement
+fixable = ["ALL"]
+
+[tool.ruff.format]
+# Style des guillemets (comme Black)
+quote-style = "double"
+
+# Indentation (comme Black)
+indent-style = "space"

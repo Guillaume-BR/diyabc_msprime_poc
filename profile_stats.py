@@ -1,3 +1,7 @@
+"""
+Pour comparer les temps de calcul des statistiques résumées
+"""
+
 import cProfile, pstats, io
 from bridge.pipeline import run_poc_for_directory
 from bridge.ancestry_simulation import build_samples_argument

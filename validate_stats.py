@@ -58,21 +58,3 @@ for key in sorted(our_stats):
         print(f"{ok} {key:<20} {ours:>15.6f} {theirs:>15.6f} {rel_err:>15.2e}")
     else:
         print(f"? {key:<20} {our_stats[key]:>15.6f} {'(absent)':>15}")
-
-# Ajoute temporairement dans validate_stats.py, après avoir récupéré genotypes_list :
-na = nb = 60.0
-pa = [1 - 1 / 60, 1 / 60]  # freq1_a = 0.017
-pb = [1.0, 0.0]  # freq1_b = 0.000
-S_1 = 120
-S_2 = 7200
-pi_hat = [(na * pa[k] + nb * pb[k]) / S_1 for k in range(2)]
-SSI = sum(na * pa[k] * (1 - pa[k]) + nb * pb[k] * (1 - pb[k]) for k in range(2))
-SSP = sum(
-    na * (pa[k] - pi_hat[k]) ** 2 + nb * (pb[k] - pi_hat[k]) ** 2 for k in range(2)
-)
-n_c = (S_1 - S_2 / S_1) / (2 - 1)
-MSI = SSI / (S_1 - 2)
-MSP = SSP / (2 - 1)
-num = MSP - MSI
-den = MSP + (n_c - 1) * MSI
-print(f"num={num:.6f}, den={den:.6f}")
