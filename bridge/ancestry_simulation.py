@@ -20,6 +20,7 @@ from collections.abc import Iterator
 import random
 
 import msprime
+import numpy as np
 
 from bridge.observed_data import population_index_to_name, count_samples_per_population
 
@@ -67,57 +68,83 @@ def simulate_independent_loci(
     )
 
 
-def _draw_single_mutation_node(tree, rng: random.Random) -> int:
-    """Tire un noeud de l'arbre (portant la mutation unique), avec une
-    probabilité proportionnelle à la longueur de sa branche -- algorithme
-    de Hudson (2002), tel que décrit dans la doc DIYABC (section 2.4.3) :
-    "il est supposé qu'il y a eu une et une seule mutation dans l'arbre
-    de coalescence des gènes échantillonnés".
+def _draw_single_mutation_edge_child(ts, rng: random.Random) -> int:
+    """Tire le noeud portant la mutation unique, avec probabilité
+    proportionnelle à la longueur de sa branche -- algorithme de Hudson,
+    entièrement vectorisé via les tables (pas d'appel branch_length() par
+    noeud). Valable pour un arbre unique (sequence_length=1).
 
-    Validé empiriquement (20000 tirages sur un arbre test, proportions
-    observées vs attendues alignées à <1% -- voir notes/exploration.md).
+    Chaque edge = une branche (couple parent-enfant) ; edges.child liste
+    donc tous les noeuds ayant une branche au-dessus d'eux (tous sauf la
+    racine). Longueur = time[parent] - time[child], calculé en numpy.
+
+    Validé empiriquement (proportions observées vs attendues <1% ; valeurs
+    de statistiques identiques à la version par branch_length() -- voir
+    notes/exploration.md).
     """
-    nodes = [u for u in tree.nodes() if u != tree.root]
-    lengths = [tree.branch_length(u) for u in nodes]
-    total = sum(lengths)
-    target = rng.uniform(0, total)
-    cumulative = 0.0
-    for node, length in zip(nodes, lengths):
-        cumulative += length
-        if cumulative >= target:
-            return node
-    return nodes[-1]  # garde-fou contre un arrondi flottant en bord de plage
+    edges = ts.tables.edges
+    node_times = ts.tables.nodes.time
+    lengths = node_times[edges.parent] - node_times[edges.child]
 
+    total = lengths.sum()
+    target = rng.uniform(0, total)
+    idx = np.searchsorted(np.cumsum(lengths), target)
+    if idx >= len(edges.child):
+        idx = len(edges.child) - 1
+    return int(edges.child[idx])
+
+def _draw_single_mutation_node_fast(tree, ts, rng: random.Random) -> int:
+    """Version vectorisée : longueur de branche = temps(parent) - temps(noeud),
+    calculé en numpy sur tous les noeuds d'un coup."""
+    node_times = ts.tables.nodes.time  # numpy array, tous les temps
+    nodes = np.fromiter((u for u in tree.nodes() if u != tree.root), dtype=np.int64)
+    parents = np.fromiter((tree.parent(u) for u in nodes), dtype=np.int64)
+    lengths = node_times[parents] - node_times[nodes]
+
+    total = lengths.sum()
+    target = rng.uniform(0, total)
+    cumulative = np.cumsum(lengths)
+    idx = np.searchsorted(cumulative, target)
+    if idx >= len(nodes):
+        idx = len(nodes) - 1
+    return int(nodes[idx])
+
+def _draw_single_mutation_node_vectorized(ts, rng: random.Random):
+    """Tire le noeud portant la mutation, entièrement en numpy depuis les
+    tables (pas d'appel branch_length() par noeud). Valable pour un arbre
+    unique (sequence_length=1, une seule TreeSequence)."""
+    edges = ts.tables.edges
+    node_times = ts.tables.nodes.time
+
+    children = edges.child                       # array des noeuds enfants
+    parents = edges.parent                       # array des parents
+    lengths = node_times[parents] - node_times[children]  # longueurs, vectorisé
+
+    total = lengths.sum()
+    target = rng.uniform(0, total)
+    idx = np.searchsorted(np.cumsum(lengths), target)
+    if idx >= len(children):
+        idx = len(children) - 1
+    return int(children[idx])
 
 def simulate_snp_genotypes(
     tree_sequences: Iterator[msprime.TreeSequence],
     seed: int,
 ) -> Iterator[dict[str, list[int]]]:
     """Pour chaque TreeSequence (un locus = un arbre indépendant), tire
-    une mutation UNIQUE selon l'algorithme de Hudson, et retourne les
-    génotypes (0=ancestral, 1=dérivé) REGROUPÉS PAR POPULATION -- forme
-    directement utilisable pour les formules q1/q2/HW/HB/FST1/ML1
-    (sumstat.cpp), qui travaillent toujours par population, jamais par
-    lignée individuelle isolée.
+    une mutation UNIQUE selon l'algorithme de Hudson (vectorisé), et
+    retourne les génotypes (0=ancestral, 1=dérivé) REGROUPÉS PAR
+    POPULATION.
 
-    Remplace mutate_independent_loci (modèle à taux fixe), qui était
-    structurellement incorrect pour des SNP au sens DIYABC : la doc
-    utilisateur (section 2.4.3) précise que les loci SNP sont (par
-    construction) toujours polymorphes, avec exactement une mutation
-    dans tout l'arbre -- pas un processus de Poisson à taux variable,
-    qui pourrait produire des loci monomorphes ou multi-mutés.
-
-    Retourne un itérateur de dict {nom_population: [génotypes...]}, où
-    nom_population est le nom donné à add_population dans
-    demography_builder.py (ex: "pop1", "pop2"...). L'indice interne
-    msprime (0-based, dans l'ordre d'ajout des populations -- vérifié
-    empiriquement) est utilisé pour interroger
-    TreeSequence.samples(population=i), puis traduit vers ce nom.
+    Voir _draw_single_mutation_edge_child pour l'algorithme de tirage, et
+    la docstring d'origine pour la justification du modèle (doc DIYABC
+    section 2.4.3 : exactement une mutation par locus, locus toujours
+    polymorphe).
     """
     rng = random.Random(seed)
     for ts in tree_sequences:
         tree = ts.first()
-        mutated_node = _draw_single_mutation_node(tree, rng)
+        mutated_node = _draw_single_mutation_edge_child(ts, rng)
         derived_samples = set(tree.samples(mutated_node))
 
         genotypes_by_population = {}

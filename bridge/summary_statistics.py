@@ -273,57 +273,113 @@ def compute_FST1(
     return results
 
 
+#def _fst_wc(loci, pops):
+#    """Weir & Cockerham sur un ensemble de populations -- formule générale
+#    de cal_snfstd (sumstat.cpp), npop quelconque.
+#    Retourne (FST2m, FST2v) via ratio sum(num)/sum(den) et Welford."""
+#    x_prev = 0.0
+#    xs, numt, dent = [], 0.0, 0.0
+#    for lg in loci:
+#        S_1 = S_2 = SSI = SSP = 0.0
+#        pi_hat = [0.0, 0.0]
+#        samples_data = []
+#        n0 = 0
+#        for pop in pops:
+#            g = lg[pop]
+#            n = float(len(g))
+#            if n > 0:
+#                s = float(sum(g))
+#                p = [1 - s / n, s / n]
+#                S_1 += n
+#                S_2 += n * n
+#                for k in range(2):
+#                    pi_hat[k] += n * p[k]
+#                    SSI += n * p[k] * (1 - p[k])
+#                samples_data.append((n, p))
+#            else:
+#                n0 += 1
+#        if not samples_data:
+#            xs.append(x_prev)
+#            continue
+#        for k in range(2):
+#            pi_hat[k] /= S_1
+#        for n, p in samples_data:
+#            for k in range(2):
+#                r = p[k] - pi_hat[k]
+#                SSP += n * (r * r)
+#        n_d = float(len(samples_data))
+#        n_c = (S_1 - S_2 / S_1) / (n_d - 1.0)
+#        MSI = SSI / (S_1 - n_d)
+#        MSP = SSP / (n_d - 1.0)
+#        num = MSP - MSI
+#        den = MSP + (n_c - 1.0) * MSI
+#        if abs(den) > 0:
+#            x_prev = num / den
+#        xs.append(x_prev)
+#        numt += num
+#        dent += den
+#    fstm = numt / dent if abs(dent) > 0 else 0.0
+#    n = len(xs)
+#    sw2diff = n * n - n
+#    mx2 = sum((x - sum(xs) / n) ** 2 for x in xs)
+#    fstv = mx2 * n / sw2diff if sw2diff > 0 else 0.0
+#    return fstm, fstv
+
 def _fst_wc(loci, pops):
-    """Weir & Cockerham sur un ensemble de populations -- formule générale
-    de cal_snfstd (sumstat.cpp), npop quelconque.
-    Retourne (FST2m, FST2v) via ratio sum(num)/sum(den) et Welford."""
+    """Weir & Cockerham vectorisé sur tous les loci.
+    Retourne (FSTm, FSTv). Formule identique à cal_snfstd, mais toutes
+    les opérations par-locus sont faites en numpy sur des vecteurs de
+    longueur n_loci au lieu d'une boucle Python."""
+    nloci = len(loci)
+    npop = len(pops)
+
+    # Matrice des comptes d'allèle 1 : shape (npop, nloci)
+    counts = np.array([[sum(lg[p]) for lg in loci] for p in pops], dtype=float)
+    ns = np.array([[len(lg[p]) for lg in loci] for p in pops], dtype=float)
+
+    p1 = counts / ns          # freq allèle 1, shape (npop, nloci)
+    p0 = 1.0 - p1             # freq allèle 0
+
+    S_1 = ns.sum(axis=0)      # (nloci,)
+    S_2 = (ns**2).sum(axis=0)
+    n_d = float(npop)
+
+    # pi_hat pour chaque allèle : moyenne pondérée sur les pops
+    pi0 = (ns * p0).sum(axis=0) / S_1
+    pi1 = (ns * p1).sum(axis=0) / S_1
+
+    SSI = (ns * p0 * (1 - p0) + ns * p1 * (1 - p1)).sum(axis=0)
+    SSP = (ns * (p0 - pi0)**2 + ns * (p1 - pi1)**2).sum(axis=0)
+
+    n_c = (S_1 - S_2 / S_1) / (n_d - 1.0)
+    MSI = SSI / (S_1 - n_d)
+    MSP = SSP / (n_d - 1.0)
+    num = MSP - MSI
+    den = MSP + (n_c - 1.0) * MSI
+
+    # x = num/den quand den != 0, sinon persiste la valeur précédente
+    x = np.zeros(nloci)
+    valid = np.abs(den) > 0
+    ratio = np.where(valid, num / np.where(valid, den, 1.0), 0.0)
+    # Propagation "forward-fill" de x_prev quand den==0
     x_prev = 0.0
-    xs, numt, dent = [], 0.0, 0.0
-    for lg in loci:
-        S_1 = S_2 = SSI = SSP = 0.0
-        pi_hat = [0.0, 0.0]
-        samples_data = []
-        n0 = 0
-        for pop in pops:
-            g = lg[pop]
-            n = float(len(g))
-            if n > 0:
-                s = float(sum(g))
-                p = [1 - s / n, s / n]
-                S_1 += n
-                S_2 += n * n
-                for k in range(2):
-                    pi_hat[k] += n * p[k]
-                    SSI += n * p[k] * (1 - p[k])
-                samples_data.append((n, p))
-            else:
-                n0 += 1
-        if not samples_data:
-            xs.append(x_prev)
-            continue
-        for k in range(2):
-            pi_hat[k] /= S_1
-        for n, p in samples_data:
-            for k in range(2):
-                r = p[k] - pi_hat[k]
-                SSP += n * (r * r)
-        n_d = float(len(samples_data))
-        n_c = (S_1 - S_2 / S_1) / (n_d - 1.0)
-        MSI = SSI / (S_1 - n_d)
-        MSP = SSP / (n_d - 1.0)
-        num = MSP - MSI
-        den = MSP + (n_c - 1.0) * MSI
-        if abs(den) > 0:
-            x_prev = num / den
-        xs.append(x_prev)
-        numt += num
-        dent += den
+    xs = np.empty(nloci)
+    for i in range(nloci):
+        if valid[i]:
+            x_prev = ratio[i]
+        xs[i] = x_prev
+
+    numt = num.sum()
+    dent = den.sum()
     fstm = numt / dent if abs(dent) > 0 else 0.0
-    n = len(xs)
+
+    n = nloci
     sw2diff = n * n - n
-    mx2 = sum((x - sum(xs) / n) ** 2 for x in xs)
+    mean = xs.mean()
+    mx2 = ((xs - mean) ** 2).sum()
     fstv = mx2 * n / sw2diff if sw2diff > 0 else 0.0
-    return fstm, fstv
+
+    return float(fstm), float(fstv)
 
 
 def compute_FST2(
@@ -382,51 +438,90 @@ def compute_FST3_FST4_FSTG(
 # ----------------------------------------------------------------------------
 # NEI
 # ----------------------------------------------------------------------------
+#def compute_NEI(
+#    genotypes_per_locus: list[dict[str, list[int]]],
+#    population_names: list[str],
+#) -> dict[str, float]:
+#    """NEIm_i.j et NEIv_i.j : distance de Nei (1972) par paire.
+#    Référence : cal_snnei dans sumstat.cpp.
+#    NEI = 1 - (fi*fj + gi*gj) / sqrt(fi²+gi²) / sqrt(fj²+gj²)
+#    x_prev persiste si n==0 (comportement C++ non réinitialisé)."""
+#    import math
+#
+#    results = {}
+#    pairs = [
+#        (pa, pb)
+#        for i, pa in enumerate(population_names)
+#        for pb in population_names[i + 1 :]
+#    ]
+#
+#    for pa, pb in pairs:
+#        x_prev = 0.0
+#        xs = []
+#        for lg in genotypes_per_locus:
+#            ga, gb = lg[pa], lg[pb]
+#            na, nb = len(ga), len(gb)
+#            if na > 0 and nb > 0:
+#                fi = 1 - sum(ga) / na  # freq allele 0 in pa
+#                gi = sum(ga) / na  # freq allele 1 in pa
+#                fj = 1 - sum(gb) / nb  # freq allele 0 in pb
+#
+#                gj = sum(gb) / nb  # freq allele 1 in pb
+#                denom = math.sqrt(fi * fi + gi * gi) * math.sqrt(fj * fj + gj * gj)
+#                if denom > 0:
+#                    x_prev = 1 - (fi * fj + gi * gj) / denom
+#            xs.append(x_prev)
+#
+#        i = population_names.index(pa) + 1
+#        j = population_names.index(pb) + 1
+#        key = f"{i}.{j}"
+#        n = len(xs)
+#        sw2diff = n * n - n
+#        mx2 = sum((x - sum(xs) / n) ** 2 for x in xs)
+#        results[f"NEIm_{key}"] = sum(xs) / n
+#        results[f"NEIv_{key}"] = mx2 * n / sw2diff if sw2diff > 0 else 0.0
+#    return results
+
 def compute_NEI(
     genotypes_per_locus: list[dict[str, list[int]]],
     population_names: list[str],
 ) -> dict[str, float]:
-    """NEIm_i.j et NEIv_i.j : distance de Nei (1972) par paire.
-    Référence : cal_snnei dans sumstat.cpp.
+    """NEIm_i.j et NEIv_i.j : distance de Nei (1972) par paire, vectorisé.
     NEI = 1 - (fi*fj + gi*gj) / sqrt(fi²+gi²) / sqrt(fj²+gj²)
-    x_prev persiste si n==0 (comportement C++ non réinitialisé)."""
-    import math
+    x_prev persiste si n==0."""
+    pops = population_names
+    nloci = len(genotypes_per_locus)
+
+    # Fréquences allèle 0 (f) et allèle 1 (g) pour chaque pop : (npop, nloci)
+    counts = np.array([[sum(lg[p]) for lg in genotypes_per_locus] for p in pops], dtype=float)
+    ns = np.array([[len(lg[p]) for lg in genotypes_per_locus] for p in pops], dtype=float)
+    g = counts / ns          # freq allèle 1
+    f = 1.0 - g              # freq allèle 0
+    norm = np.sqrt(f*f + g*g)  # (npop, nloci)
 
     results = {}
-    pairs = [
-        (pa, pb)
-        for i, pa in enumerate(population_names)
-        for pb in population_names[i + 1 :]
-    ]
+    for i in range(len(pops)):
+        for j in range(i+1, len(pops)):
+            denom = norm[i] * norm[j]
+            valid = denom > 0
+            nei = np.where(valid, 1.0 - (f[i]*f[j] + g[i]*g[j]) / np.where(valid, denom, 1.0), 0.0)
 
-    for pa, pb in pairs:
-        x_prev = 0.0
-        xs = []
-        for lg in genotypes_per_locus:
-            ga, gb = lg[pa], lg[pb]
-            na, nb = len(ga), len(gb)
-            if na > 0 and nb > 0:
-                fi = 1 - sum(ga) / na  # freq allele 0 in pa
-                gi = sum(ga) / na  # freq allele 1 in pa
-                fj = 1 - sum(gb) / nb  # freq allele 0 in pb
+            # forward-fill quand invalide
+            xs = np.empty(nloci)
+            x_prev = 0.0
+            for k in range(nloci):
+                if valid[k]:
+                    x_prev = nei[k]
+                xs[k] = x_prev
 
-                gj = sum(gb) / nb  # freq allele 1 in pb
-                denom = math.sqrt(fi * fi + gi * gi) * math.sqrt(fj * fj + gj * gj)
-                if denom > 0:
-                    x_prev = 1 - (fi * fj + gi * gj) / denom
-            xs.append(x_prev)
-
-        i = population_names.index(pa) + 1
-        j = population_names.index(pb) + 1
-        key = f"{i}.{j}"
-        n = len(xs)
-        sw2diff = n * n - n
-        mx2 = sum((x - sum(xs) / n) ** 2 for x in xs)
-        results[f"NEIm_{key}"] = sum(xs) / n
-        results[f"NEIv_{key}"] = mx2 * n / sw2diff if sw2diff > 0 else 0.0
+            key = f"{i+1}.{j+1}"
+            n = nloci
+            sw2diff = n*n - n
+            mean = xs.mean()
+            mx2 = ((xs - mean)**2).sum()
+            results[f"NEIm_{key}"] = float(mean)
+            results[f"NEIv_{key}"] = float(mx2 * n / sw2diff) if sw2diff > 0 else 0.0
     return results
-
-
 # ----------------------------------------------------------------------------
 # AML : admixture maximum likelihood sur triplets
 # ----------------------------------------------------------------------------
