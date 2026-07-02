@@ -31,28 +31,57 @@ class ParticleResult:
     summary_statistics: dict[str, float]
 
 
+#def _run_single_particle(
+#    particle_index: int,
+#    reference_directory: Path,
+#    scenario_index: int,
+#    num_loci: int,
+#    general_binary_path: Path,
+#    base_work_directory: Path,
+#    stats_filter: str,
+#) -> ParticleResult:
+#    """Calcule une seule particule -- fonction top-level (picklable),
+#    appelée par chaque worker du ProcessPoolExecutor.
+#
+#    La seed utilisée est dérivée de particle_index, garantissant un
+#    tirage distinct et reproductible par particule (même particle_index
+#    -> même résultat, peu importe l'ordre d'exécution des workers).
+#
+#    IMPORTANT : seed = particle_index + 1, jamais particle_index seul.
+#    msprime.sim_ancestry rejette explicitement seed=0 (ValueError "seeds
+#    must be greater than 0 and less than 2^32") -- vérifié empiriquement.
+#    Donc particle_index=0 (le cas le plus probable, première particule)
+#    utilise seed=1, pas seed=0.
+#    """
+#    work_directory = base_work_directory / f"particle_{particle_index}"
+#    work_directory.mkdir(parents=True, exist_ok=True)
+#
+#    summary_statistics, parameter_values = compute_summary_statistics(
+#        reference_directory=reference_directory,
+#        scenario_index=scenario_index,
+#        num_loci=num_loci,
+#        seed=particle_index + 1,
+#        general_binary_path=general_binary_path,
+#        work_directory=work_directory,
+#        stats_filter=stats_filter,
+#    )
+#
+#    return ParticleResult(
+#        particle_index=particle_index,
+#        scenario_index=scenario_index,
+#        parameter_values=parameter_values,
+#        summary_statistics=summary_statistics,
+#    )
+
 def _run_single_particle(
     particle_index: int,
     reference_directory: Path,
     scenario_index: int,
     num_loci: int,
-    general_binary_path: Path,
+    general_binary_path: Path | None,  # optionnel désormais
     base_work_directory: Path,
     stats_filter: str,
 ) -> ParticleResult:
-    """Calcule une seule particule -- fonction top-level (picklable),
-    appelée par chaque worker du ProcessPoolExecutor.
-
-    La seed utilisée est dérivée de particle_index, garantissant un
-    tirage distinct et reproductible par particule (même particle_index
-    -> même résultat, peu importe l'ordre d'exécution des workers).
-
-    IMPORTANT : seed = particle_index + 1, jamais particle_index seul.
-    msprime.sim_ancestry rejette explicitement seed=0 (ValueError "seeds
-    must be greater than 0 and less than 2^32") -- vérifié empiriquement.
-    Donc particle_index=0 (le cas le plus probable, première particule)
-    utilise seed=1, pas seed=0.
-    """
     work_directory = base_work_directory / f"particle_{particle_index}"
     work_directory.mkdir(parents=True, exist_ok=True)
 
@@ -61,11 +90,10 @@ def _run_single_particle(
         scenario_index=scenario_index,
         num_loci=num_loci,
         seed=particle_index + 1,
-        general_binary_path=general_binary_path,
         work_directory=work_directory,
+        general_binary_path=general_binary_path,
         stats_filter=stats_filter,
     )
-
     return ParticleResult(
         particle_index=particle_index,
         scenario_index=scenario_index,
@@ -99,7 +127,7 @@ def run_reftable_simulation(
     ProcessPoolExecutor, généralement le nombre de cœurs disponibles).
     """
     reference_directory = Path(reference_directory)
-    general_binary_path = Path(general_binary_path)
+    general_binary_path = Path(general_binary_path) if general_binary_path is not None else None
     base_work_directory = Path(base_work_directory)
 
     results_by_index: dict[int, ParticleResult] = {}
