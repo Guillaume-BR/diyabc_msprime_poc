@@ -3,9 +3,10 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+
+from bridge.loci_parser import rewrite_loci_count
 from bridge.pipeline import run_poc_for_directory
 from bridge.snp_writer import write_snp_file
-from bridge.loci_parser import rewrite_loci_count
 from bridge.statobs_parser import parse_statobs
 from bridge.summary_statistics import compute_all_statistics
 
@@ -27,7 +28,8 @@ pop_names = ["pop1", "pop2", "pop3", "pop4"]
 our_stats = compute_all_statistics(genotypes_list, pop_names)
 
 # 3. Passer les MÊMES données au binaire general
-header_text = open("reference/human/header.txt").read()
+with open("reference/human/header.txt") as f:
+    header_text = f.read()
 snp_filename = header_text.splitlines()[0].strip()
 write_snp_file(genotypes_list, WORK / snp_filename)
 adapted = rewrite_loci_count(header_text, num_loci)

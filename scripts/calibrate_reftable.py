@@ -1,6 +1,6 @@
 import os
-import time
 import shutil
+import time
 from pathlib import Path
 
 from bridge.reftable_loop import run_reftable_simulation

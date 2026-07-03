@@ -1,12 +1,12 @@
 import os
-import time
 import shutil
+import subprocess
+import time
 from pathlib import Path
 
+from bridge.loci_parser import rewrite_loci_count
 from bridge.pipeline import run_poc_for_directory
 from bridge.snp_writer import write_snp_file
-from bridge.loci_parser import rewrite_loci_count
-import subprocess
 
 GENERAL_BINARY_PATH = os.environ["DIYABC_GENERAL_PATH"]
 WORK_DIR = Path("./tmp/profile_one")
@@ -22,7 +22,8 @@ genotypes_list = list(genotypes_per_locus)
 t1 = time.time()
 print(f"Simulation msprime (5000 loci) : {t1 - t0:.1f}s")
 
-header_text = open("reference/human/header.txt").read()
+with open("reference/human/header.txt") as f:
+    header_text = f.read()
 snp_filename = header_text.splitlines()[0].strip()
 write_snp_file(genotypes_list, WORK_DIR / snp_filename)
 t2 = time.time()

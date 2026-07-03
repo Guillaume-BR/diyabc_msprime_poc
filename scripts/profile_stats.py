@@ -2,20 +2,21 @@
 Pour comparer les temps de calcul des statistiques résumées
 """
 
-import cProfile, pstats, io
-from bridge.pipeline import run_poc_for_directory
+import time
+
 from bridge.ancestry_simulation import build_samples_argument
+from bridge.pipeline import run_poc_for_directory
 from bridge.summary_statistics import (
+    compute_AML,
+    compute_F3_F4,
+    compute_FST1,
+    compute_FST2,
+    compute_FST3_FST4_FSTG,
+    compute_HW_HB,
     compute_ML1,
     compute_ML2,
     compute_ML3,
-    compute_HW_HB,
-    compute_FST1,
-    compute_FST2,
     compute_NEI,
-    compute_AML,
-    compute_F3_F4,
-    compute_FST3_FST4_FSTG,
 )
 
 # Simuler une fois (5000 loci), hors profilage
@@ -37,8 +38,6 @@ funcs = {
     "F3_F4": compute_F3_F4,
     "FST3_FST4": compute_FST3_FST4_FSTG,
 }
-
-import time
 
 print(f"{'Fonction':<12} {'Temps (s)':>10}")
 print("-" * 24)

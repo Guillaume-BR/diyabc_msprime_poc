@@ -1,11 +1,13 @@
 import os
-from bridge.reftable_loop import run_reftable_simulation, write_reftable_bin
+
 from bridge.prior_parser import parse_priors
+from bridge.reftable_loop import run_reftable_simulation, write_reftable_bin
 from bridge.scenario_parser import parse_header_scenarios
 
 GENERAL_BINARY_PATH = os.environ["DIYABC_GENERAL_PATH"]
 
-header_text = open("reference/human/header.txt").read()
+with open("reference/human/header.txt") as f:
+    header_text = f.read()
 
 results = run_reftable_simulation(
     reference_directory="reference/human",

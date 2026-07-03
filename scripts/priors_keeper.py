@@ -1,6 +1,7 @@
-from bridge.prior_parser import parse_priors, is_constant_prior
+from bridge.prior_parser import is_constant_prior, parse_priors
 
-header_text = open("reference/human/header.txt").read()
+with open("reference/human/header.txt") as f:
+    header_text = f.read()
 priors, _ = parse_priors(header_text)
 
 kept = [p.name for p in priors if not is_constant_prior(p)]

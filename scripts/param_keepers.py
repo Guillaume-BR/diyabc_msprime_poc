@@ -1,8 +1,9 @@
-from bridge.prior_parser import parse_priors, is_constant_prior
-from bridge.scenario_parser import parse_header_scenarios
 from bridge.demography_builder import get_parameter_names_used_by_scenario
+from bridge.prior_parser import is_constant_prior, parse_priors
+from bridge.scenario_parser import parse_header_scenarios
 
-header_text = open("reference/human/header.txt").read()
+with open("reference/human/header.txt") as f:
+    header_text = f.read()
 priors, _ = parse_priors(header_text)
 
 scenarios = parse_header_scenarios(header_text)

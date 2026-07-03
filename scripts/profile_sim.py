@@ -1,15 +1,15 @@
-import time
-import msprime
-from bridge.pipeline import build_random_demography_for_scenario_index
-from bridge.ancestry_simulation import (
-    build_samples_argument,
-    simulate_independent_loci,
-    _draw_single_mutation_node,
-)
 import random
+import time
 
 # Ajoute à profile_sim.py, après le bloc Hudson existant :
 import numpy as np
+
+from bridge.ancestry_simulation import (
+    _draw_single_mutation_node,
+    build_samples_argument,
+    simulate_independent_loci,
+)
+from bridge.pipeline import build_random_demography_for_scenario_index
 
 
 def draw_fast(tree, ts, rng):
@@ -25,7 +25,8 @@ def draw_fast(tree, ts, rng):
     return int(nodes[idx])
 
 
-header_text = open("reference/human/header.txt").read()
+with open("reference/human/header.txt") as f:
+    header_text = f.read()
 demography, _ = build_random_demography_for_scenario_index(header_text, 1, 1)
 samples = build_samples_argument("reference/human/human_snp_all22chr_maf5.snp")
 
@@ -78,7 +79,7 @@ t10 = time.time()
 count = 0
 for ts in tree_sequences:
     tree = ts.first()
-    for u in tree.nodes():
+    for _u in tree.nodes():
         count += 1
 t11 = time.time()
 print(f"Itération tree.nodes() seule          : {t11 - t10:.2f}s ({count} noeuds)")
