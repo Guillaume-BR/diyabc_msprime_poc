@@ -11,14 +11,14 @@ l'index de la particule), pour éviter toute collision d'écriture entre
 processus concurrents sur les mêmes fichiers (.snp, statobsRF.txt...).
 """
 
+import struct
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-import struct
 
+from bridge.demography_builder import get_parameter_names_used_by_scenario
 from bridge.pipeline import compute_summary_statistics
 from bridge.prior_parser import is_constant_prior
-from bridge.demography_builder import get_parameter_names_used_by_scenario
 
 
 @dataclass
@@ -227,3 +227,61 @@ def write_reftable_bin(
                 f.write(struct.pack("<f", result.parameter_values[name]))
             for name in stat_names:
                 f.write(struct.pack("<f", result.summary_statistics[name]))
+
+
+def write_reftable_txt(
+    results: list[ParticleResult],
+    priors: list,
+    scenario,
+    output_path: str | Path,
+) -> None:
+    """Écrit les résultats au format texte de DIYABC :
+    first_records_of_the_reference_table_0.txt.
+
+    Format reproduit depuis particleset.cpp / header.cpp :
+      - Ligne 1 : noms de colonnes, chacun centré sur 14 caractères
+        (fonction C++ centre(s1, 14)).
+      - Lignes suivantes : "%3d  " pour le numéro de scénario, puis
+        "  %12.6f" pour chaque paramètre et statistique.
+
+    Note sur le format des paramètres : le C++ distingue categ<2 (%12.0f,
+    entiers) vs categ>=2 (%12.3f, flottants), mais cette catégorie n'est
+    pas exposée dans les priors Python. On utilise %12.6f uniformément --
+    suffisant pour la comparaison statistique des distributions.
+
+    L'ordre des colonnes suit la même logique que write_reftable_bin :
+    paramètres filtrés (non constants, utilisés par le scénario actif)
+    puis statistiques triées alphabétiquement.
+    """
+    if not results:
+        raise ValueError("results est vide : au moins une particule est requise")
+
+    used_param_names = get_parameter_names_used_by_scenario(scenario)
+    kept_param_names = [
+        p.name
+        for p in priors
+        if not is_constant_prior(p) and p.name in used_param_names
+    ]
+    stat_names = sorted(results[0].summary_statistics.keys())
+
+    def _centre(s: str, width: int = 14) -> str:
+        """Reproduit centre() de mesutils.cpp : centrage sur width chars."""
+        return s.center(width)
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        # En-tête : "Scenario" + noms des paramètres + noms des stats
+        header = (
+            _centre("Scenario")
+            + "".join(_centre(n) for n in kept_param_names)
+            + "".join(_centre(n) for n in stat_names)
+        )
+        f.write(header + "\n")
+
+        # Une ligne par particule
+        for r in results:
+            line = f"{r.scenario_index:3d}  "
+            for name in kept_param_names:
+                line += f"  {r.parameter_values[name]:12.6f}"
+            for name in stat_names:
+                line += f"  {r.summary_statistics[name]:12.6f}"
+            f.write(line + "\n")
