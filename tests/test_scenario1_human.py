@@ -25,7 +25,11 @@ from bridge.demography_builder import (
 )
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import count_samples_per_population, population_index_to_name
-from bridge.parameter_sampling import draw_parameter_values, draw_scenario
+from bridge.parameter_sampling import (
+    _draw_one_value,
+    draw_parameter_values,
+    draw_scenario,
+)
 from bridge.pipeline import (
     build_random_demography_for_scenario_index,
     compute_summary_statistics,
@@ -260,6 +264,56 @@ def test_draw_parameter_values_reproducible(header_text):
     values2 = draw_parameter_values(priors, constraints, seed=123)
 
     assert values1 == values2
+
+
+def test_draw_parameter_values_rounds_N_and_T_not_A(header_text):
+    """DIYABC arrondit à l'entier le plus proche les priors de catégorie
+    N (taille) et T (temps) juste après le tirage, mais laisse le taux
+    d'admixture (catégorie A, ex: 'ra') continu -- vérifié contre
+    particuleC.cpp ("if (category<2) value = floor(0.5+value)", avec
+    category 0=N, 1=T, 2=A dans header.cpp)."""
+    priors, constraints = parse_priors(header_text)
+    priors_by_name = {p.name: p for p in priors}
+
+    non_integer_ra_seen = False
+    for seed in range(1, 50):
+        values = draw_parameter_values(priors, constraints, seed)
+        for name, prior in priors_by_name.items():
+            if prior.category in ("N", "T"):
+                assert values[name] == int(values[name]), (
+                    f"{name} (catégorie {prior.category}) devrait être un "
+                    f"entier, obtenu {values[name]}"
+                )
+        if values["ra"] != int(values["ra"]):
+            non_integer_ra_seen = True
+
+    assert non_integer_ra_seen, "ra (catégorie A) ne devrait jamais être arrondi"
+
+
+class _FakeRng:
+    """rng minimal pour contrôler exactement la valeur tirée par
+    _draw_one_value, sans dépendre de random.Random."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def uniform(self, min_, max_):
+        return self._value
+
+
+def test_draw_one_value_round_half_up_not_banker():
+    """L'arrondi doit être round-half-up (floor(0.5+x), comme
+    particuleC.cpp), PAS round-half-to-even (comportement par défaut de
+    la fonction round() de Python) -- cas où les deux méthodes divergent
+    : x=2.5 -> 3 en round-half-up, mais round(2.5) == 2 en Python."""
+    prior = Prior(name="N1", category="N", law="UN", bounds=(0.0, 10.0, 0.0, 0.0))
+
+    value = _draw_one_value(prior, _FakeRng(2.5))
+
+    assert value == 3.0
+    assert (
+        round(2.5) == 2
+    )  # confirme que Python round() aurait donné un résultat différent
 
 
 def test_draw_scenario_uses_weight(header_text):

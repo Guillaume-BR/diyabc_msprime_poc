@@ -7,8 +7,14 @@ Limité pour l'instant à la loi UN (uniforme). Les autres lois (LU, GA --
 voir doc DIYABC sur "mean and standard deviation") ne sont pas encore
 vérifiées : human n'utilise que UN, donc pas bloquant pour ce POC, mais
 à traiter explicitement avant de généraliser à d'autres datasets.
+
+Les priors de catégorie N (taille) et T (temps) sont arrondis à
+l'entier le plus proche juste après le tirage, comme DIYABC
+(particuleC.cpp, voir _draw_one_value) -- seul le taux d'admixture (A)
+reste continu.
 """
 
+import math
 import random
 
 from bridge.scenario_types import OrderConstraint, Prior, Scenario
@@ -48,12 +54,22 @@ def draw_scenario(scenarios: list[Scenario], seed: int) -> Scenario:
 def _draw_one_value(prior: Prior, rng: random.Random) -> float:
     if prior.law == "UN":
         min_, max_, *_ = prior.bounds
-        return rng.uniform(min_, max_)
+        value = rng.uniform(min_, max_)
+    else:
+        raise NotImplementedError(
+            f"Loi '{prior.law}' non implémentée (seule 'UN' est supportée pour "
+            f"l'instant). Prior concerné : {prior.name!r}"
+        )
 
-    raise NotImplementedError(
-        f"Loi '{prior.law}' non implémentée (seule 'UN' est supportée pour "
-        f"l'instant). Prior concerné : {prior.name!r}"
-    )
+    if prior.category in ("N", "T"):
+        # DIYABC arrondit à l'entier le plus proche les priors de taille
+        # (N) et de temps (T) juste après le tirage -- particuleC.cpp :
+        # "if (category<2) value = floor(0.5+value)" (round-half-up),
+        # category 0=N, 1=T, 2=A (histparam.category, header.cpp). Le
+        # taux d'admixture (A) reste continu, jamais arrondi.
+        value = float(math.floor(0.5 + value))
+
+    return value
 
 
 def draw_parameter_values(
