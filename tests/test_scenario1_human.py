@@ -5,6 +5,7 @@ mentor (voir notes/exploration.md) pour le scénario 1.
 """
 
 import os
+import shutil
 import struct
 from pathlib import Path
 
@@ -28,11 +29,13 @@ from bridge.parameter_sampling import draw_parameter_values, draw_scenario
 from bridge.pipeline import (
     build_random_demography_for_scenario_index,
     compute_summary_statistics,
+    read_header_text,
     run_poc_for_directory,
 )
 from bridge.prior_parser import is_constant_prior, parse_priors
 from bridge.reftable_loop import (
     run_reftable_simulation,
+    simulate_reference_directory,
     write_reftable_bin,
     write_reftable_txt,
 )
@@ -524,6 +527,45 @@ def test_run_poc_for_directory():
     mutated_list = list(mutated)
     assert len(mutated_list) == 15
     assert "N1" in values
+
+
+def test_read_header_text_prefers_header_txt(tmp_path):
+    """Si les deux fichiers sont présents, header.txt doit être lu en
+    priorité (config initiale fournie par l'utilisateur), pas
+    headerRF.txt (variante produite par un run DIYABC réel)."""
+    (tmp_path / "header.txt").write_text("contenu header.txt")
+    (tmp_path / "headerRF.txt").write_text("contenu headerRF.txt")
+
+    assert read_header_text(tmp_path) == "contenu header.txt"
+
+
+def test_read_header_text_falls_back_to_headerRF(tmp_path):
+    """Si seul headerRF.txt est présent (ex: reference/Exemple5/), il
+    doit être lu en repli."""
+    (tmp_path / "headerRF.txt").write_text("contenu headerRF.txt")
+
+    assert read_header_text(tmp_path) == "contenu headerRF.txt"
+
+
+def test_simulate_reference_directory(tmp_path):
+    """Vérifie le point d'entrée pour un sous-dossier de test sous
+    reference/ : à partir d'un dossier ne contenant qu'un header.txt et
+    le .snp observé, doit tirer les scénarios pondérés et écrire
+    reftable_msprime.txt DANS CE MÊME DOSSIER (jamais 'reftable.txt',
+    pour ne pas être confondu avec le first_records_of_the_reference_
+    table_0.txt d'un vrai run DIYABC)."""
+    shutil.copy(REFERENCE_DIR / "header.txt", tmp_path / "header.txt")
+    (tmp_path / OBSERVED_SNP_FILE.name).symlink_to(OBSERVED_SNP_FILE)
+
+    results = simulate_reference_directory(tmp_path, num_loci=10, nrec=4)
+
+    assert len(results) == 4
+    output_file = tmp_path / "reftable_msprime.txt"
+    assert output_file.exists()
+
+    lines = output_file.read_text().splitlines()
+    assert lines[0].startswith("   scenario   ")  # centre("scenario", 14)
+    assert len(lines) == 5  # en-tête + 4 particules
 
 
 def test_write_snp_file_small_case(tmp_path):

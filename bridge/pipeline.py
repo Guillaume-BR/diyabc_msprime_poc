@@ -13,17 +13,29 @@ from pathlib import Path
 
 import msprime
 
-from bridge.scenario_parser import parse_header_scenarios
-from bridge.prior_parser import parse_priors
-from bridge.parameter_sampling import draw_parameter_values
-from bridge.demography_builder import build_demography
-from bridge.scenario_types import Scenario
 from bridge.ancestry_simulation import (
     build_samples_argument,
     simulate_independent_loci,
     simulate_snp_genotypes,
 )
+from bridge.demography_builder import build_demography
+from bridge.parameter_sampling import draw_parameter_values
+from bridge.prior_parser import parse_priors
+from bridge.scenario_parser import parse_header_scenarios
+from bridge.scenario_types import Scenario
 from bridge.summary_statistics import compute_all_statistics
+
+
+def read_header_text(directory: Path) -> str:
+    """Lit header.txt si présent, sinon headerRF.txt en repli -- les deux
+    noms coexistent selon les jeux de données (header.txt = config
+    initiale fournie par l'utilisateur, headerRF.txt = variante produite
+    par un run DIYABC réel ; nos sous-dossiers de test n'auront au
+    départ que l'un des deux)."""
+    header_path = directory / "header.txt"
+    if not header_path.exists():
+        header_path = directory / "headerRF.txt"
+    return header_path.read_text()
 
 
 def build_random_demography(
@@ -90,7 +102,7 @@ def run_poc_for_directory(
     (nécessaires plus tard pour écrire le reftable.bin).
     """
     directory = Path(directory)
-    header_text = (directory / "header.txt").read_text()
+    header_text = read_header_text(directory)
 
     snp_filename = header_text.splitlines()[0].strip()
     snp_path = directory / snp_filename
@@ -123,7 +135,7 @@ def compute_summary_statistics(
     Retourne (summary_statistics, parameter_values).
     """
     reference_directory = Path(reference_directory)
-    header_text = (reference_directory / "header.txt").read_text()
+    header_text = read_header_text(reference_directory)
     snp_filename = header_text.splitlines()[0].strip()
     snp_path = reference_directory / snp_filename
 

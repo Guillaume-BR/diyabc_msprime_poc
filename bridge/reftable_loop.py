@@ -17,8 +17,9 @@ from pathlib import Path
 
 from bridge.demography_builder import get_parameter_names_used_by_scenario
 from bridge.parameter_sampling import draw_scenario
-from bridge.pipeline import compute_summary_statistics
-from bridge.prior_parser import is_constant_prior
+from bridge.pipeline import compute_summary_statistics, read_header_text
+from bridge.prior_parser import is_constant_prior, parse_priors
+from bridge.scenario_parser import parse_header_scenarios
 from bridge.scenario_types import Scenario
 
 
@@ -285,3 +286,49 @@ def write_reftable_txt(
             for name in stat_names:
                 line += f"  {r.summary_statistics[name]:12.6f}"
             f.write(line + "\n")
+
+
+def simulate_reference_directory(
+    test_directory: str | Path,
+    num_loci: int,
+    nrec: int,
+    stats_filter: str = "ALL",
+    max_workers: int | None = None,
+) -> list[ParticleResult]:
+    """Point d'entrée pour un sous-dossier de test sous reference/ (ex:
+    reference/mon_test/), qui ne contient au départ qu'un header.txt (ou
+    headerRF.txt, repli si absent -- voir pipeline.read_header_text) et
+    le fichier .snp observé (nommé sur la première ligne du header, pas
+    un nom fixe -- voir pipeline.run_poc_for_directory).
+
+    Tire les scénarios candidats pondérés par leur `weight` parmi TOUS
+    ceux déclarés dans le header (voir parameter_sampling.draw_scenario),
+    simule nrec particules, et écrit le résultat dans
+    test_directory/reftable_msprime.txt -- jamais "reftable.txt", pour
+    ne pas être confondu avec le first_records_of_the_reference_table_0.
+    txt qu'un vrai run DIYABC produirait dans le même dossier.
+
+    Retourne les ParticleResult (utile pour appeler write_reftable_bin
+    en plus, si besoin -- pas fait ici, ce point d'entrée ne produit que
+    le texte).
+    """
+    test_directory = Path(test_directory)
+    header_text = read_header_text(test_directory)
+
+    priors, _ = parse_priors(header_text)
+    scenarios = parse_header_scenarios(header_text)
+
+    results = run_reftable_simulation(
+        reference_directory=test_directory,
+        scenarios=scenarios,
+        num_loci=num_loci,
+        nrec=nrec,
+        stats_filter=stats_filter,
+        max_workers=max_workers,
+    )
+
+    write_reftable_txt(
+        results, priors, scenarios, test_directory / "reftable_msprime.txt"
+    )
+
+    return results
