@@ -17,8 +17,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from bridge.demography_builder import get_parameter_names_used_by_scenario
+from bridge.parameter_sampling import draw_scenario
 from bridge.pipeline import compute_summary_statistics
 from bridge.prior_parser import is_constant_prior
+from bridge.scenario_types import Scenario
 
 
 @dataclass
@@ -77,7 +79,7 @@ class ParticleResult:
 def _run_single_particle(
     particle_index: int,
     reference_directory: Path,
-    scenario_index: int,
+    scenarios: list[Scenario],
     num_loci: int,
     general_binary_path: Path | None,  # optionnel désormais
     base_work_directory: Path,
@@ -86,18 +88,21 @@ def _run_single_particle(
     work_directory = base_work_directory / f"particle_{particle_index}"
     work_directory.mkdir(parents=True, exist_ok=True)
 
+    seed = particle_index + 1
+    drawn_scenario = draw_scenario(scenarios, seed)
+
     summary_statistics, parameter_values = compute_summary_statistics(
         reference_directory=reference_directory,
-        scenario_index=scenario_index,
+        scenario_index=drawn_scenario.index,
         num_loci=num_loci,
-        seed=particle_index + 1,
+        seed=seed,
         work_directory=work_directory,
         general_binary_path=general_binary_path,
         stats_filter=stats_filter,
     )
     return ParticleResult(
         particle_index=particle_index,
-        scenario_index=scenario_index,
+        scenario_index=drawn_scenario.index,
         parameter_values=parameter_values,
         summary_statistics=summary_statistics,
     )
@@ -105,7 +110,7 @@ def _run_single_particle(
 
 def run_reftable_simulation(
     reference_directory: str | Path,
-    scenario_index: int,
+    scenarios: list[Scenario],
     num_loci: int,
     nrec: int,
     general_binary_path: str | Path,
@@ -114,6 +119,14 @@ def run_reftable_simulation(
     max_workers: int | None = None,
 ) -> list[ParticleResult]:
     """Produit nrec particules (lignes de reftable.bin) en parallèle.
+
+    `scenarios` est la liste des scénarios candidats (typiquement TOUS
+    les scénarios déclarés dans header.txt) : chaque particule tire le
+    SIEN au hasard, pondéré par son `weight` (voir
+    parameter_sampling.draw_scenario, sémantique vérifiée contre
+    particuleC.cpp::ParticleC::drawscenario) -- une même particule peut
+    donc finir sur n'importe lequel des scénarios de la liste, pas
+    forcément le même pour toutes.
 
     base_work_directory doit déjà exister ; un sous-dossier
     "particle_<i>" y est créé pour chacune des nrec particules (donc
@@ -141,7 +154,7 @@ def run_reftable_simulation(
                 _run_single_particle,
                 particle_index,
                 reference_directory,
-                scenario_index,
+                scenarios,
                 num_loci,
                 general_binary_path,
                 base_work_directory,
@@ -157,30 +170,57 @@ def run_reftable_simulation(
     return [results_by_index[i] for i in range(nrec)]
 
 
+def _kept_param_names_by_scenario(
+    priors: list, scenarios: list[Scenario]
+) -> dict[int, list[str]]:
+    """Pour chaque scénario, la liste (dans l'ordre de déclaration des
+    priors) des noms de paramètres à garder : non constants
+    (is_constant_prior) ET référencés par CE scénario précis
+    (get_parameter_names_used_by_scenario) -- même filtre à deux
+    critères que l'ancienne version single-scenario, appliqué
+    séparément par scénario."""
+    result = {}
+    for scenario in scenarios:
+        used_param_names = get_parameter_names_used_by_scenario(scenario)
+        result[scenario.index] = [
+            p.name
+            for p in priors
+            if not is_constant_prior(p) and p.name in used_param_names
+        ]
+    return result
+
+
 def write_reftable_bin(
     results: list[ParticleResult],
     priors: list,
-    scenario,
+    scenarios: list[Scenario],
     output_path: str | Path,
 ) -> None:
     """Écrit un reftable.bin au format binaire DIYABC (vérifié contre
-    reftable.cpp, readReftable.R, et abcranger/readreftable.cpp -- voir
+    reftable.cpp et un vrai reftableRF.bin multi-scénario -- voir
     docs/synthese_diyabc_msprime.docx section 5).
 
-    Limité à un SEUL scénario actif (cohérent avec ce POC, qui ne traite
-    que le scénario 1 de human) : nscen=1, donc tous les résultats
-    doivent partager le même scenario_index -- vérifié, lève ValueError
-    sinon.
+    `scenarios` est la liste de TOUS les scénarios candidats déclarés
+    dans header.txt (pas seulement ceux effectivement tirés dans
+    `results`) : nscen = len(scenarios), et le numéro de scénario écrit
+    par ligne est le numéro 1-indexed du header.txt (scenario.index),
+    jamais renuméroté localement -- vérifié dans particuleC.cpp::
+    drawscenario et reftable.cpp.
 
-    Filtre les colonnes de paramètres sur DEUX critères, dans cet ordre :
-    1. is_constant_prior : exclut les priors quasi-dégénérés (comme
-       readReftable.R / abcranger)
-    2. get_parameter_names_used_by_scenario(scenario) : exclut les
-       priors non référencés par CE scénario précis -- correction d'un
-       bug découvert empiriquement (readReftable.R levait "indice hors
-       limites" : notre code gardait les 21 priors du header.txt entier,
-       alors que le scénario 1 n'en référence que 16 -- voir notes/
-       exploration.md).
+    IMPORTANT -- format à LONGUEUR VARIABLE par ligne, PAS d'union de
+    colonnes ni de valeur NA écrite sur disque : chaque ligne écrit
+    SEULEMENT nparam[scenario-1] floats de paramètres, ceux de son
+    propre scénario -- vérifié empiriquement contre un vrai
+    reftableRF.bin multi-scénario (dataset MER modelchoice/PoolSeq) et
+    contre reftable.cpp (boucle d'écriture indexée par
+    nparam[numscen-1]). La reconstruction en matrice rectangulaire avec
+    NA pour les colonnes non concernées est une responsabilité du
+    LECTEUR (readReftable.R), jamais de l'écrivain -- ne PAS essayer de
+    remplir les colonnes manquantes ici.
+
+    nparam[i] : nombre de paramètres (non constants, référencés) du
+    i-ème scénario de `scenarios` -- pilote directement la taille de
+    chaque enregistrement, comme dans reftable.cpp.
 
     Ne gère PAS les paramètres de mutation (absents de human) -- à
     ajouter (toujours en dernière position, après les paramètres
@@ -190,26 +230,22 @@ def write_reftable_bin(
     if not results:
         raise ValueError("results est vide : au moins une particule est requise")
 
-    scenario_indices = {r.scenario_index for r in results}
-    if len(scenario_indices) != 1:
-        raise NotImplementedError(
-            f"write_reftable_bin ne gère qu'un seul scénario actif à la "
-            f"fois -- scénarios trouvés dans results : {scenario_indices}"
+    known_indices = {s.index for s in scenarios}
+    unknown = {r.scenario_index for r in results} - known_indices
+    if unknown:
+        raise ValueError(
+            f"results contient des scenario_index absents de `scenarios` : {unknown}"
         )
-    scenario_index = scenario_indices.pop()
 
-    used_param_names = get_parameter_names_used_by_scenario(scenario)
-    kept_param_names = [
-        p.name
-        for p in priors
-        if not is_constant_prior(p) and p.name in used_param_names
-    ]
+    kept_param_names_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
     stat_names = sorted(results[0].summary_statistics.keys())
 
     nrec = len(results)
-    nscen = 1
-    nrecscen = [nrec]
-    nparam = [len(kept_param_names)]
+    nscen = len(scenarios)
+    nrecscen = [
+        sum(1 for r in results if r.scenario_index == s.index) for s in scenarios
+    ]
+    nparam = [len(kept_param_names_by_scenario[s.index]) for s in scenarios]
     nstat = len(stat_names)
 
     with open(output_path, "wb") as f:
@@ -222,8 +258,8 @@ def write_reftable_bin(
         f.write(struct.pack("<i", nstat))
 
         for result in results:
-            f.write(struct.pack("<i", scenario_index))
-            for name in kept_param_names:
+            f.write(struct.pack("<i", result.scenario_index))
+            for name in kept_param_names_by_scenario[result.scenario_index]:
                 f.write(struct.pack("<f", result.parameter_values[name]))
             for name in stat_names:
                 f.write(struct.pack("<f", result.summary_statistics[name]))
@@ -232,7 +268,7 @@ def write_reftable_bin(
 def write_reftable_txt(
     results: list[ParticleResult],
     priors: list,
-    scenario,
+    scenarios: list[Scenario],
     output_path: str | Path,
 ) -> None:
     """Écrit les résultats au format texte de DIYABC :
@@ -249,19 +285,25 @@ def write_reftable_txt(
     pas exposée dans les priors Python. On utilise %12.6f uniformément --
     suffisant pour la comparaison statistique des distributions.
 
-    L'ordre des colonnes suit la même logique que write_reftable_bin :
-    paramètres filtrés (non constants, utilisés par le scénario actif)
-    puis statistiques triées alphabétiquement.
+    Contrairement au binaire (write_reftable_bin, longueur variable par
+    ligne, jamais de colonne non pertinente écrite), le texte utilise un
+    jeu de colonnes de paramètres FIXE : l'UNION (dans l'ordre de
+    déclaration des priors) des paramètres utilisés par au moins un des
+    `scenarios`. Pour une ligne dont le scénario tiré n'utilise pas tel
+    paramètre, la cellule est laissée EN BLANC (pas de "NA" littéral) --
+    vérifié empiriquement contre un vrai first_records_of_the_reference_
+    table_0.txt de DIYABC (reference/human_modif_scenario1/), où les
+    paramètres hors-scénario (ex: ra, t11..t44 pour une ligne du
+    scénario 1) apparaissent comme des espaces, pas un texte "NA".
     """
     if not results:
         raise ValueError("results est vide : au moins une particule est requise")
 
-    used_param_names = get_parameter_names_used_by_scenario(scenario)
-    kept_param_names = [
-        p.name
-        for p in priors
-        if not is_constant_prior(p) and p.name in used_param_names
-    ]
+    kept_param_names_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
+    used_by_any = {
+        name for names in kept_param_names_by_scenario.values() for name in names
+    }
+    all_param_names = [p.name for p in priors if p.name in used_by_any]
     stat_names = sorted(results[0].summary_statistics.keys())
 
     def _centre(s: str, width: int = 14) -> str:
@@ -269,19 +311,23 @@ def write_reftable_txt(
         return s.center(width)
 
     with open(output_path, "w", encoding="utf-8") as f:
-        # En-tête : "Scenario" + noms des paramètres + noms des stats
+        # En-tête : "scenario" + noms des paramètres + noms des stats
         header = (
-            _centre("Scenario")
-            + "".join(_centre(n) for n in kept_param_names)
+            _centre("scenario")
+            + "".join(_centre(n) for n in all_param_names)
             + "".join(_centre(n) for n in stat_names)
         )
         f.write(header + "\n")
 
         # Une ligne par particule
         for r in results:
+            own_names = set(kept_param_names_by_scenario[r.scenario_index])
             line = f"{r.scenario_index:3d}  "
-            for name in kept_param_names:
-                line += f"  {r.parameter_values[name]:12.6f}"
+            for name in all_param_names:
+                if name in own_names:
+                    line += f"  {r.parameter_values[name]:12.6f}"
+                else:
+                    line += " " * 14
             for name in stat_names:
                 line += f"  {r.summary_statistics[name]:12.6f}"
             f.write(line + "\n")

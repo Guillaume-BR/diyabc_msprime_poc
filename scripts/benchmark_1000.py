@@ -13,7 +13,7 @@ from bridge.reftable_loop import (
 )
 from bridge.scenario_parser import parse_header_scenarios
 
-with open("reference/human/header.txt") as f:
+with open("reference/Exemple5/headerRF.txt") as f:
     header_text = f.read()
 priors, _ = parse_priors(header_text)
 scenarios = parse_header_scenarios(header_text)
@@ -23,9 +23,9 @@ Path("./tmp/bench_particles").mkdir(parents=True, exist_ok=True)
 
 t0 = time.time()
 results = run_reftable_simulation(
-    reference_directory="reference/human",
-    scenario_index=1,
-    num_loci=5000,
+    reference_directory="reference/Exemple5",
+    scenarios=[scenario1],
+    num_loci=100,
     nrec=1000,
     general_binary_path=None,
     base_work_directory="./tmp/bench_particles",
@@ -34,10 +34,10 @@ results = run_reftable_simulation(
 )
 t1 = time.time()
 
-write_reftable_bin(results, priors, scenario1, "./tmp/bench_reftable.bin")
+write_reftable_bin(results, priors, [scenario1], "./tmp/bench_reftable.bin")
 t2 = time.time()
 
-write_reftable_txt(results, priors, scenario1, "./tmp/bench_reftable.txt")
+write_reftable_txt(results, priors, [scenario1], "./tmp/bench_reftable.txt")
 t3 = time.time()
 
 

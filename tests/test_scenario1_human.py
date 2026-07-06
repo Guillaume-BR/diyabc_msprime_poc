@@ -5,6 +5,7 @@ mentor (voir notes/exploration.md) pour le scénario 1.
 """
 
 import os
+import struct
 from pathlib import Path
 
 import msprime
@@ -23,20 +24,25 @@ from bridge.demography_builder import (
 )
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import count_samples_per_population, population_index_to_name
-from bridge.parameter_sampling import draw_parameter_values
+from bridge.parameter_sampling import draw_parameter_values, draw_scenario
 from bridge.pipeline import (
     build_random_demography_for_scenario_index,
     compute_summary_statistics,
     run_poc_for_directory,
 )
 from bridge.prior_parser import is_constant_prior, parse_priors
-from bridge.reftable_loop import run_reftable_simulation, write_reftable_bin
+from bridge.reftable_loop import (
+    run_reftable_simulation,
+    write_reftable_bin,
+    write_reftable_txt,
+)
 from bridge.scenario_parser import parse_header_scenarios
 from bridge.scenario_types import (
     MergeEvent,
     OrderConstraint,
     Prior,
     SampleEvent,
+    Scenario,
     SplitEvent,
     VarNeEvent,
 )
@@ -251,6 +257,46 @@ def test_draw_parameter_values_reproducible(header_text):
     values2 = draw_parameter_values(priors, constraints, seed=123)
 
     assert values1 == values2
+
+
+def test_draw_scenario_uses_weight(header_text):
+    """Sur les 6 scénarios de human (poids ~1/6 chacun), un tirage sur de
+    nombreuses graines doit produire les 6 indices possibles -- preuve
+    que le poids est bien utilisé pour sélectionner le scénario, pas un
+    choix fixe (particuleC.cpp::ParticleC::drawscenario)."""
+    scenarios = parse_header_scenarios(header_text)
+
+    drawn_indices = {draw_scenario(scenarios, seed).index for seed in range(1, 201)}
+
+    assert drawn_indices == {1, 2, 3, 4, 5, 6}
+
+
+def test_draw_scenario_degenerate_weight():
+    """Si un seul scénario a un poids non nul, il doit toujours être
+    tiré, quelle que soit la graine."""
+    scenarios = [
+        Scenario(index=1, weight=1.0, initial_pop_size_exprs=["N1"]),
+        Scenario(index=2, weight=0.0, initial_pop_size_exprs=["N1"]),
+    ]
+
+    for seed in range(1, 20):
+        assert draw_scenario(scenarios, seed).index == 1
+
+
+def test_draw_scenario_fallback_when_weights_sum_below_one():
+    """Si la somme des poids est < 1 (ne devrait pas arriver avec un vrai
+    header.txt DIYABC, mais le C++ ne le vérifie pas), le DERNIER
+    scénario sert de secours pour tout tirage au-delà de la somme
+    cumulée -- même comportement que la boucle C++ (bornée à
+    nscenarios-1)."""
+    scenarios = [
+        Scenario(index=1, weight=0.1, initial_pop_size_exprs=["N1"]),
+        Scenario(index=2, weight=0.1, initial_pop_size_exprs=["N1"]),
+    ]
+
+    # seed=2 -> rng.random() == 0.956..., largement > 0.2 (somme des poids)
+    drawn = draw_scenario(scenarios, seed=2)
+    assert drawn.index == 2
 
 
 def test_evaluate_expression():
@@ -539,14 +585,19 @@ def test_compute_summary_statistics_scenario1(tmp_path):
     GENERAL_BINARY_PATH is None,
     reason="Variable d'environnement DIYABC_GENERAL_PATH non définie.",
 )
-def test_run_reftable_simulation_scenario1(tmp_path):
+def test_run_reftable_simulation_scenario1(header_text, tmp_path):
     """Vérifie que run_reftable_simulation produit bien nrec particules
     distinctes (tirages de paramètres différents), chacune avec ses 130
-    statistiques résumées calculées."""
+    statistiques résumées calculées. Un seul scénario candidat ([scenario1])
+    force toutes les particules dessus, isolant ce test du tirage pondéré
+    (voir test_run_reftable_simulation_draws_multiple_scenarios pour ça)."""
+    scenarios = parse_header_scenarios(header_text)
+    scenario1 = next(s for s in scenarios if s.index == 1)
+
     nrec = 4
     results = run_reftable_simulation(
         reference_directory=REFERENCE_DIR,
-        scenario_index=1,
+        scenarios=[scenario1],
         num_loci=10,
         nrec=nrec,
         general_binary_path=GENERAL_BINARY_PATH,
@@ -559,6 +610,9 @@ def test_run_reftable_simulation_scenario1(tmp_path):
     # Les résultats doivent être dans l'ordre des indices de particule
     assert [r.particle_index for r in results] == list(range(nrec))
 
+    # Un seul scénario candidat -> toutes les particules dessus
+    assert {r.scenario_index for r in results} == {1}
+
     # Chaque particule doit avoir ses 130 stats et tous les paramètres
     for result in results:
         assert len(result.summary_statistics) == 130
@@ -568,6 +622,32 @@ def test_run_reftable_simulation_scenario1(tmp_path):
     # (preuve que chaque particule a bien sa propre seed)
     n1_values = [r.parameter_values["N1"] for r in results]
     assert len(set(n1_values)) == nrec  # 4 valeurs distinctes
+
+
+@pytest.mark.skipif(
+    GENERAL_BINARY_PATH is None,
+    reason="Variable d'environnement DIYABC_GENERAL_PATH non définie.",
+)
+def test_run_reftable_simulation_draws_multiple_scenarios(header_text, tmp_path):
+    """Avec les 6 scénarios de human en candidats, les particules doivent
+    se répartir sur PLUSIEURS scénarios différents (pas toutes sur le
+    même) -- preuve que le tirage pondéré par `weight` est bien exercé
+    de bout en bout. Répartition exacte pré-calculée pour seed=1..6 :
+    scénarios [1, 6, 2, 2, 4, 5] (voir draw_scenario, déterministe)."""
+    scenarios = parse_header_scenarios(header_text)
+
+    nrec = 6
+    results = run_reftable_simulation(
+        reference_directory=REFERENCE_DIR,
+        scenarios=scenarios,
+        num_loci=10,
+        nrec=nrec,
+        general_binary_path=GENERAL_BINARY_PATH,
+        base_work_directory=tmp_path,
+        stats_filter="ALL",
+    )
+
+    assert [r.scenario_index for r in results] == [1, 6, 2, 2, 4, 5]
 
 
 def test_is_constant_prior():
@@ -601,10 +681,14 @@ def test_write_reftable_bin(tmp_path, header_text):
     """Vérifie l'écriture du reftable.bin, et sa relecture (vérification
     manuelle du format, sans dépendre de readReftable.R pour ce test
     Python -- juste une vérification structurelle du binaire produit)."""
+    priors, _ = parse_priors(header_text)
+    scenarios = parse_header_scenarios(header_text)
+    scenario1 = next(s for s in scenarios if s.index == 1)
+
     nrec = 3
     results = run_reftable_simulation(
         reference_directory=REFERENCE_DIR,
-        scenario_index=1,
+        scenarios=[scenario1],
         num_loci=10,
         nrec=nrec,
         general_binary_path=GENERAL_BINARY_PATH,
@@ -612,14 +696,88 @@ def test_write_reftable_bin(tmp_path, header_text):
         stats_filter="ALL",
     )
 
-    priors, _ = parse_priors(header_text)
     output_file = tmp_path / "reftable.bin"
-    scenarios = parse_header_scenarios(header_text)
-    scenario1 = next(s for s in scenarios if s.index == 1)
-    write_reftable_bin(results, priors, scenario1, output_file)
+    write_reftable_bin(results, priors, [scenario1], output_file)
 
     assert output_file.exists()
     assert output_file.stat().st_size > 0
+
+
+@pytest.mark.skipif(
+    GENERAL_BINARY_PATH is None,
+    reason="Variable d'environnement DIYABC_GENERAL_PATH non définie.",
+)
+def test_write_reftable_bin_multi_scenario(tmp_path, header_text):
+    """Vérifie la structure du reftable.bin quand plusieurs scénarios
+    sont candidats : nscen/nrecscen/nparam doivent porter sur TOUS les
+    scénarios candidats (pas seulement ceux tirés), et chaque
+    enregistrement doit avoir une longueur VARIABLE = nparam[scenario-1]
+    floats -- pas d'union de colonnes ni de NA écrite sur disque
+    (vérifié empiriquement contre reftable.cpp et un vrai reftableRF.bin
+    multi-scénario -- voir write_reftable_bin)."""
+    priors, _ = parse_priors(header_text)
+    scenarios = parse_header_scenarios(header_text)
+
+    nrec = 6
+    results = run_reftable_simulation(
+        reference_directory=REFERENCE_DIR,
+        scenarios=scenarios,
+        num_loci=10,
+        nrec=nrec,
+        general_binary_path=GENERAL_BINARY_PATH,
+        base_work_directory=tmp_path / "particles",
+        stats_filter="ALL",
+    )
+    # Répartition déterministe pré-calculée (voir test_run_reftable_simulation_draws_multiple_scenarios)
+    assert [r.scenario_index for r in results] == [1, 6, 2, 2, 4, 5]
+
+    output_file = tmp_path / "reftable_multi.bin"
+    write_reftable_bin(results, priors, scenarios, output_file)
+
+    expected_nrecscen = [
+        sum(1 for r in results if r.scenario_index == s.index) for s in scenarios
+    ]
+    expected_nparam = [
+        sum(
+            1
+            for p in priors
+            if not is_constant_prior(p)
+            and p.name in get_parameter_names_used_by_scenario(s)
+        )
+        for s in scenarios
+    ]
+
+    data = output_file.read_bytes()
+    offset = 0
+
+    def read_int():
+        nonlocal offset
+        value = struct.unpack_from("<i", data, offset)[0]
+        offset += 4
+        return value
+
+    assert read_int() == nrec
+    assert read_int() == len(scenarios)  # nscen == 6, tous les candidats
+
+    nrecscen_read = [read_int() for _ in scenarios]
+    assert nrecscen_read == expected_nrecscen
+
+    nparam_read = [read_int() for _ in scenarios]
+    assert nparam_read == expected_nparam
+
+    nstat_read = read_int()
+    assert nstat_read == 130
+
+    nparam_by_index = dict(zip((s.index for s in scenarios), nparam_read, strict=True))
+
+    # Chaque ligne : longueur VARIABLE, exactement nparam[son_scenario]
+    # floats de paramètres puis nstat floats de stats -- rien de plus.
+    for result in results:
+        assert read_int() == result.scenario_index
+        offset += 4 * nparam_by_index[result.scenario_index]  # params
+        offset += 4 * nstat_read  # stats
+
+    assert offset == len(data)  # tout le fichier consommé, aucun octet en trop
 
 
 def test_extract_referenced_names():
@@ -659,3 +817,54 @@ def test_get_parameter_names_used_by_scenario1(header_text):
     }
     assert used_names == expected
     assert len(used_names) == 16
+
+
+@pytest.mark.skipif(
+    GENERAL_BINARY_PATH is None,
+    reason="Variable d'environnement DIYABC_GENERAL_PATH non définie.",
+)
+def test_write_reftable_txt_header_lowercase_and_blank_for_unused_params(
+    tmp_path, header_text
+):
+    """Vérifie que l'en-tête utilise 'scenario' en minuscule (pas
+    'Scenario') et que les paramètres non pertinents au scénario tiré
+    d'une ligne apparaissent en BLANC, pas 'NA' littéral -- vérifié
+    empiriquement contre un vrai first_records_of_the_reference_table_0.
+    txt de DIYABC (reference/human_modif_scenario1/).
+
+    Les particules sont toutes tirées sur le scénario 1 (candidat
+    unique), mais write_reftable_txt reçoit les 6 scénarios de header.txt
+    comme `scenarios` -- exerce l'union des colonnes (21 params, dont
+    'ra' et t11..t44 propres aux scénarios 2-6) avec du blanc pour les
+    5 colonnes non pertinentes au scénario 1."""
+    priors, _ = parse_priors(header_text)
+    all_scenarios = parse_header_scenarios(header_text)
+    scenario1 = next(s for s in all_scenarios if s.index == 1)
+
+    results = run_reftable_simulation(
+        reference_directory=REFERENCE_DIR,
+        scenarios=[scenario1],
+        num_loci=10,
+        nrec=2,
+        general_binary_path=GENERAL_BINARY_PATH,
+        base_work_directory=tmp_path / "particles",
+        stats_filter="ALL",
+    )
+
+    output_file = tmp_path / "reftable.txt"
+    write_reftable_txt(results, priors, all_scenarios, output_file)
+
+    lines = output_file.read_text().splitlines()
+    header_line = lines[0]
+
+    assert header_line.startswith("   scenario   ")  # centre("scenario", 14)
+    assert "Scenario" not in header_line
+
+    # Colonne "ra" : 14 caractères centrés, juste après "scenario" (14)
+    # et les 16 paramètres du scénario 1 (14*16) -- voir
+    # test_get_parameter_names_used_by_scenario1 pour cet ordre.
+    ra_start = 14 * 17
+    assert header_line[ra_start : ra_start + 14].strip() == "ra"
+
+    for line in lines[1:]:
+        assert line[ra_start : ra_start + 14].strip() == ""  # blanc, pas "NA"

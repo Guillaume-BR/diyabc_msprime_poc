@@ -11,11 +11,38 @@ vérifiées : human n'utilise que UN, donc pas bloquant pour ce POC, mais
 
 import random
 
-from bridge.scenario_types import Prior, OrderConstraint
+from bridge.scenario_types import OrderConstraint, Prior, Scenario
 
 
 class ConstraintsNotSatisfiedError(Exception):
     """Levée si aucun tirage valide n'a été trouvé en max_attempts essais."""
+
+
+def draw_scenario(scenarios: list[Scenario], seed: int) -> Scenario:
+    """Tire un scénario parmi `scenarios`, pondéré par son `weight`
+    (le "prior_proba" de particuleC.cpp::ParticleC::drawscenario).
+
+    Reproduit exactement l'algorithme C++ : tirage d'un nombre uniforme
+    `ra` dans [0,1), puis balayage de la somme cumulée des poids jusqu'à
+    ce qu'elle atteigne ou dépasse `ra` -- même logique d'inversion de
+    CDF que _draw_single_mutation_edge_child (ancestry_simulation.py),
+    vérifiée boundary-compatible avec la boucle C++ ("while ra > sp").
+
+    Ne normalise PAS les poids (comme le C++, qui ne le fait pas non
+    plus) : si leur somme est < 1, le DERNIER scénario de la liste sert
+    de secours pour tout `ra` au-delà de la somme cumulée -- même
+    comportement que la boucle C++, bornée à nscenarios-1.
+    """
+    rng = random.Random(seed)
+    ra = rng.random()
+
+    cumulative = 0.0
+    for scenario in scenarios:
+        cumulative += scenario.weight
+        if ra <= cumulative:
+            return scenario
+
+    return scenarios[-1]
 
 
 def _draw_one_value(prior: Prior, rng: random.Random) -> float:

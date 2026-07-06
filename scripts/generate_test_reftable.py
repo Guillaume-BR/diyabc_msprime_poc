@@ -9,9 +9,12 @@ GENERAL_BINARY_PATH = os.environ["DIYABC_GENERAL_PATH"]
 with open("reference/human/header.txt") as f:
     header_text = f.read()
 
+priors, _ = parse_priors(header_text)
+scenarios = parse_header_scenarios(header_text)
+
 results = run_reftable_simulation(
     reference_directory="reference/human",
-    scenario_index=1,
+    scenarios=scenarios,
     num_loci=10,
     nrec=5,
     general_binary_path=GENERAL_BINARY_PATH,
@@ -19,9 +22,5 @@ results = run_reftable_simulation(
     stats_filter="ALL",
 )
 
-priors, _ = parse_priors(header_text)
-scenarios = parse_header_scenarios(header_text)
-scenario1 = next(s for s in scenarios if s.index == 1)
-
-write_reftable_bin(results, priors, scenario1, "./tmp/notre_reftable.bin")
+write_reftable_bin(results, priors, scenarios, "./tmp/notre_reftable.bin")
 print("reftable.bin écrit.")
