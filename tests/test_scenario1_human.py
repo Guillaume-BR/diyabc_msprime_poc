@@ -585,7 +585,7 @@ def test_compute_summary_statistics_scenario1(tmp_path):
     GENERAL_BINARY_PATH is None,
     reason="Variable d'environnement DIYABC_GENERAL_PATH non définie.",
 )
-def test_run_reftable_simulation_scenario1(header_text, tmp_path):
+def test_run_reftable_simulation_scenario1(header_text):
     """Vérifie que run_reftable_simulation produit bien nrec particules
     distinctes (tirages de paramètres différents), chacune avec ses 130
     statistiques résumées calculées. Un seul scénario candidat ([scenario1])
@@ -600,8 +600,6 @@ def test_run_reftable_simulation_scenario1(header_text, tmp_path):
         scenarios=[scenario1],
         num_loci=10,
         nrec=nrec,
-        general_binary_path=GENERAL_BINARY_PATH,
-        base_work_directory=tmp_path,
         stats_filter="ALL",
     )
 
@@ -628,7 +626,7 @@ def test_run_reftable_simulation_scenario1(header_text, tmp_path):
     GENERAL_BINARY_PATH is None,
     reason="Variable d'environnement DIYABC_GENERAL_PATH non définie.",
 )
-def test_run_reftable_simulation_draws_multiple_scenarios(header_text, tmp_path):
+def test_run_reftable_simulation_draws_multiple_scenarios(header_text):
     """Avec les 6 scénarios de human en candidats, les particules doivent
     se répartir sur PLUSIEURS scénarios différents (pas toutes sur le
     même) -- preuve que le tirage pondéré par `weight` est bien exercé
@@ -642,8 +640,6 @@ def test_run_reftable_simulation_draws_multiple_scenarios(header_text, tmp_path)
         scenarios=scenarios,
         num_loci=10,
         nrec=nrec,
-        general_binary_path=GENERAL_BINARY_PATH,
-        base_work_directory=tmp_path,
         stats_filter="ALL",
     )
 
@@ -691,8 +687,6 @@ def test_write_reftable_bin(tmp_path, header_text):
         scenarios=[scenario1],
         num_loci=10,
         nrec=nrec,
-        general_binary_path=GENERAL_BINARY_PATH,
-        base_work_directory=tmp_path / "particles",
         stats_filter="ALL",
     )
 
@@ -724,8 +718,6 @@ def test_write_reftable_bin_multi_scenario(tmp_path, header_text):
         scenarios=scenarios,
         num_loci=10,
         nrec=nrec,
-        general_binary_path=GENERAL_BINARY_PATH,
-        base_work_directory=tmp_path / "particles",
         stats_filter="ALL",
     )
     # Répartition déterministe pré-calculée (voir test_run_reftable_simulation_draws_multiple_scenarios)
@@ -846,8 +838,6 @@ def test_write_reftable_txt_header_lowercase_and_blank_for_unused_params(
         scenarios=[scenario1],
         num_loci=10,
         nrec=2,
-        general_binary_path=GENERAL_BINARY_PATH,
-        base_work_directory=tmp_path / "particles",
         stats_filter="ALL",
     )
 
