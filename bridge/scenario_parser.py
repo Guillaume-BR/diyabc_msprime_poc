@@ -5,18 +5,18 @@ scenario_types.py.
 Aucune valeur numérique n'est calculée ici (voir scenario_types.py pour
 la justification). Ce module ne fait que de la transcription texte -> objets.
 
-Limité, pour l'instant, au vocabulaire nécessaire au scénario 1 du dataset
-human : sample, merge, varNe. SplitEvent (admixture) sera ajouté quand on
-généralisera aux scénarios 2/3/5/6 du même fichier.
+Vocabulaire géré : sample, merge, varNe, split (admixture) -- couvre les
+6 scénarios du dataset human. Voir SplitEvent (scenario_types.py) pour la
+sémantique exacte de split, vérifiée contre history.cpp/particuleC.cpp.
 """
 
 import re
 import warnings
 
 from bridge.scenario_types import (
-    Scenario,
-    SampleEvent,
     MergeEvent,
+    SampleEvent,
+    Scenario,
     SplitEvent,
     VarNeEvent,
 )
@@ -112,7 +112,7 @@ def _parse_event_line(line: str):
             derived_pop=int(args[1]),
         )
 
-    if action == "varNe":
+    if action == "varNe" or action == "varne":
         # ex: "t2-d3 varNe 3 Nbn3" -> pop=3, new_size_expr="Nbn3"
         return VarNeEvent(
             time_expr=time_expr,
@@ -121,7 +121,12 @@ def _parse_event_line(line: str):
         )
 
     if action == "split":
-        # ex: "t3 split 1 2 3 0.2" -> ancestral_pop1=1, ancestral_pop2=2, derived_pop=3, admixture_rate=0.2
+        # ex: "t1 split 3 1 2 r1" -> derived_pop=3 (disparaît), ancestral_pop1=1
+        # (reçoit chaque lignée de la pop 3 avec probabilité r1), ancestral_pop2=2
+        # (reçoit le complément, 1-r1) -- vérifié dans history.cpp::ScenarioC::
+        # read_events (ordre des colonnes pop/pop1/pop2/admixrate) et
+        # particuleC.cpp::ParticleC::split_pop (tirage réel : vers pop1 si
+        # random() < admixrate, sinon vers pop2).
         return SplitEvent(
             time_expr=time_expr,
             derived_pop=int(args[0]),
@@ -131,8 +136,8 @@ def _parse_event_line(line: str):
         )
 
     raise NotImplementedError(
-        f"Action '{action}' non gérée par ce parser (limité à sample/merge/varNe "
-        f"pour le scénario 1 de human). Ligne : {line!r}"
+        f"Action '{action}' non gérée par ce parser (vocabulaire connu : "
+        f"sample/merge/varNe/split). Ligne : {line!r}"
     )
 
 
@@ -154,5 +159,5 @@ def parse_header_scenarios(header_text: str) -> list[Scenario]:
             scenarios.append(parse_scenario_block(block))
         except NotImplementedError as e:
             first_line = block.splitlines()[0]
-            warnings.warn(f"Bloc '{first_line}' ignoré : {e}")
+            warnings.warn(f"Bloc '{first_line}' ignoré : {e}", stacklevel=2)
     return scenarios

@@ -7,35 +7,40 @@ mentor (voir notes/exploration.md) pour le scénario 1.
 import os
 from pathlib import Path
 
+import msprime
 import pytest
 
-from bridge.scenario_parser import parse_header_scenarios
-from bridge.scenario_types import MergeEvent, VarNeEvent, SampleEvent, OrderConstraint
-from bridge.prior_parser import parse_priors
-from bridge.loci_parser import parse_loci_description
-from bridge.parameter_sampling import draw_parameter_values
-from bridge.demography_builder import evaluate_expression, build_demography
-from bridge.pipeline import build_random_demography_for_scenario_index
-from bridge.observed_data import count_samples_per_population
-from bridge.observed_data import population_index_to_name
 from bridge.ancestry_simulation import (
     build_samples_argument,
     simulate_independent_loci,
     simulate_snp_genotypes,
 )
-from bridge.pipeline import run_poc_for_directory
-from bridge.snp_writer import write_snp_file
-from bridge.pipeline import compute_summary_statistics
-from bridge.reftable_loop import run_reftable_simulation
-from bridge.prior_parser import is_constant_prior
-from bridge.scenario_types import Prior
-from bridge.reftable_loop import write_reftable_bin
 from bridge.demography_builder import (
-    get_parameter_names_used_by_scenario,
+    build_demography,
+    evaluate_expression,
     extract_referenced_names,
+    get_parameter_names_used_by_scenario,
 )
-
-import msprime
+from bridge.loci_parser import parse_loci_description
+from bridge.observed_data import count_samples_per_population, population_index_to_name
+from bridge.parameter_sampling import draw_parameter_values
+from bridge.pipeline import (
+    build_random_demography_for_scenario_index,
+    compute_summary_statistics,
+    run_poc_for_directory,
+)
+from bridge.prior_parser import is_constant_prior, parse_priors
+from bridge.reftable_loop import run_reftable_simulation, write_reftable_bin
+from bridge.scenario_parser import parse_header_scenarios
+from bridge.scenario_types import (
+    MergeEvent,
+    OrderConstraint,
+    Prior,
+    SampleEvent,
+    SplitEvent,
+    VarNeEvent,
+)
+from bridge.snp_writer import write_snp_file
 
 REFERENCE_DIR = Path(__file__).parent.parent / "reference" / "human"
 GENERAL_BINARY_PATH = os.environ.get("DIYABC_GENERAL_PATH")
@@ -107,6 +112,97 @@ def test_scenario4_events(header_text):
     ]
 
     assert scenario4.events == expected
+
+
+def test_scenario2_events(header_text):
+    """Vérifie qu'un événement 'split' (admixture) est correctement
+    interprété : 't1 split 1 4 2 ra' -> pop 1 disparaît, chaque lignée
+    part vers pop 4 avec probabilité 'ra', sinon vers pop 2 -- sémantique
+    vérifiée contre history.cpp/particuleC.cpp (voir docstring de
+    SplitEvent)."""
+    scenarios = parse_header_scenarios(header_text)
+    scenario2 = next(s for s in scenarios if s.index == 2)
+
+    assert scenario2.events[4] == SplitEvent(
+        time_expr="t1",
+        derived_pop=1,
+        ancestral_pop1=4,
+        ancestral_pop2=2,
+        admixture_rate="ra",
+    )
+
+
+def test_build_demography_scenario2_admixture(header_text):
+    """Vérifie que build_demography traduit un SplitEvent en événement
+    msprime Admixture avec les bonnes populations et proportions
+    (rate, 1-rate)."""
+    scenarios = parse_header_scenarios(header_text)
+    scenario2 = next(s for s in scenarios if s.index == 2)
+
+    values = {
+        "N1": 50000,
+        "N2": 50000,
+        "N3": 50000,
+        "N4": 50000,
+        "t1": 10,
+        "t2": 5000,
+        "d3": 30,
+        "Nbn3": 200,
+        "d4": 20,
+        "Nbn4": 300,
+        "N34": 60000,
+        "t3": 8000,
+        "d34": 25,
+        "Nbn34": 250,
+        "t4": 9000,
+        "Na": 40000,
+        "ra": 0.3,
+    }
+
+    demography = build_demography(scenario2, values)
+
+    admixtures = [
+        e for e in demography.events if isinstance(e, msprime.demography.Admixture)
+    ]
+    assert len(admixtures) == 1
+    admixture = admixtures[0]
+    assert admixture.time == 10
+    assert admixture.derived == "pop1"
+    assert admixture.ancestral == ["pop4", "pop2"]
+    assert admixture.proportions == pytest.approx([0.3, 0.7])
+
+
+def test_get_parameter_names_used_by_scenario2(header_text):
+    """Vérifie que le taux d'admixture 'ra' est bien inclus dans les
+    paramètres référencés par un scénario qui contient un SplitEvent --
+    sinon il serait exclu à tort des colonnes du reftable.bin pour ce
+    scénario (même bug que celui déjà corrigé pour t11..t44)."""
+    scenarios = parse_header_scenarios(header_text)
+    scenario2 = next(s for s in scenarios if s.index == 2)
+
+    used_names = get_parameter_names_used_by_scenario(scenario2)
+
+    assert "ra" in used_names
+    expected = {
+        "N1",
+        "N2",
+        "N3",
+        "N4",
+        "t1",
+        "ra",
+        "t2",
+        "d3",
+        "Nbn3",
+        "d4",
+        "Nbn4",
+        "N34",
+        "t3",
+        "d34",
+        "Nbn34",
+        "t4",
+        "Na",
+    }
+    assert used_names == expected
 
 
 def test_priors_and_constraints(header_text):
@@ -359,7 +455,7 @@ def test_simulate_snp_genotypes_grouped_by_population(header_text):
 
     for locus_genotypes in genotypes_per_locus:
         assert set(locus_genotypes.keys()) == {"pop1", "pop2", "pop3", "pop4"}
-        for pop_name, genos in locus_genotypes.items():
+        for _pop_name, genos in locus_genotypes.items():
             assert len(genos) == 60  # 30 individus x ploidy 2
 
         # Polymorphe globalement (au moins un 0 et un 1 sur l'ensemble)

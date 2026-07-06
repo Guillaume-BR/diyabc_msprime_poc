@@ -6,16 +6,21 @@ evaluate_expression() est l'équivalent Python de ParticleC::getvalue()
 (particuleC.cpp) : transforme une expression texte ("t2-d3", "t1", "0")
 en valeur numérique, en utilisant les valeurs déjà tirées des priors.
 
-Limité pour l'instant aux événements nécessaires au scénario 1 de human :
-SampleEvent, MergeEvent, VarNeEvent. SplitEvent (admixture) sera ajouté
-en généralisant aux scénarios 2/3/5/6.
+Événements gérés : SampleEvent, MergeEvent, VarNeEvent, SplitEvent
+(admixture) -- couvre les 6 scénarios de human.
 """
 
 import re
 
 import msprime
 
-from bridge.scenario_types import Scenario, SampleEvent, MergeEvent, VarNeEvent
+from bridge.scenario_types import (
+    MergeEvent,
+    SampleEvent,
+    Scenario,
+    SplitEvent,
+    VarNeEvent,
+)
 
 # "t2-d3" -> param1="t2", op="-", param2="d3"
 # "t1"    -> pas de match -> traité comme un nom de paramètre seul
@@ -45,7 +50,7 @@ def evaluate_expression(expr: str, values: dict[str, float]) -> float:
         raise ValueError(
             f"Expression '{expr}' non évaluable : ni nombre littéral, "
             f"ni nom de paramètre connu parmi {sorted(values)}"
-        )
+        ) from None
 
 
 def build_demography(
@@ -90,6 +95,23 @@ def build_demography(
                 time=time,
                 population=f"pop{event.pop}",
                 initial_size=evaluate_expression(event.new_size_expr, values),
+            )
+            continue
+
+        if isinstance(event, SplitEvent):
+            # pop_derived disparaît : chaque lignée part vers ancestral_pop1
+            # avec probabilité admixture_rate, sinon vers ancestral_pop2 --
+            # voir SplitEvent (scenario_types.py) pour la sémantique exacte,
+            # vérifiée contre particuleC.cpp::ParticleC::split_pop.
+            rate = evaluate_expression(event.admixture_rate, values)
+            demography.add_admixture(
+                time=time,
+                derived=f"pop{event.derived_pop}",
+                ancestral=[
+                    f"pop{event.ancestral_pop1}",
+                    f"pop{event.ancestral_pop2}",
+                ],
+                proportions=[rate, 1 - rate],
             )
             continue
 
@@ -145,5 +167,7 @@ def get_parameter_names_used_by_scenario(scenario: Scenario) -> set[str]:
         names |= extract_referenced_names(event.time_expr)
         if isinstance(event, VarNeEvent):
             names |= extract_referenced_names(event.new_size_expr)
+        if isinstance(event, SplitEvent):
+            names |= extract_referenced_names(event.admixture_rate)
 
     return names
