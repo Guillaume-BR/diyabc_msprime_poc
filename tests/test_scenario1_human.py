@@ -911,20 +911,27 @@ def test_get_parameter_names_used_by_scenario1(header_text):
     GENERAL_BINARY_PATH is None,
     reason="Variable d'environnement DIYABC_GENERAL_PATH non définie.",
 )
-def test_write_reftable_txt_header_lowercase_and_blank_for_unused_params(
+def test_write_reftable_txt_header_lowercase_and_real_value_for_unused_params(
     tmp_path, header_text
 ):
     """Vérifie que l'en-tête utilise 'scenario' en minuscule (pas
-    'Scenario') et que les paramètres non pertinents au scénario tiré
-    d'une ligne apparaissent en BLANC, pas 'NA' littéral -- vérifié
-    empiriquement contre un vrai first_records_of_the_reference_table_0.
-    txt de DIYABC (reference/human_modif_scenario1/).
+    'Scenario'), et que les paramètres non pertinents au scénario tiré
+    d'une ligne contiennent quand même leur valeur RÉELLEMENT TIRÉE --
+    JAMAIS une case vide.
+
+    Une case vide ne produit aucun token pour un parseur par espaces
+    (ex: pandas read_csv(sep=r'\\s+'), ou un simple line.split()), ce
+    qui décale d'une colonne TOUTES les valeurs suivantes sur la ligne
+    -- bug découvert empiriquement en comparant un vrai reftable DIYABC
+    à notre sortie sur toy_example5_modif : la colonne 'r' (non utilisée
+    par le seul scénario actif) était laissée en blanc, décalant les 51
+    statistiques suivantes et produisant des "écarts" massifs qui
+    n'avaient rien à voir avec un vrai écart de simulation.
 
     Les particules sont toutes tirées sur le scénario 1 (candidat
     unique), mais write_reftable_txt reçoit les 6 scénarios de header.txt
     comme `scenarios` -- exerce l'union des colonnes (21 params, dont
-    'ra' et t11..t44 propres aux scénarios 2-6) avec du blanc pour les
-    5 colonnes non pertinentes au scénario 1."""
+    'ra' et t11..t44 propres aux scénarios 2-6)."""
     priors, _ = parse_priors(header_text)
     all_scenarios = parse_header_scenarios(header_text)
     scenario1 = next(s for s in all_scenarios if s.index == 1)
@@ -946,11 +953,20 @@ def test_write_reftable_txt_header_lowercase_and_blank_for_unused_params(
     assert header_line.startswith("   scenario   ")  # centre("scenario", 14)
     assert "Scenario" not in header_line
 
-    # Colonne "ra" : 14 caractères centrés, juste après "scenario" (14)
-    # et les 16 paramètres du scénario 1 (14*16) -- voir
-    # test_get_parameter_names_used_by_scenario1 pour cet ordre.
-    ra_start = 14 * 17
-    assert header_line[ra_start : ra_start + 14].strip() == "ra"
+    # Repérage par position de TOKEN (pas par offset de caractères) :
+    # une valeur N peut occuper plus de 12 caractères (ex: 100000.000000
+    # = 13 caractères) et décaler les offsets fixes -- sans casser le
+    # découpage par espaces, puisque "  " est toujours réinjecté avant
+    # chaque valeur (voir write_reftable_txt).
+    header_tokens = header_line.split()
+    ra_index = header_tokens.index("ra")
 
-    for line in lines[1:]:
-        assert line[ra_start : ra_start + 14].strip() == ""  # blanc, pas "NA"
+    data_lines = lines[1:]
+    assert len(data_lines) == len(results)
+    for line, result in zip(data_lines, results, strict=True):
+        tokens = line.split()
+        # Test anti-régression : autant de tokens que l'en-tête, sinon
+        # un parseur par espaces décale toutes les colonnes suivantes
+        # (bug corrigé : une case vide ne produit aucun token).
+        assert len(tokens) == len(header_tokens)
+        assert float(tokens[ra_index]) == pytest.approx(result.parameter_values["ra"])

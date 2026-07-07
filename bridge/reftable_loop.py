@@ -240,16 +240,24 @@ def write_reftable_txt(
     pas exposée dans les priors Python. On utilise %12.6f uniformément --
     suffisant pour la comparaison statistique des distributions.
 
-    Contrairement au binaire (write_reftable_bin, longueur variable par
-    ligne, jamais de colonne non pertinente écrite), le texte utilise un
-    jeu de colonnes de paramètres FIXE : l'UNION (dans l'ordre de
-    déclaration des priors) des paramètres utilisés par au moins un des
-    `scenarios`. Pour une ligne dont le scénario tiré n'utilise pas tel
-    paramètre, la cellule est laissée EN BLANC (pas de "NA" littéral) --
-    vérifié empiriquement contre un vrai first_records_of_the_reference_
-    table_0.txt de DIYABC (reference/human_modif_scenario1/), où les
-    paramètres hors-scénario (ex: ra, t11..t44 pour une ligne du
-    scénario 1) apparaissent comme des espaces, pas un texte "NA".
+    Le texte utilise un jeu de colonnes de paramètres FIXE : l'UNION
+    (dans l'ordre de déclaration des priors) des paramètres utilisés par
+    au moins un des `scenarios`. Pour une ligne dont le scénario tiré
+    n'utilise pas tel paramètre, on écrit quand même sa valeur RÉELLEMENT
+    TIRÉE (r.parameter_values[name] -- toujours présente, puisque
+    draw_parameter_values tire TOUS les priors déclarés, indépendamment
+    du scénario, voir build_random_demography), jamais une case vide.
+
+    IMPORTANT : ne JAMAIS laisser de case vide ici, même si elle
+    représente une valeur non pertinente pour le scénario de la ligne --
+    un parseur par espaces (ex: pandas read_csv(sep=r'\\s+'), ou même un
+    simple line.split()) ne produit AUCUN token pour une case vide,
+    ce qui décale d'une colonne TOUTES les valeurs suivantes sur la
+    ligne. Bug découvert empiriquement (comparaison DIYABC/msprime sur
+    toy_example5_modif, colonne 'r' non utilisée par le scénario actif
+    laissée en blanc -> décalage systématique des 51 statistiques sur
+    les 1000 lignes, provoquant des "écarts" massifs et incohérents qui
+    n'avaient rien à voir avec un vrai écart de simulation).
     """
     if not results:
         raise ValueError("results est vide : au moins une particule est requise")
@@ -276,13 +284,9 @@ def write_reftable_txt(
 
         # Une ligne par particule
         for r in results:
-            own_names = set(kept_param_names_by_scenario[r.scenario_index])
             line = f"{r.scenario_index:3d}  "
             for name in all_param_names:
-                if name in own_names:
-                    line += f"  {r.parameter_values[name]:12.6f}"
-                else:
-                    line += " " * 14
+                line += f"  {r.parameter_values[name]:12.6f}"
             for name in stat_names:
                 line += f"  {r.summary_statistics[name]:12.6f}"
             f.write(line + "\n")
@@ -329,6 +333,10 @@ def simulate_reference_directory(
 
     write_reftable_txt(
         results, priors, scenarios, test_directory / "reftable_msprime.txt"
+    )
+
+    write_reftable_bin(
+        results, priors, scenarios, test_directory / "reftable_msprime.bin"
     )
 
     return results
