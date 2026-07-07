@@ -54,6 +54,7 @@ from bridge.scenario_types import (
     VarNeEvent,
 )
 from bridge.snp_writer import write_snp_file
+from bridge.stats_group_parser import parse_requested_statistic_names
 
 REFERENCE_DIR = Path(__file__).parent.parent / "reference" / "human"
 GENERAL_BINARY_PATH = os.environ.get("DIYABC_GENERAL_PATH")
@@ -675,6 +676,128 @@ def test_compute_summary_statistics_scenario1(tmp_path):
 
     # Les valeurs de paramètres tirées doivent toujours être présentes
     assert "N1" in values
+
+
+def test_parse_requested_statistic_names_human_old_vocabulary(header_text):
+    """Le parseur est purement syntaxique -- il fonctionne aussi sur le
+    vocabulaire ANCIEN (obsolète) de human/header.txt (HP0/HM1/HV1/HMO/
+    FP0.../AP0...), même si ces noms ne correspondent à aucune
+    statistique calculée par summary_statistics.py (incohérence connue
+    de ce header.txt, voir notes/exploration.md)."""
+    names = parse_requested_statistic_names(header_text)
+
+    assert len(names) == 112
+    assert names[:5] == ["HP0_1", "HP0_2", "HP0_3", "HP0_4", "HM1_1"]
+    assert names[-1] == "AMO_4.1.2"
+
+
+def test_parse_requested_statistic_names_modern_vocabulary():
+    """Format condensé moderne (ex: toy_example5_modif) : noms de
+    colonnes 'STAT_index', même convention que summary_statistics.py."""
+    header_text = (
+        "group summary statistics (9)\n"
+        "group G1 (9)\n"
+        "ML1p 1 2 3\n"
+        "ML2p 1.2 1.3 2.3\n"
+        "HWm 1 2 3\n"
+    )
+
+    names = parse_requested_statistic_names(header_text)
+
+    assert names == [
+        "ML1p_1",
+        "ML1p_2",
+        "ML1p_3",
+        "ML2p_1.2",
+        "ML2p_1.3",
+        "ML2p_2.3",
+        "HWm_1",
+        "HWm_2",
+        "HWm_3",
+    ]
+
+
+def test_parse_requested_statistic_names_missing_section():
+    with pytest.raises(ValueError, match="group summary statistics"):
+        parse_requested_statistic_names("pas de section ici\n")
+
+
+def test_parse_requested_statistic_names_count_mismatch():
+    header_text = "group summary statistics (5)\ngroup G1 (5)\nML1p 1 2 3\n"
+
+    with pytest.raises(ValueError, match="annonce 5"):
+        parse_requested_statistic_names(header_text)
+
+
+def _replace_group_summary_statistics_section(
+    header_text: str, new_section_lines: list[str]
+) -> str:
+    """Remplace la section 'group summary statistics' de header_text par
+    new_section_lines -- même approche que loci_parser.rewrite_loci_count
+    pour tester avec un contenu différent sans maintenir un header.txt
+    séparé à la main."""
+    lines = header_text.splitlines()
+    start = next(
+        i
+        for i, line in enumerate(lines)
+        if line.strip().startswith("group summary statistics")
+    )
+    end = start + 1
+    while end < len(lines) and lines[end].strip():
+        end += 1
+    return "\n".join(lines[:start] + new_section_lines + lines[end:])
+
+
+def test_compute_summary_statistics_stats_filter_header(tmp_path, header_text):
+    """stats_filter='HEADER' ne garde, dans l'ordre de déclaration, que
+    les statistiques listées dans 'group summary statistics' --
+    remplace la section obsolète de human/header.txt par un petit
+    sous-ensemble au vocabulaire moderne, pour vérifier le filtrage
+    sans dépendre d'un dataset externe."""
+    modified_header_text = _replace_group_summary_statistics_section(
+        header_text,
+        ["group summary statistics (4)", "group G1 (4)", "ML1p 1 2", "HWm 1 2"],
+    )
+    (tmp_path / "header.txt").write_text(modified_header_text)
+    (tmp_path / OBSERVED_SNP_FILE.name).symlink_to(OBSERVED_SNP_FILE)
+
+    summary_stats, values = compute_summary_statistics(
+        reference_directory=tmp_path,
+        scenario_index=1,
+        num_loci=10,
+        seed=1,
+        stats_filter="HEADER",
+    )
+
+    assert list(summary_stats.keys()) == ["ML1p_1", "ML1p_2", "HWm_1", "HWm_2"]
+    assert "N1" in values
+
+
+def test_compute_summary_statistics_stats_filter_header_raises_on_unknown_names(
+    header_text,
+):
+    """stats_filter='HEADER' sur le vrai human/header.txt (vocabulaire
+    obsolète HP0/HM1/...) doit lever une ValueError explicite plutôt que
+    de produire silencieusement un reftable vide ou incomplet."""
+    with pytest.raises(ValueError, match="non calculées"):
+        compute_summary_statistics(
+            reference_directory=REFERENCE_DIR,
+            scenario_index=1,
+            num_loci=10,
+            seed=1,
+            stats_filter="HEADER",
+        )
+
+
+def test_compute_summary_statistics_unknown_stats_filter_raises():
+    with pytest.raises(NotImplementedError, match="stats_filter"):
+        compute_summary_statistics(
+            reference_directory=REFERENCE_DIR,
+            scenario_index=1,
+            num_loci=10,
+            seed=1,
+            stats_filter="BOGUS",
+        )
 
 
 @pytest.mark.skipif(

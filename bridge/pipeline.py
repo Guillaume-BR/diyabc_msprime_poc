@@ -23,6 +23,7 @@ from bridge.parameter_sampling import draw_parameter_values
 from bridge.prior_parser import parse_priors
 from bridge.scenario_parser import parse_header_scenarios
 from bridge.scenario_types import Scenario
+from bridge.stats_group_parser import parse_requested_statistic_names
 from bridge.summary_statistics import compute_all_statistics
 
 
@@ -132,6 +133,21 @@ def compute_summary_statistics(
     (summary_statistics.py) -- remplace la délégation au binaire C++
     (subprocess + fichier .snp intermédiaire).
 
+    stats_filter :
+      - "ALL" (défaut) : retourne toutes les statistiques implémentées
+        (compute_all_statistics), sans filtrage.
+      - "HEADER" : ne garde, dans l'ordre de déclaration, que les
+        statistiques listées dans la section 'group summary statistics'
+        de header.txt (voir stats_group_parser.
+        parse_requested_statistic_names) -- nécessaire pour que
+        reftable_msprime.txt/.bin aient EXACTEMENT les mêmes colonnes
+        que le vrai reftable DIYABC (sinon toute comparaison
+        colonne-par-nom entre les deux pipelines est faussée, comme
+        découvert sur toy_example5_modif : 'ML3p_1.2.3' calculé par
+        nous mais absent du vrai DIYABC). Lève ValueError si header.txt
+        déclare une statistique qu'on ne sait pas calculer (vocabulaire
+        obsolète, ex: human/header.txt -- voir notes/exploration.md).
+
     Retourne (summary_statistics, parameter_values).
     """
     reference_directory = Path(reference_directory)
@@ -148,5 +164,23 @@ def compute_summary_statistics(
     population_names = list(samples.keys())
 
     summary_stats = compute_all_statistics(genotypes_list, population_names)
+
+    if stats_filter == "ALL":
+        pass
+    elif stats_filter == "HEADER":
+        requested_names = parse_requested_statistic_names(header_text)
+        missing = [name for name in requested_names if name not in summary_stats]
+        if missing:
+            raise ValueError(
+                f"header.txt déclare des statistiques non calculées par "
+                f"compute_all_statistics (vocabulaire obsolète ou non "
+                f"implémenté) : {missing}"
+            )
+        summary_stats = {name: summary_stats[name] for name in requested_names}
+    else:
+        raise NotImplementedError(
+            f"stats_filter={stats_filter!r} non géré (valeurs connues : "
+            f"'ALL', 'HEADER')"
+        )
 
     return summary_stats, values

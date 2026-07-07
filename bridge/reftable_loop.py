@@ -193,7 +193,7 @@ def write_reftable_bin(
         )
 
     kept_param_names_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
-    stat_names = sorted(results[0].summary_statistics.keys())
+    stat_names = list(results[0].summary_statistics.keys())
 
     nrec = len(results)
     nscen = len(scenarios)
@@ -267,7 +267,7 @@ def write_reftable_txt(
         name for names in kept_param_names_by_scenario.values() for name in names
     }
     all_param_names = [p.name for p in priors if p.name in used_by_any]
-    stat_names = sorted(results[0].summary_statistics.keys())
+    stat_names = list(results[0].summary_statistics.keys())
 
     def _centre(s: str, width: int = 14) -> str:
         """Reproduit centre() de mesutils.cpp : centrage sur width chars."""
