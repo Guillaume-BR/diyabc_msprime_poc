@@ -17,7 +17,11 @@ from pathlib import Path
 
 from bridge.demography_builder import get_parameter_names_used_by_scenario
 from bridge.parameter_sampling import draw_scenario
-from bridge.pipeline import compute_summary_statistics, read_header_text
+from bridge.pipeline import (
+    compute_summary_statistics,
+    compute_summary_statistics_from_values,
+    read_header_text,
+)
 from bridge.prior_parser import is_constant_prior, parse_priors
 from bridge.scenario_parser import parse_header_scenarios
 from bridge.scenario_types import Scenario
@@ -143,6 +147,133 @@ def _kept_param_names_by_scenario(
             if not is_constant_prior(p) and p.name in used_param_names
         ]
     return result
+
+
+def parse_real_reftable_params(
+    path: str | Path,
+    priors: list,
+    scenarios: list[Scenario],
+) -> list[tuple[int, dict[str, float]]]:
+    """Lit un reftable RÉEL produit par DIYABC (ex:
+    first_records_of_the_reference_table_0.txt) et en extrait, ligne par
+    ligne, le scénario tiré et les valeurs de paramètres RÉELLEMENT
+    tirées par DIYABC -- pour les rejouer ensuite côté msprime (voir
+    replay_reftable_simulation), afin de comparer les deux simulateurs
+    sur EXACTEMENT les mêmes tirages de priors, sans le biais de deux
+    tirages indépendants.
+
+    DIYABC omet de ses colonnes de sortie les priors devenus constants
+    (is_constant_prior) -- la ligne d'en-tête du fichier reste inchangée
+    (elle liste TOUS les priors déclarés), donc on ne peut pas s'y fier
+    pour déterminer combien de colonnes de paramètres sont réellement
+    présentes. On reconstruit à la place l'ensemble de colonnes attendu
+    avec la MÊME logique que write_reftable_txt (_kept_param_names_by_
+    scenario, union dans l'ordre de déclaration des priors), puis on lit
+    exactement ce nombre de tokens après le numéro de scénario -- le
+    reste de la ligne (statistiques résumées de DIYABC) est ignoré ici,
+    on ne s'intéresse qu'aux paramètres.
+
+    Bug découvert empiriquement (voir notebook/correlation_N2_N3_HWm_
+    anomaly.ipynb, section 10) : sans cette reconstruction, un
+    pd.read_csv naïf sur la ligne d'en-tête provoque un décalage de
+    colonnes silencieux dès qu'un prior devient constant.
+
+    Suppose, comme le reste de ce module, un jeu de colonnes de
+    paramètres homogène entre scénarios candidats (limitation déjà
+    présente dans write_reftable_txt).
+    """
+    kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
+    used_by_any = {name for names in kept_by_scenario.values() for name in names}
+    all_param_names = [p.name for p in priors if p.name in used_by_any]
+
+    lines = [line for line in Path(path).read_text().splitlines() if line.strip()]
+    data_lines = lines[1:]  # ligne 0 = en-tête
+
+    rows = []
+    for line in data_lines:
+        tokens = line.split()
+        scenario_index = int(tokens[0])
+        values = {name: float(tokens[1 + i]) for i, name in enumerate(all_param_names)}
+        rows.append((scenario_index, values))
+    return rows
+
+
+def _run_single_particle_from_values(
+    particle_index: int,
+    reference_directory: Path,
+    scenario_index: int,
+    values: dict[str, float],
+    num_loci: int,
+    stats_filter: str,
+) -> ParticleResult:
+    """Variante de _run_single_particle qui NE TIRE AUCUN paramètre :
+    rejoue (scenario_index, values) tels que fournis -- typiquement issus
+    de parse_real_reftable_params."""
+    seed = particle_index + 1
+    summary_statistics = compute_summary_statistics_from_values(
+        reference_directory=reference_directory,
+        scenario_index=scenario_index,
+        values=values,
+        num_loci=num_loci,
+        seed=seed,
+        stats_filter=stats_filter,
+    )
+    return ParticleResult(
+        particle_index=particle_index,
+        scenario_index=scenario_index,
+        parameter_values=values,
+        summary_statistics=summary_statistics,
+    )
+
+
+def replay_reftable_simulation(
+    reference_directory: str | Path,
+    priors: list,
+    scenarios: list[Scenario],
+    real_reftable_path: str | Path,
+    num_loci: int,
+    stats_filter: str = "ALL",
+    max_workers: int | None = None,
+) -> list[ParticleResult]:
+    """Rejoue, particule par particule, les tirages de paramètres
+    RÉELLEMENT effectués par DIYABC dans un reftable existant (ex:
+    first_records_of_the_reference_table_0.txt) -- au lieu d'en tirer de
+    nouveaux indépendamment comme run_reftable_simulation.
+
+    Chaque particule msprime utilise EXACTEMENT le même (N1,N2,N3,ta,
+    ts,...) que la particule DIYABC de même particle_index (même ordre
+    que les lignes du fichier réel) : tout écart entre les deux résulte
+    donc uniquement du moteur de simulation, jamais d'un tirage de prior
+    différent -- permet une comparaison appariée ligne à ligne, pas
+    seulement une comparaison de distributions agrégées.
+
+    Retourne les ParticleResult dans le MÊME ORDRE que les lignes du
+    fichier réel -- réutilisable tel quel par write_reftable_txt/
+    write_reftable_bin (même type que run_reftable_simulation).
+    """
+    reference_directory = Path(reference_directory)
+    rows = parse_real_reftable_params(real_reftable_path, priors, scenarios)
+
+    results_by_index: dict[int, ParticleResult] = {}
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _run_single_particle_from_values,
+                particle_index,
+                reference_directory,
+                scenario_index,
+                values,
+                num_loci,
+                stats_filter,
+            ): particle_index
+            for particle_index, (scenario_index, values) in enumerate(rows)
+        }
+
+        for future in as_completed(futures):
+            particle_index = futures[future]
+            results_by_index[particle_index] = future.result()
+
+    return [results_by_index[i] for i in range(len(rows))]
 
 
 def write_reftable_bin(

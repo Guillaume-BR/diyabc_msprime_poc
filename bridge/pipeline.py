@@ -164,9 +164,22 @@ def compute_summary_statistics(
     population_names = list(samples.keys())
 
     summary_stats = compute_all_statistics(genotypes_list, population_names)
+    summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 
+    return summary_stats, values
+
+
+def _filter_statistics(
+    summary_stats: dict[str, float],
+    header_text: str,
+    stats_filter: str,
+) -> dict[str, float]:
+    """Applique stats_filter ('ALL' ou 'HEADER') à un dict de statistiques
+    déjà calculé -- factorisé entre compute_summary_statistics et
+    compute_summary_statistics_from_values (même logique de filtrage,
+    seule la source des valeurs de paramètres diffère entre les deux)."""
     if stats_filter == "ALL":
-        pass
+        return summary_stats
     elif stats_filter == "HEADER":
         requested_names = parse_requested_statistic_names(header_text)
         missing = [name for name in requested_names if name not in summary_stats]
@@ -176,11 +189,87 @@ def compute_summary_statistics(
                 f"compute_all_statistics (vocabulaire obsolète ou non "
                 f"implémenté) : {missing}"
             )
-        summary_stats = {name: summary_stats[name] for name in requested_names}
+        return {name: summary_stats[name] for name in requested_names}
     else:
         raise NotImplementedError(
             f"stats_filter={stats_filter!r} non géré (valeurs connues : "
             f"'ALL', 'HEADER')"
         )
 
-    return summary_stats, values
+
+def build_demography_for_scenario_index(
+    header_text: str,
+    scenario_index: int,
+    values: dict[str, float],
+) -> msprime.Demography:
+    """Variante de build_random_demography_for_scenario_index qui NE TIRE
+    AUCUNE valeur : construit la Demography directement à partir de
+    valeurs de paramètres déjà connues (ex: reprises telles quelles d'un
+    reftable DIYABC réel -- voir reftable_loop.replay_reftable_simulation).
+    """
+    scenarios = parse_header_scenarios(header_text)
+    scenario = next((s for s in scenarios if s.index == scenario_index), None)
+    if scenario is None:
+        raise ValueError(
+            f"Scénario {scenario_index} non trouvé ou non géré par le parser "
+            f"(scénarios disponibles : {sorted(s.index for s in scenarios)})"
+        )
+    return build_demography(scenario, values)
+
+
+def run_poc_for_directory_with_values(
+    directory: str | Path,
+    scenario_index: int,
+    values: dict[str, float],
+    num_loci: int,
+    seed: int,
+):
+    """Variante de run_poc_for_directory qui prend des valeurs de
+    paramètres déjà connues au lieu d'en tirer de nouvelles -- même
+    contrat par ailleurs (lecture du nom de fichier .snp sur la première
+    ligne de header.txt, échantillonnage, simulation)."""
+    directory = Path(directory)
+    header_text = read_header_text(directory)
+
+    snp_filename = header_text.splitlines()[0].strip()
+    snp_path = directory / snp_filename
+
+    demography = build_demography_for_scenario_index(
+        header_text, scenario_index, values
+    )
+    samples = build_samples_argument(snp_path)
+
+    tree_sequences = simulate_independent_loci(demography, samples, num_loci, seed)
+    return simulate_snp_genotypes(tree_sequences, seed)
+
+
+def compute_summary_statistics_from_values(
+    reference_directory: str | Path,
+    scenario_index: int,
+    values: dict[str, float],
+    num_loci: int,
+    seed: int,
+    stats_filter: str = "ALL",
+) -> dict[str, float]:
+    """Variante de compute_summary_statistics qui NE TIRE AUCUNE valeur de
+    prior : reprend telles quelles des valeurs de paramètres déjà
+    connues, typiquement les tirages RÉELS d'un reftable DIYABC existant
+    (voir reftable_loop.replay_reftable_simulation) -- permet de comparer
+    DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
+    biais possible de deux tirages indépendants.
+    """
+    reference_directory = Path(reference_directory)
+    header_text = read_header_text(reference_directory)
+    snp_filename = header_text.splitlines()[0].strip()
+    snp_path = reference_directory / snp_filename
+
+    genotypes_per_locus = run_poc_for_directory_with_values(
+        reference_directory, scenario_index, values, num_loci, seed
+    )
+    genotypes_list = list(genotypes_per_locus)
+
+    samples = build_samples_argument(snp_path)
+    population_names = list(samples.keys())
+
+    summary_stats = compute_all_statistics(genotypes_list, population_names)
+    return _filter_statistics(summary_stats, header_text, stats_filter)
