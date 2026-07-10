@@ -10,16 +10,17 @@ from bridge.snp_writer import write_snp_file
 from bridge.statobs_parser import parse_statobs
 from bridge.summary_statistics import compute_all_statistics
 
+REFERENCE_DIR = "reference/human_modif_scenario1"
 GENERAL = os.environ["DIYABC_GENERAL_PATH"]
 WORK = Path("./tmp/validate_stats")
 if WORK.exists():
     shutil.rmtree(WORK)
 WORK.mkdir(parents=True)
 
-# 1. Simuler un petit cas (50 loci pour avoir des stats stables)
-num_loci = 50
+# 1. Simuler un petit cas (100 loci pour avoir des stats stables)
+num_loci = 100
 genotypes_per_locus, _ = run_poc_for_directory(
-    "reference/human", scenario_index=1, num_loci=num_loci, seed=42
+    REFERENCE_DIR, scenario_index=1, num_loci=num_loci, seed=42
 )
 genotypes_list = list(genotypes_per_locus)
 
@@ -27,14 +28,18 @@ genotypes_list = list(genotypes_per_locus)
 pop_names = ["pop1", "pop2", "pop3", "pop4"]
 our_stats = compute_all_statistics(genotypes_list, pop_names)
 
-# 3. Passer les MÊMES données au binaire general
-with open("reference/human/header.txt") as f:
+# 3. Passer les MÊMES données au binaire general -- headerRF.txt (pas
+# header.txt) : c'est celui qui déclare le vocabulaire de statistiques
+# ML1p/HWm/... compatible avec compute_all_statistics, header.txt utilise
+# un vocabulaire obsolète (HP0, HM1...) non géré par notre pipeline.
+with open(f"{REFERENCE_DIR}/headerRF.txt") as f:
     header_text = f.read()
 snp_filename = header_text.splitlines()[0].strip()
 write_snp_file(genotypes_list, WORK / snp_filename)
-adapted = rewrite_loci_count(header_text, num_loci)
-(WORK / "header.txt").write_text(adapted)
-shutil.copy("reference/human/RNG_state_0000.bin", WORK / "RNG_state_0000.bin")
+adapted_header = rewrite_loci_count(header_text, num_loci)
+(WORK / "header.txt").write_text(adapted_header)
+shutil.copy(f"{REFERENCE_DIR}/RNG_state_0000.bin", WORK / "RNG_state_0000.bin")
+
 subprocess.run(
     [GENERAL, "-p", "./", "-R", "ALL", "-r", "1", "-g", "1", "-m", "-t", "1"],
     cwd=WORK,
