@@ -445,7 +445,7 @@ def test_parse_loci_description(header_text):
     format condensé à un seul type d'héritage."""
     description = parse_loci_description(header_text)
 
-    assert description.total_loci == 5000
+    assert description.total_loci == {"A": 5000}
     assert description.group == "G1"
     assert description.start_index == 0  # "from 1" en 1-based -> 0 en 0-based
 

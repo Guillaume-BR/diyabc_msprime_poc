@@ -92,6 +92,6 @@ class OrderConstraint:
 
 @dataclass
 class LociDescription:
-    total_loci: int  # 5000
+    total_loci: dict[str, int]  # 5000
     group: str  # "G1"
     start_index: int  # 0 (déjà converti en 0-based, comme le C++ : prem = N - 1)

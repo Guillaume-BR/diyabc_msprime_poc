@@ -49,16 +49,29 @@ def parse_loci_description(header_text: str) -> LociDescription:
         )
 
     content_line = lines[section_index + 1].strip()
-    match = _CONDENSED_SINGLE_TYPE_RE.match(content_line)
-    if not match:
-        raise NotImplementedError(
-            f"Format de ligne non géré (probablement multi-types, ex: "
-            f"'70 <A> 10 <X> ...') : {content_line!r}"
-        )
 
-    total_loci, group, start_1based = match.groups()
+    def _extract_loci_info(text: str) -> tuple[dict[str, int], str, tuple[str, str]]:
+        paires = re.findall(r"(\d+)\s*<([^>]+)>", text)
+        if not paires:
+            raise NotImplementedError(
+                f"Format de ligne non géré (aucune paire '<n> <type>' "
+                f"trouvée) : {text!r}"
+            )
+        paires_dict = {heritage: int(count) for count, heritage in paires}
+        reste = re.sub(r"(\d+)\s*<([^>]+)>", "", text).strip()
+        end = re.compile(r"(\S+)\s+from\s+(\d+)\s*$")
+        end_match = end.match(reste)
+        if end_match is None:
+            raise NotImplementedError(
+                f"Format de ligne non géré (attendu '<groupe> from <indice>' "
+                f"après les paires '<n> <type>', trouvé {reste!r}) : {text!r}"
+            )
+        return paires_dict, reste, end_match.groups()
+
+    paires_dict, _, (group, start_1based) = _extract_loci_info(content_line)
+
     return LociDescription(
-        total_loci=int(total_loci),
+        total_loci=paires_dict,
         group=group,
         start_index=int(start_1based)
         - 1,  # conversion 1-based -> 0-based, comme prem = N-1 en C++

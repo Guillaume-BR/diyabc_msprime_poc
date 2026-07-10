@@ -84,10 +84,21 @@ module with no cross-cutting logic:
    `(max-min)/max <= 1e-6`, never constant when `max == 0.0`) — DIYABC
    excludes these from `reftable.bin` columns.
 
-3. **`parameter_sampling.py`** — draws one value per prior via
+3. **`loci_parser.py`** — parses the `loci description` section (condensed
+   format only, not the detailed one-locus-per-line format used by
+   sequences-mut). Handles both the single-heritage-type line
+   (`"5000 <A> G1 from 1"`) and the multi-type line (`"70 <A> 10 <X> 10
+   <M> 10 <Y> G1 from 1"`) — `LociDescription.total_loci` is a
+   `dict[heritage_type, count]`, not a plain int, precisely to represent
+   the multi-type case. `rewrite_loci_count` (used to test with a
+   reduced loci count without editing header.txt by hand) is currently
+   still single-type only and raises `NotImplementedError` on a
+   multi-type line — not yet updated to match `parse_loci_description`.
+
+4. **`parameter_sampling.py`** — draws one value per prior via
    rejection sampling until all `OrderConstraint`s are satisfied.
 
-4. **`demography_builder.py`** — `Scenario` + drawn values →
+5. **`demography_builder.py`** — `Scenario` + drawn values →
    `msprime.Demography`. Populations are named `"pop1".."popN"` by their
    1-indexed position in `header.txt`. `get_parameter_names_used_by_scenario`
    determines which prior names a *specific* scenario actually references
@@ -97,7 +108,7 @@ module with no cross-cutting logic:
    parameter columns, per a bug found via `readReftable.R` failing with
    "indice hors limites").
 
-5. **`observed_data.py`** — maps population index (1,2,3,4 from
+6. **`observed_data.py`** — maps population index (1,2,3,4 from
    `header.txt`, which never names populations) to real population name
    in the `.snp` file (e.g. `{1: "ASW", 2: "YRI", ...}`). The mapping is
    implicit: population *i* in the scenario = the *i*-th population by
@@ -107,7 +118,7 @@ module with no cross-cutting logic:
    that could reorder keys (e.g. alphabetical sort) — it would silently
    break this mapping.
 
-6. **`ancestry_simulation.py`** — simulates one independent tree per SNP
+7. **`ancestry_simulation.py`** — simulates one independent tree per SNP
    locus (`simulate_independent_loci`, no recombination/linkage between
    loci) and mutates each with the Hudson algorithm
    (`simulate_snp_genotypes`): exactly one mutation per locus, placed on
@@ -119,10 +130,10 @@ module with no cross-cutting logic:
    as opposed to `<MAF=hudson>`) is not implemented — not needed for the
    `human` dataset.
 
-7. **`snp_writer.py`** — writes simulated genotypes out in DIYABC `.snp`
+8. **`snp_writer.py`** — writes simulated genotypes out in DIYABC `.snp`
    format (only used for the deprecated subprocess-based path, see below).
 
-8. **`summary_statistics.py`** — pure-Python/numpy reimplementation of
+9. **`summary_statistics.py`** — pure-Python/numpy reimplementation of
    all 130 SNP summary statistics from `sumstat.cpp` (ML1-3, HW, HB,
    FST1-4, NEI, AML, F3, F4), validated column-by-column against the real
    `general` binary's output. This is the **current** path — no subprocess,
@@ -132,12 +143,12 @@ module with no cross-cutting logic:
    `sumstat.cpp` function names in each docstring — check there before
    changing a formula.
 
-9. **`pipeline.py`** — orchestrates 1-8 with no logic of its own.
+10. **`pipeline.py`** — orchestrates 1-9 with no logic of its own.
    `compute_summary_statistics` is the main high-level entry point (its
    docstring still mentions delegating to the C++ binary; that's stale —
    it now calls `summary_statistics.compute_all_statistics` directly).
 
-10. **`reftable_loop.py`** — runs `nrec` independent particles in
+11. **`reftable_loop.py`** — runs `nrec` independent particles in
     parallel (`ProcessPoolExecutor`, one work directory per particle) and
     writes the DIYABC binary `reftable.bin` format (`write_reftable_bin`,
     verified against `reftable.cpp` / `readReftable.R` /
