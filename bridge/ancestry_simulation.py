@@ -64,7 +64,7 @@ def simulate_independent_loci(
         sequence_length=1,
         num_replicates=num_loci,
         random_seed=seed,
-        ploidy=2,
+        ploidy=2,  # cohérent avec le code <A> de human
     )
 
 
@@ -94,40 +94,40 @@ def _draw_single_mutation_edge_child(ts, rng: random.Random) -> int:
     return int(edges.child[idx])
 
 
-def _draw_single_mutation_node_fast(tree, ts, rng: random.Random) -> int:
-    """Version vectorisée : longueur de branche = temps(parent) - temps(noeud),
-    calculé en numpy sur tous les noeuds d'un coup."""
-    node_times = ts.tables.nodes.time  # numpy array, tous les temps
-    nodes = np.fromiter((u for u in tree.nodes() if u != tree.root), dtype=np.int64)
-    parents = np.fromiter((tree.parent(u) for u in nodes), dtype=np.int64)
-    lengths = node_times[parents] - node_times[nodes]
-
-    total = lengths.sum()
-    target = rng.uniform(0, total)
-    cumulative = np.cumsum(lengths)
-    idx = np.searchsorted(cumulative, target)
-    if idx >= len(nodes):
-        idx = len(nodes) - 1
-    return int(nodes[idx])
-
-
-def _draw_single_mutation_node_vectorized(ts, rng: random.Random):
-    """Tire le noeud portant la mutation, entièrement en numpy depuis les
-    tables (pas d'appel branch_length() par noeud). Valable pour un arbre
-    unique (sequence_length=1, une seule TreeSequence)."""
-    edges = ts.tables.edges
-    node_times = ts.tables.nodes.time
-
-    children = edges.child  # array des noeuds enfants
-    parents = edges.parent  # array des parents
-    lengths = node_times[parents] - node_times[children]  # longueurs, vectorisé
-
-    total = lengths.sum()
-    target = rng.uniform(0, total)
-    idx = np.searchsorted(np.cumsum(lengths), target)
-    if idx >= len(children):
-        idx = len(children) - 1
-    return int(children[idx])
+# def _draw_single_mutation_node_fast(tree, ts, rng: random.Random) -> int:
+#    """Version vectorisée : longueur de branche = temps(parent) - temps(noeud),
+#    calculé en numpy sur tous les noeuds d'un coup."""
+#    node_times = ts.tables.nodes.time  # numpy array, tous les temps
+#    nodes = np.fromiter((u for u in tree.nodes() if u != tree.root), dtype=np.int64)
+#    parents = np.fromiter((tree.parent(u) for u in nodes), dtype=np.int64)
+#    lengths = node_times[parents] - node_times[nodes]
+#
+#    total = lengths.sum()
+#    target = rng.uniform(0, total)
+#    cumulative = np.cumsum(lengths)
+#    idx = np.searchsorted(cumulative, target)
+#    if idx >= len(nodes):
+#        idx = len(nodes) - 1
+#    return int(nodes[idx])
+#
+#
+# def _draw_single_mutation_node_vectorized(ts, rng: random.Random):
+#    """Tire le noeud portant la mutation, entièrement en numpy depuis les
+#    tables (pas d'appel branch_length() par noeud). Valable pour un arbre
+#    unique (sequence_length=1, une seule TreeSequence)."""
+#    edges = ts.tables.edges
+#    node_times = ts.tables.nodes.time
+#
+#    children = edges.child  # array des noeuds enfants
+#    parents = edges.parent  # array des parents
+#    lengths = node_times[parents] - node_times[children]  # longueurs, vectorisé
+#
+#    total = lengths.sum()
+#    target = rng.uniform(0, total)
+#    idx = np.searchsorted(np.cumsum(lengths), target)
+#    if idx >= len(children):
+#        idx = len(children) - 1
+#    return int(children[idx])
 
 
 def simulate_snp_genotypes(

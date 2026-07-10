@@ -153,7 +153,7 @@ def compute_ML1(
     _mats=None,
 ) -> dict[str, float]:
     """ML1p_i : proportion de loci monomorphes dans la population i.
-    Un locus est monomorphe si sum==0 (fixé ancestral) ou sum==n (fixé dérivé).
+    Un locus est monomorphe si sum==0 (fixé dérivé) ou sum==n (fixé ancestral).
     """
     counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, population_names)
     mono = (counts == 0) | (counts == ns)  # (npop, nloci) booléen

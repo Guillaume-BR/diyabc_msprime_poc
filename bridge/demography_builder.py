@@ -69,6 +69,7 @@ def build_demography(
         demography.add_population(
             name=f"pop{i}",
             initial_size=evaluate_expression(size_expr, values),
+            initially_active=True,  # sinon la population ancestrale d'un merge est échantillonnée au temps du merge, pas au présent
         )
 
     # Les événements sont listés dans header.txt du présent vers le passé
