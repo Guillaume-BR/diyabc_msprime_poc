@@ -200,6 +200,73 @@ def parse_real_reftable_params(
     return rows
 
 
+def rewrite_real_reftable_txt(
+    input_path: str | Path,
+    output_path: str | Path,
+    priors: list,
+    scenarios: list[Scenario],
+) -> None:
+    """Réécrit un reftable RÉEL de DIYABC (ex:
+    first_records_of_the_reference_table_0.txt) en un texte à colonnes
+    de largeur FIXE, en remplaçant les cases vides de DIYABC (paramètre
+    non utilisé par le scénario de la ligne, voir parse_real_reftable_
+    params) par `nan` -- jamais une case vide.
+
+    Nécessaire pour toute lecture EXTERNE du fichier DIYABC brut avec un
+    parseur par espaces générique (ex: `pandas.read_csv(sep=r'\\s+')`,
+    utilisé dans les notebooks de comparaison) : sans cette réécriture,
+    une ligne dont le scénario n'utilise pas tous les paramètres
+    déclarés a MOINS de tokens que la ligne d'en-tête ne le laisse
+    penser, ce qui décale silencieusement toutes les colonnes
+    suivantes (statistiques comprises) sur cette ligne -- même piège
+    que documenté dans parse_real_reftable_params/write_reftable_txt,
+    mais ici côté fichier DIYABC lui-même plutôt que côté notre pipeline.
+
+    Le fichier réécrit a EXACTEMENT le même format que celui produit par
+    write_reftable_txt (mêmes colonnes de paramètres -- union dans
+    l'ordre de déclaration des priors --, dans le même ordre), donc
+    directement comparable colonne à colonne avec un reftable_msprime
+    généré par run_reftable_simulation/replay_reftable_simulation.
+    """
+    kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
+    used_by_any = {name for names in kept_by_scenario.values() for name in names}
+    all_param_names = [p.name for p in priors if p.name in used_by_any]
+
+    lines = [line for line in Path(input_path).read_text().splitlines() if line.strip()]
+    header_tokens = lines[0].split()
+    stat_names = header_tokens[1 + len(all_param_names) :]
+    data_lines = lines[1:]
+
+    def _centre(s: str, width: int = 14) -> str:
+        return s.center(width)
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        header = (
+            _centre("scenario")
+            + "".join(_centre(n) for n in all_param_names)
+            + "".join(_centre(n) for n in stat_names)
+        )
+        f.write(header + "\n")
+
+        for line in data_lines:
+            tokens = line.split()
+            scenario_index = int(tokens[0])
+            param_names = kept_by_scenario[scenario_index]
+            n_params = len(param_names)
+            param_values = dict(zip(param_names, tokens[1 : 1 + n_params], strict=True))
+            stat_values = dict(zip(stat_names, tokens[1 + n_params :], strict=True))
+
+            out_line = f"{scenario_index:3d}  "
+            for name in all_param_names:
+                value = (
+                    float(param_values[name]) if name in param_values else float("nan")
+                )
+                out_line += f"  {value:12.6f}"
+            for name in stat_names:
+                out_line += f"  {float(stat_values[name]):12.6f}"
+            f.write(out_line + "\n")
+
+
 def _run_single_particle_from_values(
     particle_index: int,
     reference_directory: Path,
@@ -394,7 +461,7 @@ def write_reftable_txt(
     ce qui décale d'une colonne TOUTES les valeurs suivantes sur la
     ligne. Bug découvert empiriquement (comparaison DIYABC/msprime sur
     toy_example5_modif, colonne 'r' non utilisée par le scénario actif
-    laissée en blanc -> décalage systématique des 51 statistiques sur
+    laissée en blanc -> décalage systématique des statistiques sur
     les 1000 lignes, provoquant des "écarts" massifs et incohérents qui
     n'avaient rien à voir avec un vrai écart de simulation). DIYABC
     lui-même (particleset.cpp, écriture de first_records_of_the_
