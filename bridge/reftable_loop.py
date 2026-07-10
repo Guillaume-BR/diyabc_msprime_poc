@@ -162,29 +162,30 @@ def parse_real_reftable_params(
     sur EXACTEMENT les mêmes tirages de priors, sans le biais de deux
     tirages indépendants.
 
-    DIYABC omet de ses colonnes de sortie les priors devenus constants
-    (is_constant_prior) -- la ligne d'en-tête du fichier reste inchangée
-    (elle liste TOUS les priors déclarés), donc on ne peut pas s'y fier
-    pour déterminer combien de colonnes de paramètres sont réellement
-    présentes. On reconstruit à la place l'ensemble de colonnes attendu
-    avec la MÊME logique que write_reftable_txt (_kept_param_names_by_
-    scenario, union dans l'ordre de déclaration des priors), puis on lit
-    exactement ce nombre de tokens après le numéro de scénario -- le
-    reste de la ligne (statistiques résumées de DIYABC) est ignoré ici,
-    on ne s'intéresse qu'aux paramètres.
+    Le nombre de colonnes de paramètres RÉELLEMENT présentes sur une
+    ligne dépend du SCÉNARIO de CETTE ligne précise, pas d'un total fixe
+    pour tout le fichier : DIYABC (particleset.cpp, écriture de
+    first_records_of_the_reference_table_N.txt) parcourt l'UNION de tous
+    les noms de paramètres déclarés et, pour un nom NON utilisé par le
+    scénario de la ligne courante, écrit une CASE VIDE (aucune valeur,
+    juste des espaces) au lieu d'une valeur ou d'un NA -- un parseur par
+    espaces ne produit alors AUCUN token pour cette case, ce qui décale
+    silencieusement toutes les colonnes suivantes si on suppose un
+    nombre de colonnes fixe (union) pour toutes les lignes. Repéré en
+    testant un reftable réellement multi-scénario (voir aussi le même
+    principe côté écriture dans write_reftable_txt, qui l'évite en
+    n'écrivant jamais de case vide).
 
-    Bug découvert empiriquement (voir notebook/correlation_N2_N3_HWm_
-    anomaly.ipynb, section 10) : sans cette reconstruction, un
-    pd.read_csv naïf sur la ligne d'en-tête provoque un décalage de
-    colonnes silencieux dès qu'un prior devient constant.
-
-    Suppose, comme le reste de ce module, un jeu de colonnes de
-    paramètres homogène entre scénarios candidats (limitation déjà
-    présente dans write_reftable_txt).
+    On lit donc, pour CHAQUE ligne, le nombre de tokens de paramètres
+    correspondant SPÉCIFIQUEMENT au scénario de cette ligne
+    (kept_by_scenario[scenario_index], même filtre non-constant +
+    utilisé-par-ce-scénario que write_reftable_txt/write_reftable_bin),
+    pas une union appliquée uniformément -- ce qui gère aussi, en
+    particulier, le cas single-scénario où certains priors sont devenus
+    constants (is_constant_prior) et donc absents des colonnes de
+    sortie.
     """
     kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
-    used_by_any = {name for names in kept_by_scenario.values() for name in names}
-    all_param_names = [p.name for p in priors if p.name in used_by_any]
 
     lines = [line for line in Path(path).read_text().splitlines() if line.strip()]
     data_lines = lines[1:]  # ligne 0 = en-tête
@@ -193,7 +194,8 @@ def parse_real_reftable_params(
     for line in data_lines:
         tokens = line.split()
         scenario_index = int(tokens[0])
-        values = {name: float(tokens[1 + i]) for i, name in enumerate(all_param_names)}
+        param_names = kept_by_scenario[scenario_index]
+        values = {name: float(tokens[1 + i]) for i, name in enumerate(param_names)}
         rows.append((scenario_index, values))
     return rows
 
@@ -374,10 +376,16 @@ def write_reftable_txt(
     Le texte utilise un jeu de colonnes de paramètres FIXE : l'UNION
     (dans l'ordre de déclaration des priors) des paramètres utilisés par
     au moins un des `scenarios`. Pour une ligne dont le scénario tiré
-    n'utilise pas tel paramètre, on écrit quand même sa valeur RÉELLEMENT
-    TIRÉE (r.parameter_values[name] -- toujours présente, puisque
-    draw_parameter_values tire TOUS les priors déclarés, indépendamment
-    du scénario, voir build_random_demography), jamais une case vide.
+    n'utilise pas tel paramètre, on écrit :
+      - sa valeur RÉELLEMENT TIRÉE si elle est présente dans
+        r.parameter_values (cas de `run_reftable_simulation` :
+        draw_parameter_values tire TOUS les priors déclarés,
+        indépendamment du scénario, voir build_random_demography) ;
+      - `nan` sinon (cas de `replay_reftable_simulation` :
+        parse_real_reftable_params ne fournit QUE les paramètres du
+        scénario propre à chaque ligne, puisque c'est aussi ce que
+        DIYABC écrit réellement -- voir sa docstring).
+    Jamais une case VIDE dans les deux cas.
 
     IMPORTANT : ne JAMAIS laisser de case vide ici, même si elle
     représente une valeur non pertinente pour le scénario de la ligne --
@@ -388,7 +396,12 @@ def write_reftable_txt(
     toy_example5_modif, colonne 'r' non utilisée par le scénario actif
     laissée en blanc -> décalage systématique des 51 statistiques sur
     les 1000 lignes, provoquant des "écarts" massifs et incohérents qui
-    n'avaient rien à voir avec un vrai écart de simulation).
+    n'avaient rien à voir avec un vrai écart de simulation). DIYABC
+    lui-même (particleset.cpp, écriture de first_records_of_the_
+    reference_table_N.txt) laisse une case vide dans ce cas précis --
+    c'est cette case vide, relue naïvement, qui a provoqué le même
+    décalage silencieux lors du premier test avec un reftable réel
+    multi-scénario (voir parse_real_reftable_params).
     """
     if not results:
         raise ValueError("results est vide : au moins une particule est requise")
@@ -417,7 +430,7 @@ def write_reftable_txt(
         for r in results:
             line = f"{r.scenario_index:3d}  "
             for name in all_param_names:
-                line += f"  {r.parameter_values[name]:12.6f}"
+                line += f"  {r.parameter_values.get(name, float('nan')):12.6f}"
             for name in stat_names:
                 line += f"  {r.summary_statistics[name]:12.6f}"
             f.write(line + "\n")
