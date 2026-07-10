@@ -88,8 +88,8 @@ Exemple human : "5000 <A> G1 from 1" = prendre les 5000 PREMIERS loci
 (indices 0 à 4999) du fichier .snp, tous <A>, assignés au groupe G1.
 
 Exemple théorique : "70 <A> 10 <X> 10 <M> 10 <Y> G1 from 1" = prendre
-les 100 premiers loci (indices 0-99), répartis comme : positions 0-69
-=<A>, 70-79=<X>, 80-89=<M>, 90-99=<Y>.
+les 100 loci à partir de 1, positions 0-69
+=<A>, puis les 10 premiers <X>, puis les 10 premiers <Y> et enfin les 10 premiers <M>.
 
 IMPORTANT : le FICHIER .snp peut contenir bien plus de loci (51250 pour
 human) que ce qui est réellement simulé/comparé (5000 pour le scénario
@@ -101,7 +101,7 @@ des colonnes du fichier de données, pas une description de tout le fichier.
 Confirmé par la doc utilisateur DIYABC : pour les SNP, "il est supposé
 qu'il y a eu une et une seule mutation dans l'arbre de coalescence" --
 PAS un processus de Poisson à taux variable. C'est l'algorithme "-s"
-de Hudson (2002). Notre précédente approche (msprime.sim_mutations à
+de Hudson (2002). La première approche (msprime.sim_mutations à
 taux fixe, BinaryMutationModel) était donc structurellement incorrecte
 pour les SNP, pas seulement approximative.
 
@@ -234,3 +234,65 @@ Dimensions stats: 5 130 : 5 lignes (nos 5 particules), 130 colonnes de statistiq
 Première ligne de params : les 16 paramètres du scénario 1 (N1...Na) ont des valeurs numériques cohérentes, et ra, t11, t22, t33, t44 sont NA — exactement le comportement attendu, puisque ces 5 paramètres n'appartiennent pas au scénario 1 (rappelle-toi, c'est précisément ce qu'on avait observé avec le vrai reftableRF.bin de DIYABC tout au début du projet, à l'identique).
 C'est la preuve définitive
 Le reftable.bin produit par notre pipeline Python (header.txt → msprime → algorithme de Hudson → délégation au C++ pour les stats → écriture binaire) est structurellement et fonctionnellement identique à ce que produit le vrai DIYABC — vérifié par l'outil de référence indépendant readReftable.R, avec exactement le même comportement de filtrage des paramètres non utilisés par scénario.
+
+## Découverte critique de performance : -g est la taille de batch interne, jamais notre besoin
+
+-g <n> (general.cpp) contrôle nenr, la taille du batch de particules
+simulées en une fois par dosimultabref() AVANT de vérifier la condition
+d'arrêt (nrecneeded > rt.nrec). On utilisait -g 50 (copié de notre tout
+premier test manuel) alors qu'on ne veut qu'UNE particule par appel
+subprocess (notre boucle externe gère déjà l'itération côté Python).
+
+Conséquence mesurée : -g 50 calculait 50 particules complètes par appel,
+dont on ne gardait qu'une seule -- facteur ~29x de ralentissement
+(343s -> 7.4-12s par particule sur 5000 loci). Corrigé : -g 1.
+
+Pour nrec=1000 particules (5000 loci, scénario 1, -R "ALL") :
+  estimation ~200 minutes en séquentiel, ~25 minutes avec parallélisation
+  (ProcessPoolExecutor, 8 workers) -- à valider empiriquement.
+
+## Notes du 03/07/2026
+Création de deux fichiers txt contenant les résumés statistiques d'une simulation de 1000 particules pour 5000 loci sur le scenario 1 de human. Le premier fichier est issu de la simualtion via diyabc : "time ./diyabc -p ./ -R ALL -r 1000 -g 1000 -m -t 16" (temps de calcul 2 min 17). L'autre provient de la simulation via msprime avec calcul des résumés statistiques via l'implémentation en Python. Note : cette implémentation en Python à prouver que l'on obtenait les mêmes résultats qu'avec le calcul via msprime validant ainsi notre implémentation des formules. 
+
+**Comparaison statistiques de ces deux fichiers :** pour chaque indicateurs (priors, statistiques) calcul de la moyenne, écart-type, médiane et calcul des différences et différences relatives. Puis Détermination des variables ayant une différence relative de la moyenne supérieure à 5%. Résultat : 124 variables sur 125 ont un seuil supérieur. Si on pousse l'analyse un peu plus loin, on se rend compte que pour un test de Kolmogorov-Smirnov à deux échantillons où l'hypothèse nulle serait "les deux distributions sont-elles compatibles avec la même loi ?", 126 variables ont une p-value inférieur à 0.05 rejetant ainsi l'hypothèse nulle. 
+
+**Conclusion :** Les deux simulateurs ne semblent pas donner des simulations identiques. Cela reste à discuter avec les experts pour voir si les moyennes proches peuvent tout de même être interprétées comme allant dans le même sens. 
+
+
+## Notes du 06/07/2026
+Dans certains header.txt, les variations de population efficace sont notées "varne" et "parfois "varNe" ! Il faudra faire en sorte d'éliminer cette difficulté.
+
+## Notes du 07/07/26
+Problème qqpart car la comparaison des statistiques de sorties montrent qu'il y a un vrai écart entre les simulations faites par msprime et celles faites par diyabc. Les pistes écartées : 
+- 1. Échelle de Ne (k(k-1)/(4N)) — identique à msprime.
+- 2. Modèle de mutation Hudson (placement direct pondéré par longueur de branche, sans rejet, sans filtre
+  MAF/populationnel caché) — identique au nôtre, vérifié deux fois en détail.
+- 3. Arbre de coalescence partagé entre loci — chaque locus autosomal retire bien sa propre généalogie
+  indépendante.
+- 4. Approximation continue vs discrète du coalescent — écartée par calcul ET confirmée par test
+  empirique (biais identique après ×10 sur N).
+- 5. Propagation du génotype (quels échantillons héritent de l'allèle muté) — parcours topologique
+  standard, rien d'anormal.
+- 6. Doublons de branches / MRCA artificiel — arbre binaire propre, rien d'anormal.
+
+## Notes du 10/07/2026 — RÉSOLUTION : la ligne de fin de header.txt/headerRF.txt n'est pas cosmétique
+
+Cause racine trouvée (découverte par l'utilisateur, root-causée et reproduite indépendamment le même jour) de l'essentiel de l'écart documenté le 03/07 et le 07/07 : la dernière ligne du header ("scenario N1 N2 N3 ta ts ML1p_1 ...", qu'on pensait être une simple documentation des colonnes de sortie générée par DIYABC) est en réalité **relue comme une entrée** par le binaire `general`.
+
+Dans `header.cpp::HeaderC::readHeaderAllStat` (~lignes 789-799) :
+```cpp
+getline(file, this->entete);  // relit la DERNIÈRE ligne du header EN ENTRÉE
+...
+size_t nparamhist = header_lastline.size() - 1 - nstat - nparamut;
+```
+`nparamhist` (le nombre de paramètres historiques que DIYABC croit exister) est dérivé du **nombre de tokens de cette ligne de fin**, pas d'un comptage réel des priors déclarés dans `historical parameters priors`. Si cette ligne contient des noms de paramètres en trop (ex: `N4 r` recopiés d'un header d'un autre scénario, alors que `historical parameters priors` n'en déclare que 5), `nparamhist` est faux et corrompt un état interne en aval.
+
+**Signature du bug** : la population "hub" (première déclarée / celle qui survit à toutes les fusions) reste correcte ; toutes les autres populations montrent des statistiques massivement fausses (HWm/ML1p écroulés vers 0, FST1m explosé au-dessus de 1) — écarts de 300% à 10000%, alors que les tirages de priors (N1..ts) restent statistiquement normaux. C'est exactement la signature "asymétrie population 1 vs populations 2/3" observée et creusée pendant toute l'investigation du notebook `correlation_N2_N3_HWm_anomaly.ipynb`.
+
+**Vérification** : `toy_example5_scenario1` (utilisé dans tout ce notebook) déclarait "6 parameters" avec seulement 5 priors réels, et sa ligne de fin listait `N4 r` en trop. En reconstruisant un header identique mais avec une ligne de fin propre (5 tokens), sur 1000 particules DIYABC réelles vs msprime (tirages indépendants, mêmes priors) :
+- `ML1p_1/2/3` et `HWm_1/2/3` : écarts tombés de 300-10000% à <3%, plus aucun significatif (avant : très significatifs sur pop2/pop3 uniquement).
+- Nombre de stats significativement différentes (test KS, p<0.05) : passé de ~48/55 à ~22/55.
+- Il reste un biais résiduel modeste (5-16%) sur les statistiques de paires (FST2, NEI, F3, HB) — du même ordre que ce qu'on observe ailleurs dans le projet avec des headers propres, un problème bien plus petit et probablement plus classique, encore ouvert.
+
+**Conclusion révisée** : la quasi-totalité de l'écart documenté le 03/07 et 07/07 était un artefact de fichier de test mal formé (ligne de fin recopiée depuis un autre scénario), pas un désaccord réel entre les deux simulateurs. Voir mémoire persistante `diyabc_header_trailer_line_bug` pour le détail complet et comment vérifier un header pour ce piège avant de le réutiliser.
+
