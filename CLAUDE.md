@@ -145,8 +145,18 @@ module with no cross-cutting logic:
     `write_reftable_txt` (mirrors DIYABC's
     `first_records_of_the_reference_table_0.txt`, for direct diffing
     against real DIYABC output). Seeds are derived as `particle_index + 1`
-    (msprime rejects `seed=0`). Only supports a single active scenario
-    (`nscen=1`) — raises if results mix scenario indices.
+    (msprime rejects `seed=0`). **Multi-scenario is supported**:
+    `run_reftable_simulation` draws each particle's own scenario from a
+    weighted list of candidates (`parameter_sampling.draw_scenario`,
+    matching `particuleC.cpp::ParticleC::drawscenario`), and both writers
+    handle rows that mix different `scenario_index` values —
+    `write_reftable_bin` writes a variable-length record per row (only
+    that row's own scenario's `nparam` columns, matching `reftable.cpp`'s
+    own behavior, no NA-padding), `write_reftable_txt` uses a fixed union
+    of parameter columns across all candidate scenarios. Never validated
+    end-to-end against a real DIYABC multi-scenario reftable yet, though
+    (see `tests/test_scenario1_human.py` for the current unit-level
+    coverage of weighted draw + `SplitEvent`/admixture translation).
 
 ### Two generations of architecture — mind the drift
 
