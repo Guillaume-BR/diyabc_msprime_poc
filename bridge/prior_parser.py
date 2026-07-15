@@ -1,6 +1,6 @@
 import re
 
-from bridge.scenario_types import Prior, OrderConstraint
+from bridge.scenario_types import OrderConstraint, Prior
 
 _SECTION_START_RE = re.compile(r"^historical parameters priors\s*\(")
 _SECTION_END_RE = re.compile(r"^DRAW UNTIL\s*$")

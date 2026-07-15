@@ -33,4 +33,4 @@ def parse_statobs(statobs_text: str) -> dict[str, float]:
             f"valeurs ({len(values)})."
         )
 
-    return dict(zip(names, values))
+    return dict(zip(names, values, strict=True))

@@ -9,22 +9,45 @@ Ce module ne contient aucune nouvelle logique de parsing ou de
 construction : il orchestre uniquement.
 """
 
+import itertools
+from collections.abc import Iterator
 from pathlib import Path
 
 import msprime
 
 from bridge.ancestry_simulation import (
     build_samples_argument,
-    simulate_independent_loci,
-    simulate_snp_genotypes,
+    simulate_genotypes_for_locus_type,
 )
 from bridge.demography_builder import build_demography
+from bridge.loci_parser import parse_loci_description
 from bridge.parameter_sampling import draw_parameter_values
 from bridge.prior_parser import parse_priors
 from bridge.scenario_parser import parse_header_scenarios
 from bridge.scenario_types import Scenario
 from bridge.stats_group_parser import parse_requested_statistic_names
 from bridge.summary_statistics import compute_all_statistics
+
+# Décalage fixe et bien séparé par type de locus, à ajouter à la seed de
+# base avant d'appeler simulate_genotypes_for_locus_type -- établi avec
+# le mentor : réutiliser la MÊME seed pour tous les types corrèle
+# artificiellement la position relative de leur première mutation
+# (random.Random(seed) fraîchement recréé à chaque appel de
+# simulate_snp_genotypes tire la même fraction relative target/total au
+# premier tirage, quel que soit le total réel de branches -- vérifié
+# empiriquement). Des offsets petits/positionnels (0,1,2,3...) ne
+# suffisent PAS : ils entreraient en collision avec les seeds d'autres
+# particules (seed = particle_index + 1 dans reftable_loop.py, donc de
+# petits entiers eux aussi). Des offsets grands et bien séparés rendent
+# une collision (particule, type) quasi impossible même sur des dizaines
+# de milliers de particules -- msprime accepte des seeds jusqu'à 2**32-1.
+LOCUS_TYPE_SEED_OFFSET = {
+    "A": 0,
+    "H": 10_000_000,
+    "X": 20_000_000,
+    "Y": 30_000_000,
+    "M": 40_000_000,
+}
 
 
 def read_header_text(directory: Path) -> str:
@@ -82,6 +105,55 @@ def build_random_demography_for_scenario_index(
     return build_random_demography(scenario, header_text, seed)
 
 
+def _simulate_genotypes_for_all_locus_types(
+    demography: msprime.Demography,
+    header_text: str,
+    snp_path: Path,
+    num_loci: int,
+    seed: int,
+) -> Iterator[dict[str, list[int]]]:
+    """Boucle sur TOUS les types de locus déclarés dans la section 'loci
+    description' de header_text (parse_loci_description(header_text).
+    total_loci -- dict[str, int], ex: {"A": 5000} pour human, {"A": 70,
+    "X": 10, "M": 10, "Y": 10} pour toy_example5), et concatène les
+    génotypes simulés pour chacun via simulate_genotypes_for_locus_type.
+
+    IMPORTANT -- num_loci est un compte PAR TYPE, pas un total : pour un
+    dataset <A>-only comme human (un seul type déclaré), c'est
+    rigoureusement identique au comportement actuel (num_loci loci de
+    type <A>, point). Pour un dataset multi-type comme toy_example5,
+    num_loci loci sont simulés pour CHAQUE type déclaré -- pas les vrais
+    comptes du header.txt (70/10/10/10), qui ne sont pas utilisés ici
+    (choix délibéré, établi avec le mentor : num_loci reste l'override
+    pratique déjà utilisé partout ailleurs dans les tests pour aller
+    vite, plutôt que de forcer les vrais comptes -- souvent 51250 pour
+    human).
+
+    Un seed DISTINCT est dérivé par type de locus via
+    LOCUS_TYPE_SEED_OFFSET (voir sa docstring en tête de fichier pour la
+    justification empirique) -- ne JAMAIS appeler
+    simulate_genotypes_for_locus_type avec la même seed brute pour
+    plusieurs types dans cette boucle.
+
+    Retourne un itérateur (pas une liste) : voir simulate_independent_loci
+    pour la justification (ne pas matérialiser 51250 TreeSequence en
+    mémoire simultanément).
+    """
+
+    total_loci = parse_loci_description(header_text).total_loci
+
+    liste_iterateurs_par_type = []
+
+    for locus_type in total_loci:
+        seed_for_type = seed + LOCUS_TYPE_SEED_OFFSET[locus_type]
+        liste_iterateurs_par_type.append(
+            simulate_genotypes_for_locus_type(
+                demography, snp_path, locus_type, num_loci, seed_for_type
+            )
+        )
+    return itertools.chain(*liste_iterateurs_par_type)
+
+
 def run_poc_for_directory(
     directory: str | Path,
     scenario_index: int,
@@ -111,10 +183,10 @@ def run_poc_for_directory(
     demography, values = build_random_demography_for_scenario_index(
         header_text, scenario_index, seed
     )
-    samples = build_samples_argument(snp_path)
 
-    tree_sequences = simulate_independent_loci(demography, samples, num_loci, seed)
-    mutated = simulate_snp_genotypes(tree_sequences, seed)
+    mutated = _simulate_genotypes_for_all_locus_types(
+        demography, header_text, snp_path, num_loci, seed
+    )
 
     return mutated, values
 
@@ -237,10 +309,10 @@ def run_poc_for_directory_with_values(
     demography = build_demography_for_scenario_index(
         header_text, scenario_index, values
     )
-    samples = build_samples_argument(snp_path)
 
-    tree_sequences = simulate_independent_loci(demography, samples, num_loci, seed)
-    return simulate_snp_genotypes(tree_sequences, seed)
+    return _simulate_genotypes_for_all_locus_types(
+        demography, header_text, snp_path, num_loci, seed
+    )
 
 
 def compute_summary_statistics_from_values(

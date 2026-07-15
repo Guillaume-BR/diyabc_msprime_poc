@@ -124,6 +124,45 @@ def build_demography(
     return demography
 
 
+def rescale_demography(
+    demography: msprime.Demography, factor: float
+) -> msprime.Demography:
+    """Retourne une COPIE de demography où chaque taille de population est
+    multipliée par factor -- ne modifie jamais l'original (une même
+    Demography <A> est réutilisée telle quelle pour bâtir la version
+    rescalée <X>/<Y>/<M> du même scénario/tirage de valeurs, donc muter en
+    place casserait les autres types de locus qui doivent encore utiliser
+    la version non rescalée).
+
+    factor : à appeler avec coalescence_coefficient(locus_type,
+    sex_ratio) / 2 (voir observed_data.py -- le /2 vient de la conversion
+    coeffcoal*N/2 = nombre effectif de copies de gène). Le
+    facteur est calculé par l'appelant.
+
+    Deux choses à rescaler, PAS UNE SEULE :
+    - demography.populations : chaque Population a un .initial_size
+      (toujours défini, jamais None).
+    - demography.events : SEULS les événements PopulationParametersChange
+      (générés par add_population_parameters_change, donc par les
+      VarNeEvent) ont un .initial_size -- et il peut valoir None (un
+      PopulationParametersChange peut ne changer QUE growth_rate, pas la
+      taille -- pas notre cas ici, mais à ne pas casser si ça arrive).
+      Les autres types d'événements (PopulationSplit, Admixture...) n'ont
+      pas d'attribut .initial_size du tout.
+    """
+
+    demography_copy = demography.copy()
+
+    for pop in demography_copy.populations:
+        pop.initial_size *= factor
+
+    for event in demography_copy.events:
+        if hasattr(event, "initial_size") and event.initial_size is not None:
+            event.initial_size *= factor
+
+    return demography_copy
+
+
 def extract_referenced_names(expr: str) -> set[str]:
     """Extrait le ou les noms de paramètres référencés par une expression
     de header.txt, SANS l'évaluer numériquement -- "t2-d3" -> {"t2","d3"},
