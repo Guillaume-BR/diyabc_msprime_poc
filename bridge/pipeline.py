@@ -7,6 +7,16 @@ brut de header.txt jusqu'à une msprime.Demography prête à simuler.
 
 Ce module ne contient aucune nouvelle logique de parsing ou de
 construction : il orchestre uniquement.
+
+Deux familles de points d'entrée, chacune de bout en bout dans sa propre
+section ci-dessous :
+  - tirage ALÉATOIRE des paramètres (build_random_demography,
+    run_poc_for_directory, compute_summary_statistics) ;
+  - valeurs de paramètres DÉJÀ CONNUES / rejeu (build_demography_for_
+    scenario_index, run_poc_for_directory_with_values,
+    compute_summary_statistics_from_values) -- voir
+    reftable_loop.replay_reftable_simulation.
+Les deux partagent les mêmes helpers (section "Fondations" ci-dessous).
 """
 
 import itertools
@@ -29,18 +39,18 @@ from bridge.stats_group_parser import parse_requested_statistic_names
 from bridge.summary_statistics import compute_all_statistics
 
 # Décalage fixe et bien séparé par type de locus, à ajouter à la seed de
-# base avant d'appeler simulate_genotypes_for_locus_type -- établi avec
-# le mentor : réutiliser la MÊME seed pour tous les types corrèle
-# artificiellement la position relative de leur première mutation
-# (random.Random(seed) fraîchement recréé à chaque appel de
-# simulate_snp_genotypes tire la même fraction relative target/total au
-# premier tirage, quel que soit le total réel de branches -- vérifié
-# empiriquement). Des offsets petits/positionnels (0,1,2,3...) ne
-# suffisent PAS : ils entreraient en collision avec les seeds d'autres
-# particules (seed = particle_index + 1 dans reftable_loop.py, donc de
-# petits entiers eux aussi). Des offsets grands et bien séparés rendent
-# une collision (particule, type) quasi impossible même sur des dizaines
-# de milliers de particules -- msprime accepte des seeds jusqu'à 2**32-1.
+# base avant d'appeler simulate_genotypes_for_locus_type : réutiliser la
+# MÊME seed pour tous les types corrèle artificiellement la position
+# relative de leur première mutation (random.Random(seed) fraîchement
+# recréé à chaque appel de simulate_snp_genotypes tire la même fraction
+# relative target/total au premier tirage, quel que soit le total réel
+# de branches -- vérifié empiriquement). Des offsets petits/positionnels
+# (0,1,2,3...) ne suffisent PAS : ils entreraient en collision avec les
+# seeds d'autres particules (seed = particle_index + 1 dans
+# reftable_loop.py, donc de petits entiers eux aussi). Des offsets
+# grands et bien séparés rendent une collision (particule, type) quasi
+# impossible même sur des dizaines de milliers de particules -- msprime
+# accepte des seeds jusqu'à 2**32-1.
 LOCUS_TYPE_SEED_OFFSET = {
     "A": 0,
     "H": 10_000_000,
@@ -48,6 +58,9 @@ LOCUS_TYPE_SEED_OFFSET = {
     "Y": 30_000_000,
     "M": 40_000_000,
 }
+
+
+# ── Fondations et helpers partagés par les deux familles ──────────────────
 
 
 def read_header_text(directory: Path) -> str:
@@ -60,6 +73,89 @@ def read_header_text(directory: Path) -> str:
     if not header_path.exists():
         header_path = directory / "headerRF.txt"
     return header_path.read_text()
+
+
+def _simulate_genotypes_for_all_locus_types(
+    demography: msprime.Demography,
+    header_text: str,
+    snp_path: Path,
+    *,
+    num_loci: int | None = None,
+    seed: int,
+) -> Iterator[dict[str, list[int]]]:
+    """Boucle sur TOUS les types de locus déclarés dans la section 'loci
+    description' de header_text (parse_loci_description(header_text).
+    total_loci -- dict[str, int], ex: {"A": 5000} pour human, {"A": 70,
+    "X": 10, "M": 10, "Y": 10} pour toy_example5), et concatène les
+    génotypes simulés pour chacun via simulate_genotypes_for_locus_type.
+
+    IMPORTANT -- num_loci est un compte PAR TYPE, pas un total : pour un
+    dataset <A>-only comme human (un seul type déclaré), c'est
+    rigoureusement identique au comportement actuel (num_loci loci de
+    type <A>, point). Pour un dataset multi-type comme toy_example5,
+    si l'on rentre une valeur précise de num_loci,
+    num_loci loci sont simulés pour CHAQUE type déclaré -- pas les vrais
+    comptes du header.txt (70/10/10/10) pour lesquels il faut passer
+    num_loci=None. Le comportement par défaut (num_loci=None) est donc de
+    simuler le nombre exact de loci déclaré dans header.txt pour chaque
+    type, ce qui est le plus souvent ce que l'on veut pour un POC ou
+    un test de validation.
+
+    Un seed DISTINCT est dérivé par type de locus via
+    LOCUS_TYPE_SEED_OFFSET (voir sa docstring en tête de fichier pour la
+    justification empirique) -- ne JAMAIS appeler
+    simulate_genotypes_for_locus_type avec la même seed brute pour
+    plusieurs types dans cette boucle.
+
+    Retourne un itérateur (pas une liste) : voir simulate_independent_loci
+    pour la justification (ne pas matérialiser 51250 TreeSequence en
+    mémoire simultanément).
+    """
+
+    total_loci = parse_loci_description(header_text).total_loci
+
+    liste_iterateurs_par_type = []
+
+    for locus_type, declared_count in total_loci.items():
+        seed_for_type = seed + LOCUS_TYPE_SEED_OFFSET[locus_type]
+        loci_count = num_loci if num_loci is not None else declared_count
+        liste_iterateurs_par_type.append(
+            simulate_genotypes_for_locus_type(
+                demography, snp_path, locus_type, loci_count, seed_for_type
+            )
+        )
+    return itertools.chain(*liste_iterateurs_par_type)
+
+
+def _filter_statistics(
+    summary_stats: dict[str, float],
+    header_text: str,
+    stats_filter: str,
+) -> dict[str, float]:
+    """Applique stats_filter ('ALL' ou 'HEADER') à un dict de statistiques
+    déjà calculé -- factorisé entre compute_summary_statistics et
+    compute_summary_statistics_from_values (même logique de filtrage,
+    seule la source des valeurs de paramètres diffère entre les deux)."""
+    if stats_filter == "ALL":
+        return summary_stats
+    elif stats_filter == "HEADER":
+        requested_names = parse_requested_statistic_names(header_text)
+        missing = [name for name in requested_names if name not in summary_stats]
+        if missing:
+            raise ValueError(
+                f"header.txt déclare des statistiques non calculées par "
+                f"compute_all_statistics (vocabulaire obsolète ou non "
+                f"implémenté) : {missing}"
+            )
+        return {name: summary_stats[name] for name in requested_names}
+    else:
+        raise NotImplementedError(
+            f"stats_filter={stats_filter!r} non géré (valeurs connues : "
+            f"'ALL', 'HEADER')"
+        )
+
+
+# ── Tirage ALÉATOIRE des paramètres ────────────────────────────────────────
 
 
 def build_random_demography(
@@ -103,57 +199,6 @@ def build_random_demography_for_scenario_index(
             f"(scénarios disponibles : {sorted(s.index for s in scenarios)})"
         )
     return build_random_demography(scenario, header_text, seed)
-
-
-def _simulate_genotypes_for_all_locus_types(
-    demography: msprime.Demography,
-    header_text: str,
-    snp_path: Path,
-    *,
-    num_loci: int | None = None,
-    seed: int,
-) -> Iterator[dict[str, list[int]]]:
-    """Boucle sur TOUS les types de locus déclarés dans la section 'loci
-    description' de header_text (parse_loci_description(header_text).
-    total_loci -- dict[str, int], ex: {"A": 5000} pour human, {"A": 70,
-    "X": 10, "M": 10, "Y": 10} pour toy_example5), et concatène les
-    génotypes simulés pour chacun via simulate_genotypes_for_locus_type.
-
-    IMPORTANT -- num_loci est un compte PAR TYPE, pas un total : pour un
-    dataset <A>-only comme human (un seul type déclaré), c'est
-    rigoureusement identique au comportement actuel (num_loci loci de
-    type <A>, point). Pour un dataset multi-type comme toy_example5,
-    num_loci loci sont simulés pour CHAQUE type déclaré -- pas les vrais
-    comptes du header.txt (70/10/10/10), qui ne sont pas utilisés ici
-    (choix délibéré, établi avec le mentor : num_loci reste l'override
-    pratique déjà utilisé partout ailleurs dans les tests pour aller
-    vite, plutôt que de forcer les vrais comptes -- souvent 51250 pour
-    human).
-
-    Un seed DISTINCT est dérivé par type de locus via
-    LOCUS_TYPE_SEED_OFFSET (voir sa docstring en tête de fichier pour la
-    justification empirique) -- ne JAMAIS appeler
-    simulate_genotypes_for_locus_type avec la même seed brute pour
-    plusieurs types dans cette boucle.
-
-    Retourne un itérateur (pas une liste) : voir simulate_independent_loci
-    pour la justification (ne pas matérialiser 51250 TreeSequence en
-    mémoire simultanément).
-    """
-
-    total_loci = parse_loci_description(header_text).total_loci
-
-    liste_iterateurs_par_type = []
-
-    for locus_type, declared_count in total_loci.items():
-        seed_for_type = seed + LOCUS_TYPE_SEED_OFFSET[locus_type]
-        loci_count = num_loci if num_loci is not None else declared_count
-        liste_iterateurs_par_type.append(
-            simulate_genotypes_for_locus_type(
-                demography, snp_path, locus_type, loci_count, seed_for_type
-            )
-        )
-    return itertools.chain(*liste_iterateurs_par_type)
 
 
 def run_poc_for_directory(
@@ -245,32 +290,7 @@ def compute_summary_statistics(
     return summary_stats, values
 
 
-def _filter_statistics(
-    summary_stats: dict[str, float],
-    header_text: str,
-    stats_filter: str,
-) -> dict[str, float]:
-    """Applique stats_filter ('ALL' ou 'HEADER') à un dict de statistiques
-    déjà calculé -- factorisé entre compute_summary_statistics et
-    compute_summary_statistics_from_values (même logique de filtrage,
-    seule la source des valeurs de paramètres diffère entre les deux)."""
-    if stats_filter == "ALL":
-        return summary_stats
-    elif stats_filter == "HEADER":
-        requested_names = parse_requested_statistic_names(header_text)
-        missing = [name for name in requested_names if name not in summary_stats]
-        if missing:
-            raise ValueError(
-                f"header.txt déclare des statistiques non calculées par "
-                f"compute_all_statistics (vocabulaire obsolète ou non "
-                f"implémenté) : {missing}"
-            )
-        return {name: summary_stats[name] for name in requested_names}
-    else:
-        raise NotImplementedError(
-            f"stats_filter={stats_filter!r} non géré (valeurs connues : "
-            f"'ALL', 'HEADER')"
-        )
+# ── Valeurs de paramètres DÉJÀ CONNUES (rejeu, voir reftable_loop) ─────────
 
 
 def build_demography_for_scenario_index(

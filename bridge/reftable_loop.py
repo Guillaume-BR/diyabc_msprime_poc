@@ -51,6 +51,9 @@ class ParticleResult:
     summary_statistics: dict[str, float]
 
 
+# ── Tirage indépendant de scénario + paramètres, par particule ────────────
+
+
 def _run_single_particle(
     particle_index: int,
     reference_directory: Path,
@@ -145,6 +148,9 @@ def run_reftable_simulation(
     return [results_by_index[i] for i in range(nrec)]
 
 
+# ── Helper partagé (rejeu ET écriture, voir les deux sections suivantes) ──
+
+
 def _kept_param_names_by_scenario(
     priors: list, scenarios: list[Scenario]
 ) -> dict[int, list[str]]:
@@ -163,6 +169,9 @@ def _kept_param_names_by_scenario(
             if not is_constant_prior(p) and p.name in used_param_names
         ]
     return result
+
+
+# ── Rejeu des tirages RÉELS de DIYABC (comparaison appariée) ──────────────
 
 
 def parse_real_reftable_params(
@@ -362,6 +371,9 @@ def replay_reftable_simulation(
     return [results_by_index[i] for i in range(len(rows))]
 
 
+# ── Écriture du reftable (formats binaire et texte) ────────────────────────
+
+
 def write_reftable_bin(
     results: list[ParticleResult],
     priors: list,
@@ -518,6 +530,9 @@ def write_reftable_txt(
             for name in stat_names:
                 line += f"  {r.summary_statistics[name]:12.6f}"
             f.write(line + "\n")
+
+
+# ── Point d'entrée haut niveau (compose tirage indépendant + écriture) ────
 
 
 def simulate_reference_directory(
