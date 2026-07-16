@@ -26,6 +26,20 @@ from bridge.prior_parser import is_constant_prior, parse_priors
 from bridge.scenario_parser import parse_header_scenarios
 from bridge.scenario_types import Scenario
 
+# Décalage appliqué à la seed de particule avant de tirer le scénario
+# (draw_scenario), pour ne JAMAIS partager la même seed brute avec le
+# tirage des paramètres (draw_parameter_values, appelé plus loin dans
+# compute_summary_statistics avec seed=seed, sans offset) -- sinon les
+# deux tirages, bien qu'indépendants dans l'intention, consomment le
+# MÊME premier random.random() sous-jacent (chaque fonction fait son
+# propre random.Random(seed) frais), ce qui corrèle artificiellement le
+# scénario tiré et la valeur du premier prior déclaré (ex: N1) :
+# vérifié empiriquement sur toy_example5 -- scénario 1 (ra petit) donnait
+# systématiquement un N1 trop bas, scénario 3 (ra grand) un N1 trop haut.
+# Au-delà de LOCUS_TYPE_SEED_OFFSET (pipeline.py, 0..40_000_000) pour ne
+# pas non plus recréer une collision avec ce décalage-là.
+_SCENARIO_DRAW_SEED_OFFSET = 50_000_000
+
 
 @dataclass
 class ParticleResult:
@@ -59,7 +73,7 @@ def _run_single_particle(
     utilise seed=1, pas seed=0.
     """
     seed = particle_index + 1
-    drawn_scenario = draw_scenario(scenarios, seed)
+    drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
 
     summary_statistics, parameter_values = compute_summary_statistics(
         reference_directory=reference_directory,

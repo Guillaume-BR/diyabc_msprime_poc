@@ -232,7 +232,7 @@ def compute_summary_statistics(
     snp_path = reference_directory / snp_filename
 
     genotypes_per_locus, values = run_poc_for_directory(
-        reference_directory, scenario_index, num_loci=num_loci, seed=seed
+        reference_directory, scenario_index=scenario_index, num_loci=num_loci, seed=seed
     )
     genotypes_list = list(genotypes_per_locus)
 

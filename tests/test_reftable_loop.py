@@ -90,7 +90,10 @@ def test_run_reftable_simulation_draws_multiple_scenarios(header_text):
     se répartir sur PLUSIEURS scénarios différents (pas toutes sur le
     même) -- preuve que le tirage pondéré par `weight` est bien exercé
     de bout en bout. Répartition exacte pré-calculée pour seed=1..6 :
-    scénarios [1, 6, 2, 2, 4, 5] (voir draw_scenario, déterministe)."""
+    scénarios [3, 3, 5, 3, 1, 3] (voir draw_scenario, déterministe --
+    séquence recalculée après correction du bug de seed partagée entre
+    draw_scenario et draw_parameter_values, voir
+    _SCENARIO_DRAW_SEED_OFFSET dans reftable_loop.py)."""
     scenarios = parse_header_scenarios(header_text)
 
     nrec = 6
@@ -102,7 +105,7 @@ def test_run_reftable_simulation_draws_multiple_scenarios(header_text):
         stats_filter="ALL",
     )
 
-    assert [r.scenario_index for r in results] == [1, 6, 2, 2, 4, 5]
+    assert [r.scenario_index for r in results] == [3, 3, 5, 3, 1, 3]
 
 
 def test_write_reftable_bin(tmp_path, header_text):
@@ -153,7 +156,7 @@ def test_write_reftable_bin_multi_scenario(tmp_path, header_text):
         stats_filter="ALL",
     )
     # Répartition déterministe pré-calculée (voir test_run_reftable_simulation_draws_multiple_scenarios)
-    assert [r.scenario_index for r in results] == [1, 6, 2, 2, 4, 5]
+    assert [r.scenario_index for r in results] == [3, 3, 5, 3, 1, 3]
 
     output_file = tmp_path / "reftable_multi.bin"
     write_reftable_bin(results, priors, scenarios, output_file)

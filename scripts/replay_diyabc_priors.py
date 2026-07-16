@@ -10,7 +10,7 @@ msprime utilise EXACTEMENT le même (N1,N2,N3,ta,ts,...) que la
 particule DIYABC de même rang -- tout écart entre les deux résulte
 alors uniquement du moteur de simulation, jamais d'un tirage de prior
 différent (voir notebook/correlation_N2_N3_HWm_anomaly.ipynb, section
-12, pour l'analyse qui a motivé ce script).
+12, pour l'analyse qui a motivé ce script à l'origine).
 """
 
 import shutil
@@ -20,18 +20,23 @@ from bridge.prior_parser import parse_priors
 from bridge.reftable_loop import replay_reftable_simulation, write_reftable_txt
 from bridge.scenario_parser import parse_header_scenarios
 
-REFERENCE_DIR = Path("reference/human_modif_scenario1")
+REFERENCE_DIR = Path("reference/toy_example5_1000loci")
 REAL_REFTABLE_PATH = REFERENCE_DIR / "first_records_of_the_reference_table_0.txt"
-SCENARIO_INDEX = 1
-NUM_LOCI = 100
+# None = utilise les vrais comptes par type déclarés dans header.txt
+# (500 <A> / 50 <X> / 50 <M> / 50 <Y> pour ce dataset), pas un override.
+NUM_LOCI = None
 STATS_FILTER = "HEADER"
 OUTPUT_PATH = REFERENCE_DIR / "reftable_msprime_replay.txt"
 
 header_text = (REFERENCE_DIR / "headerRF.txt").read_text()
 
 priors, _constraints = parse_priors(header_text)
-all_scenarios = parse_header_scenarios(header_text)
-scenario = [s for s in all_scenarios if s.index == SCENARIO_INDEX]
+# TOUS les scénarios candidats, pas un seul : le reftable réel mélange
+# les 3 scénarios de toy_example5 (chaque ligne garde le scenario_index
+# RÉELLEMENT tiré par DIYABC, lu par parse_real_reftable_params) -- ne
+# filtrer qu'un seul scenario ferait planter le rejeu des lignes tirées
+# sur un autre scénario (KeyError dans _kept_param_names_by_scenario).
+scenarios = parse_header_scenarios(header_text)
 
 # read_header_text (bridge/pipeline.py) préfère header.txt à headerRF.txt
 # si les deux existent dans le dossier -- or c'est headerRF.txt qui
@@ -52,13 +57,13 @@ shutil.copy(REFERENCE_DIR / snp_filename, WORK_DIR / snp_filename)
 results = replay_reftable_simulation(
     reference_directory=WORK_DIR,
     priors=priors,
-    scenarios=scenario,
+    scenarios=scenarios,
     real_reftable_path=REAL_REFTABLE_PATH,
     num_loci=NUM_LOCI,
     stats_filter=STATS_FILTER,
     max_workers=16,
 )
 
-write_reftable_txt(results, priors, scenario, OUTPUT_PATH)
+write_reftable_txt(results, priors, scenarios, OUTPUT_PATH)
 print(f"{len(results)} particules rejouées avec les tirages réels de DIYABC.")
 print(f"Écrit dans {OUTPUT_PATH}")
