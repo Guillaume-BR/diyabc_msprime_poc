@@ -41,7 +41,8 @@ def _run_single_particle(
     particle_index: int,
     reference_directory: Path,
     scenarios: list[Scenario],
-    num_loci: int,
+    *,
+    num_loci: int | None = None,
     stats_filter: str,
 ) -> ParticleResult:
     """Calcule une seule particule -- fonction top-level (picklable),
@@ -78,7 +79,8 @@ def _run_single_particle(
 def run_reftable_simulation(
     reference_directory: str | Path,
     scenarios: list[Scenario],
-    num_loci: int,
+    *,
+    num_loci: int | None = None,
     nrec: int,
     stats_filter: str = "ALL",
     max_workers: int | None = None,
@@ -116,8 +118,8 @@ def run_reftable_simulation(
                 particle_index,
                 reference_directory,
                 scenarios,
-                num_loci,
-                stats_filter,
+                num_loci=num_loci,
+                stats_filter=stats_filter,
             ): particle_index
             for particle_index in range(nrec)
         }
@@ -272,7 +274,8 @@ def _run_single_particle_from_values(
     reference_directory: Path,
     scenario_index: int,
     values: dict[str, float],
-    num_loci: int,
+    *,
+    num_loci: int | None = None,
     stats_filter: str,
 ) -> ParticleResult:
     """Variante de _run_single_particle qui NE TIRE AUCUN paramètre :
@@ -300,7 +303,7 @@ def replay_reftable_simulation(
     priors: list,
     scenarios: list[Scenario],
     real_reftable_path: str | Path,
-    num_loci: int,
+    num_loci: int | None = None,
     stats_filter: str = "ALL",
     max_workers: int | None = None,
 ) -> list[ParticleResult]:
@@ -332,8 +335,8 @@ def replay_reftable_simulation(
                 reference_directory,
                 scenario_index,
                 values,
-                num_loci,
-                stats_filter,
+                num_loci=num_loci,
+                stats_filter=stats_filter,
             ): particle_index
             for particle_index, (scenario_index, values) in enumerate(rows)
         }
@@ -505,7 +508,8 @@ def write_reftable_txt(
 
 def simulate_reference_directory(
     test_directory: str | Path,
-    num_loci: int,
+    *,
+    num_loci: int | None = None,
     nrec: int,
     stats_filter: str = "ALL",
     max_workers: int | None = None,

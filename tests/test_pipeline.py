@@ -73,6 +73,23 @@ def test_run_poc_for_directory_multi_type():
     assert "N1" in values
 
 
+def test_compute_summary_statistics_multi_type():
+    """Vérifie que compute_summary_statistics (donc compute_all_statistics)
+    fonctionne aussi sur un dataset multi-type <A>/<X>/<Y>/<M>, pas
+    seulement <A> -- 51 statistiques attendues (vs 130 pour human) car
+    toy_example5 n'a que 3 populations, pas 4 (moins de paires/triplets)."""
+    summary_stats, values = compute_summary_statistics(
+        reference_directory=REFERENCE_DIR.parent / "toy_example5",
+        scenario_index=1,
+        num_loci=3,
+        seed=42,
+        stats_filter="ALL",
+    )
+    assert len(summary_stats) == 51
+    assert "N1" in values
+    assert not any(v != v for v in summary_stats.values())  # v != v <=> NaN
+
+
 def test_read_header_text_prefers_header_txt(tmp_path):
     """Si les deux fichiers sont présents, header.txt doit être lu en
     priorité (config initiale fournie par l'utilisateur), pas

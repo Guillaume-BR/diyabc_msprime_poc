@@ -109,7 +109,8 @@ def _simulate_genotypes_for_all_locus_types(
     demography: msprime.Demography,
     header_text: str,
     snp_path: Path,
-    num_loci: int,
+    *,
+    num_loci: int | None = None,
     seed: int,
 ) -> Iterator[dict[str, list[int]]]:
     """Boucle sur TOUS les types de locus déclarés dans la section 'loci
@@ -144,11 +145,12 @@ def _simulate_genotypes_for_all_locus_types(
 
     liste_iterateurs_par_type = []
 
-    for locus_type in total_loci:
+    for locus_type, declared_count in total_loci.items():
         seed_for_type = seed + LOCUS_TYPE_SEED_OFFSET[locus_type]
+        loci_count = num_loci if num_loci is not None else declared_count
         liste_iterateurs_par_type.append(
             simulate_genotypes_for_locus_type(
-                demography, snp_path, locus_type, num_loci, seed_for_type
+                demography, snp_path, locus_type, loci_count, seed_for_type
             )
         )
     return itertools.chain(*liste_iterateurs_par_type)
@@ -157,7 +159,8 @@ def _simulate_genotypes_for_all_locus_types(
 def run_poc_for_directory(
     directory: str | Path,
     scenario_index: int,
-    num_loci: int,
+    *,
+    num_loci: int | None = None,
     seed: int,
 ):
     """Point d'entrée de haut niveau : équivalent du `-p ./` de DIYABC.
@@ -185,7 +188,7 @@ def run_poc_for_directory(
     )
 
     mutated = _simulate_genotypes_for_all_locus_types(
-        demography, header_text, snp_path, num_loci, seed
+        demography, header_text, snp_path, num_loci=num_loci, seed=seed
     )
 
     return mutated, values
@@ -194,7 +197,8 @@ def run_poc_for_directory(
 def compute_summary_statistics(
     reference_directory: str | Path,
     scenario_index: int,
-    num_loci: int,
+    *,
+    num_loci: int | None = None,
     seed: int,
     work_directory: str | Path = None,  # gardé pour compatibilité, ignoré
     general_binary_path: str | Path = None,  # gardé pour compatibilité, ignoré
@@ -228,7 +232,7 @@ def compute_summary_statistics(
     snp_path = reference_directory / snp_filename
 
     genotypes_per_locus, values = run_poc_for_directory(
-        reference_directory, scenario_index, num_loci, seed
+        reference_directory, scenario_index, num_loci=num_loci, seed=seed
     )
     genotypes_list = list(genotypes_per_locus)
 
@@ -293,7 +297,8 @@ def run_poc_for_directory_with_values(
     directory: str | Path,
     scenario_index: int,
     values: dict[str, float],
-    num_loci: int,
+    *,
+    num_loci: int | None = None,
     seed: int,
 ):
     """Variante de run_poc_for_directory qui prend des valeurs de
@@ -311,7 +316,7 @@ def run_poc_for_directory_with_values(
     )
 
     return _simulate_genotypes_for_all_locus_types(
-        demography, header_text, snp_path, num_loci, seed
+        demography, header_text, snp_path, num_loci=num_loci, seed=seed
     )
 
 
@@ -319,7 +324,8 @@ def compute_summary_statistics_from_values(
     reference_directory: str | Path,
     scenario_index: int,
     values: dict[str, float],
-    num_loci: int,
+    *,
+    num_loci: int | None = None,
     seed: int,
     stats_filter: str = "ALL",
 ) -> dict[str, float]:
@@ -336,7 +342,7 @@ def compute_summary_statistics_from_values(
     snp_path = reference_directory / snp_filename
 
     genotypes_per_locus = run_poc_for_directory_with_values(
-        reference_directory, scenario_index, values, num_loci, seed
+        reference_directory, scenario_index, values, num_loci=num_loci, seed=seed
     )
     genotypes_list = list(genotypes_per_locus)
 

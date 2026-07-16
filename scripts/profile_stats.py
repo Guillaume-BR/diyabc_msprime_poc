@@ -20,7 +20,9 @@ from bridge.summary_statistics import (
 )
 
 # Simuler une fois (5000 loci), hors profilage
-genotypes_per_locus, _ = run_poc_for_directory("reference/human", 1, 5000, 1)
+genotypes_per_locus, _ = run_poc_for_directory(
+    "reference/human", scenario_index=1, num_loci=5000, seed=1
+)
 genotypes_list = list(genotypes_per_locus)
 pop_names = list(
     build_samples_argument("reference/human/human_snp_all22chr_maf5.snp").keys()
