@@ -120,7 +120,7 @@ def build_demography(
             f"Type d'événement non géré par build_demography : {event!r}"
         )
 
-    demography.sort_events()
+    demography.sort_events()  ## msprime exige que les événements soient triés par temps croissant
     return demography
 
 
@@ -139,7 +139,7 @@ def rescale_demography(
     coeffcoal*N/2 = nombre effectif de copies de gène). Le
     facteur est calculé par l'appelant.
 
-    Deux choses à rescaler, PAS UNE SEULE :
+    Deux choses à rescaler :
     - demography.populations : chaque Population a un .initial_size
       (toujours défini, jamais None).
     - demography.events : SEULS les événements PopulationParametersChange

@@ -50,9 +50,7 @@ def parse_priors(header_text: str) -> tuple[list[Prior], list[OrderConstraint]]:
 
     Retourne (priors, constraints). Une ligne qui ne correspond à aucun
     des deux formats connus lève une erreur explicite plutôt que d'être
-    silencieusement ignorée : contrairement aux événements de scénario, on
-    n'a pas de raison de s'attendre à du vocabulaire non géré ici pour le
-    dataset human.
+    silencieusement ignorée.
     """
     priors: list[Prior] = []
     constraints: list[OrderConstraint] = []

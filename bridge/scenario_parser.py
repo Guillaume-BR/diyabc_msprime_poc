@@ -144,10 +144,6 @@ def _parse_event_line(line: str):
 def parse_header_scenarios(header_text: str) -> list[Scenario]:
     """Point d'entrée principal : header.txt complet -> liste de Scenario.
 
-    Les blocs utilisant un vocabulaire pas encore implémenté (ex: 'split',
-    nécessaire aux scénarios 2/3/5/6 de human) sont sautés avec un
-    avertissement explicite, plutôt que de faire échouer tout le parsing.
-
     Important : seule l'exception NotImplementedError est avalée ici,
     volontairement. Toute autre exception (erreur de parsing réelle, bug)
     doit continuer à se propager normalement.

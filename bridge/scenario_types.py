@@ -41,7 +41,9 @@ class Event:
 class Scenario:
     index: int
     weight: float
-    initial_pop_size_exprs: list[str]
+    initial_pop_size_exprs: list[
+        str
+    ]  # ["N1", "N2", "N3"] — texte brut, pas encore évalué
     events: list[Event] = field(default_factory=list)
 
 
@@ -92,6 +94,6 @@ class OrderConstraint:
 
 @dataclass
 class LociDescription:
-    total_loci: dict[str, int]  # 5000
+    total_loci: dict[str, int]  # {"A": 10, "X": 5, "Y": 2, "M": 1}
     group: str  # "G1"
     start_index: int  # 0 (déjà converti en 0-based, comme le C++ : prem = N - 1)

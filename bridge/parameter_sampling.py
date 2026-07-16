@@ -5,7 +5,7 @@ d'ordre (ex: "t4>t3") ne sont pas respectées -- équivalent du mécanisme
 
 Limité pour l'instant à la loi UN (uniforme). Les autres lois (LU, GA --
 voir doc DIYABC sur "mean and standard deviation") ne sont pas encore
-vérifiées : human n'utilise que UN, donc pas bloquant pour ce POC, mais
+vérifiées : human et toy_example5 utilisent que UN, donc pas bloquant pour ce POC, mais
 à traiter explicitement avant de généraliser à d'autres datasets.
 
 Les priors de catégorie N (taille) et T (temps) sont arrondis à
