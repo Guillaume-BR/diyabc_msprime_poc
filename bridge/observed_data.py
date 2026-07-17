@@ -142,6 +142,35 @@ def parse_sex_ratio(snp_file_path: str | Path) -> float:
     return ratio_male_to_female / (1.0 + ratio_male_to_female)
 
 
+def parse_maf_ratio(snp_file_path: str | Path) -> float:
+    """Lit le MAF déclaré en tête de fichier .snp DIYABC, au format
+    '<MAF=xxx> ...' où xxx = MAF (ex: '<MAF=hudson>' ou '<MAF=0.05>').
+
+    Retourne le seuil MAF, reproduisant exactement DataC::readfile
+    (data.cpp:475-497) : 0.0 si le token '<MAF=' est absent de la première
+    ligne, ou si xxx n'est pas numérique (ex: 'hudson'), comme le ferait
+    atof() en C++ -- 0.0 veut dire "pas de filtre" (algorithme de Hudson
+    standard), jamais distingué du cas "MAF=0%" explicite, exactement comme
+    côté C++. Contrairement à _find_header_index, ne cherche JAMAIS que la
+    ligne 0 : le C++ ne considère que la toute première ligne du fichier.
+    """
+
+    path = Path(snp_file_path)
+    with path.open() as f:
+        first_line = f.readline()
+
+    start = first_line.find("<MAF=")
+    if start == -1:
+        return 0.0
+
+    end = first_line.find(">", start + 5)
+    maf_value = first_line[start + 5 : end]
+    try:
+        return float(maf_value)
+    except ValueError:
+        return 0.0
+
+
 def population_index_to_name(snp_file_path: str | Path) -> dict[int, str]:
     """Construit le mapping entre l'indice de population utilisé dans
     header.txt (1-indexed : pop1, pop2, ...) et le nom réel de population

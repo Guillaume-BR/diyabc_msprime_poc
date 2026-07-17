@@ -28,9 +28,17 @@ from bridge.observed_data import (
     coalescence_coefficient,
     count_samples_per_population,
     individual_sexes_per_population,
+    parse_maf_ratio,
     parse_sex_ratio,
     population_index_to_name,
 )
+
+# Offset de graine dédié à la boucle de rejet MAF, distinct du +1_000_000
+# déjà utilisé partout ailleurs dans le projet pour séparer la graine de
+# mutation de la graine de généalogie (voir notebooks/scripts) -- ne
+# jamais réutiliser 1_000_000 ici, ça collisionnerait avec cette
+# convention existante plutôt qu'avec autre chose.
+_MAF_REJECTION_SEED_OFFSET = 2_000_000
 
 # ── Construction de l'argument samples (un builder par type de locus) ──────
 
@@ -269,6 +277,143 @@ def _draw_single_mutation_edge_child(
     return int(edges.child[idx])
 
 
+def with_maf_filter(
+    demography: msprime.Demography,
+    samples: dict[str, int] | list[msprime.SampleSet],
+    num_loci: int,
+    maf: float,
+    seed: int,
+    ploidy: int = 2,
+) -> Iterator[dict[str, list[int]]]:
+    """Simule des loci SNP indépendants avec filtre MAF (minor allele
+    frequency, cf. doc DIYABC section 2.4.3) : si la fréquence de
+    l'allèle MINORITAIRE (le moins fréquent des deux, dérivé ou
+    ancestral -- pas forcément le dérivé) est strictement inférieure à
+    `maf`, on rejette ce locus et on en resimule un nouveau (nouvelle
+    généalogie + nouvelle mutation, jamais de recyclage de l'arbre
+    rejeté) jusqu'à obtenir `num_loci` loci acceptés. Reproduit
+    `ParticleC::mafreached` (particuleC.cpp:2194-2210).
+
+    `maf` doit déjà être résolu (ex: via `parse_maf_ratio` sur le fichier
+    .snp observé) -- cette fonction ne lit aucun fichier, à l'appelant de
+    décider d'où vient le seuil.
+
+    `ploidy` : transmis tel quel à `simulate_independent_loci` (même
+    contrat -- 2 pour <A>, 1 pour <H>/<X> avec une `demography` déjà
+    rescalée, voir sa docstring).
+
+    `maf=0.0` (équivalent DIYABC de `<MAF=hudson>` ou d'un tag absent)
+    délègue directement à `simulate_independent_loci` + `simulate_snp_genotypes`
+    avec la même graine pour les deux (comme le fait déjà chaque branche
+    de `simulate_genotypes_for_locus_type`) -- comportement et résultats
+    identiques à un appel direct de ces deux fonctions, pour ne rien
+    changer aux datasets déjà validés qui n'ont pas de filtre MAF actif
+    (human, toy_example5, ...).
+    """
+    if maf == 0.0:
+        tree_sequences = simulate_independent_loci(
+            demography, samples, num_loci=num_loci, seed=seed, ploidy=ploidy
+        )
+        yield from simulate_snp_genotypes(tree_sequences, seed=seed)
+        return
+
+    attempt = 0
+    accepted_loci = 0
+    while accepted_loci < num_loci:
+        ts = next(
+            simulate_independent_loci(
+                demography, samples, num_loci=1, seed=seed + attempt, ploidy=ploidy
+            )
+        )
+        genotypes_by_population = next(
+            simulate_snp_genotypes(
+                [ts], seed=seed + attempt + _MAF_REJECTION_SEED_OFFSET
+            )
+        )
+
+        total_derived = sum(
+            sum(genotypes) for genotypes in genotypes_by_population.values()
+        )
+        total_samples = sum(
+            len(genotypes) for genotypes in genotypes_by_population.values()
+        )
+        minor_allele_count = min(total_derived, total_samples - total_derived)
+        maf_observed = minor_allele_count / total_samples if total_samples > 0 else 0.0
+
+        if maf_observed >= maf:
+            yield genotypes_by_population
+            accepted_loci += 1
+
+        attempt += 1
+
+
+def with_maf_filter_shared_ancestry(
+    demography: msprime.Demography,
+    samples: dict[str, int] | list[msprime.SampleSet],
+    num_loci: int,
+    maf: float,
+    seed: int,
+    ploidy: int = 1,
+) -> Iterator[dict[str, list[int]]]:
+    """Variante de with_maf_filter pour <Y>/<M> : contrairement aux loci
+    <A>/<H>/<X> (chaque locus = sa propre généalogie indépendante), tous
+    les loci <Y> (resp. <M>) d'une même particule PARTAGENT UNE SEULE
+    généalogie (voir simulate_shared_ancestry_loci) -- seule la mutation
+    diffère d'un locus à l'autre.
+
+    Reproduit exactement `particuleC.cpp:2424-2495` : le cache
+    GeneTreeY/GeneTreeM est rempli AVANT le test MAF, donc indépendamment
+    de son résultat -- la généalogie est tirée UNE SEULE FOIS (au tout
+    premier appel), et un rejet MAF ne fait jamais redessiner l'arbre,
+    seulement retirer une nouvelle mutation SUR CE MÊME ARBRE, jusqu'à
+    obtenir `num_loci` loci acceptés. Voir aussi with_maf_filter (loci
+    <A>/<H>/<X>), qui redessine au contraire une toute nouvelle
+    généalogie à chaque rejet -- les deux mécanismes sont réellement
+    différents côté DIYABC, pas juste une simplification.
+
+    `maf` doit déjà être résolu (voir with_maf_filter). `maf=0.0` délègue
+    directement à simulate_shared_ancestry_loci + simulate_snp_genotypes
+    avec la même graine pour les deux, comportement identique à un appel
+    direct de ces deux fonctions.
+    """
+    if maf == 0.0:
+        tree_sequences = simulate_shared_ancestry_loci(
+            demography, samples, num_loci, seed, ploidy=ploidy
+        )
+        yield from simulate_snp_genotypes(tree_sequences, seed=seed)
+        return
+
+    shared_tree = next(
+        simulate_independent_loci(
+            demography, samples, num_loci=1, seed=seed, ploidy=ploidy
+        )
+    )
+
+    attempt = 0
+    accepted_loci = 0
+    while accepted_loci < num_loci:
+        genotypes_by_population = next(
+            simulate_snp_genotypes(
+                [shared_tree], seed=seed + attempt + _MAF_REJECTION_SEED_OFFSET
+            )
+        )
+
+        total_derived = sum(
+            sum(genotypes) for genotypes in genotypes_by_population.values()
+        )
+        total_samples = sum(
+            len(genotypes) for genotypes in genotypes_by_population.values()
+        )
+        minor_allele_count = min(total_derived, total_samples - total_derived)
+        maf_observed = minor_allele_count / total_samples if total_samples > 0 else 0.0
+
+        if maf_observed >= maf:
+            yield genotypes_by_population
+            accepted_loci += 1
+
+        attempt += 1
+
+
 def simulate_snp_genotypes(
     tree_sequences: Iterator[msprime.TreeSequence],
     seed: int,
@@ -328,66 +473,76 @@ def simulate_genotypes_for_locus_type(
 
     Dispatch :
       - "A" : build_samples_argument, demography TELLE QUELLE (pas de
-        rescale_demography), ploidy=2, simulate_independent_loci.
+        rescale_demography), ploidy=2, with_maf_filter.
       - "H" : build_samples_argument, demography rescalée par
         coalescence_coefficient("H", sex_ratio) / 2, ploidy=1,
-        simulate_independent_loci.
+        with_maf_filter.
       - "X" : build_sex_stratified_samples_argument, demography
         rescalée par coalescence_coefficient("X", sex_ratio) / 2,
-        ploidy=1, simulate_independent_loci.
+        ploidy=1, with_maf_filter.
       - "Y" : build_male_only_samples_argument, demography rescalée par
         coalescence_coefficient("Y", sex_ratio) / 2, ploidy=1,
-        simulate_shared_ancestry_loci (arbre unique partagé).
+        with_maf_filter_shared_ancestry (arbre unique partagé).
       - "M" : build_samples_argument (TOUT le monde, pas mâles seuls --
         voir la docstring de build_male_only_samples_argument sur ce
         point précis), demography rescalée par
         coalescence_coefficient("M", sex_ratio) / 2, ploidy=1,
-        simulate_shared_ancestry_loci.
+        with_maf_filter_shared_ancestry.
       - tout autre locus_type : lever NotImplementedError (même style
         que coalescence_coefficient pour un type inconnu).
+
+    MAF : le seuil est lu une fois via parse_maf_ratio(snp_file_path) et
+    délégué à with_maf_filter ("A"/"H"/"X", généalogie indépendante par
+    locus) ou with_maf_filter_shared_ancestry ("Y"/"M", généalogie
+    partagée) -- les deux gèrent elles-mêmes le cas maf=0.0 (pas de
+    filtre, comportement identique à un appel direct des fonctions
+    sous-jacentes) et le cas maf>0.0 (boucle de rejet).
+
+    "Y"/"M" (MAF quelconque) utilisent with_maf_filter_shared_ancestry,
+    pas with_maf_filter : ces deux types partagent UNE SEULE généalogie
+    entre tous leurs loci (simulate_shared_ancestry_loci) -- un rejet MAF
+    ne redessine jamais l'arbre, seulement la mutation (voir la docstring
+    de with_maf_filter_shared_ancestry, qui reproduit exactement
+    particuleC.cpp:2424-2495).
     """
 
     sex_ratio = parse_sex_ratio(snp_file_path)
+    maf_ratio = parse_maf_ratio(snp_file_path)
 
     if locus_type == "Y":
         samples = build_male_only_samples_argument(snp_file_path)
         rescaled_demography = rescale_demography(
             demography, coalescence_coefficient(locus_type, sex_ratio) / 2
         )
-        trees = simulate_shared_ancestry_loci(
-            rescaled_demography, samples, num_loci, seed, ploidy=1
+        return with_maf_filter_shared_ancestry(
+            rescaled_demography, samples, num_loci, maf_ratio, seed, ploidy=1
         )
-        return simulate_snp_genotypes(trees, seed)
     elif locus_type == "M":
         samples = build_samples_argument(snp_file_path)
         rescaled_demography = rescale_demography(
             demography, coalescence_coefficient(locus_type, sex_ratio) / 2
         )
-        trees = simulate_shared_ancestry_loci(
-            rescaled_demography, samples, num_loci, seed, ploidy=1
+        return with_maf_filter_shared_ancestry(
+            rescaled_demography, samples, num_loci, maf_ratio, seed, ploidy=1
         )
-        return simulate_snp_genotypes(trees, seed)
     elif locus_type == "A":
         samples = build_samples_argument(snp_file_path)
-        trees = simulate_independent_loci(demography, samples, num_loci, seed, ploidy=2)
-        return simulate_snp_genotypes(trees, seed)
+        return with_maf_filter(demography, samples, num_loci, maf_ratio, seed, ploidy=2)
     elif locus_type == "H":
         samples = build_samples_argument(snp_file_path)
         rescaled_demography = rescale_demography(
             demography, coalescence_coefficient(locus_type, sex_ratio) / 2
         )
-        trees = simulate_independent_loci(
-            rescaled_demography, samples, num_loci, seed, ploidy=1
+        return with_maf_filter(
+            rescaled_demography, samples, num_loci, maf_ratio, seed, ploidy=1
         )
-        return simulate_snp_genotypes(trees, seed)
     elif locus_type == "X":
         samples = build_sex_stratified_samples_argument(snp_file_path)
         rescaled_demography = rescale_demography(
             demography, coalescence_coefficient(locus_type, sex_ratio) / 2
         )
-        trees = simulate_independent_loci(
-            rescaled_demography, samples, num_loci, seed, ploidy=1
+        return with_maf_filter(
+            rescaled_demography, samples, num_loci, maf_ratio, seed, ploidy=1
         )
-        return simulate_snp_genotypes(trees, seed)
     else:
         raise NotImplementedError(f"Type de locus non supporté: {locus_type!r}")

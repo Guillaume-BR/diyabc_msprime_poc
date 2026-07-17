@@ -4,12 +4,13 @@ individu (ces deux derniers nécessaires pour les futurs loci <X>/<Y>/<M>,
 voir notes/exploration.md)."""
 
 import pytest
-from conftest import OBSERVED_SNP_FILE, OBSERVED_SNP_FILE_TE5
+from conftest import OBSERVED_SNP_FILE, OBSERVED_SNP_FILE_TE3, OBSERVED_SNP_FILE_TE5
 
 from bridge.observed_data import (
     coalescence_coefficient,
     count_samples_per_population,
     individual_sexes_per_population,
+    parse_maf_ratio,
     parse_sex_ratio,
     population_index_to_name,
 )
@@ -38,6 +39,16 @@ def test_parse_sex_ratio():
     sex_ratio_te5 = parse_sex_ratio(OBSERVED_SNP_FILE_TE5)
     assert sex_ratio_human == 0.5
     assert sex_ratio_te5 == 0.428571 / (1 + 0.428571)
+
+
+def test_parse_maf_ratio():
+    """Vérifie que le parsing du fichier snp renvoie bien la bonne proportion"""
+    maf_ratio_human = parse_maf_ratio(OBSERVED_SNP_FILE)
+    maf_ratio_te5 = parse_maf_ratio(OBSERVED_SNP_FILE_TE5)
+    maf_ratio_te3 = parse_maf_ratio(OBSERVED_SNP_FILE_TE3)
+    assert maf_ratio_human == 0.0
+    assert maf_ratio_te5 == 0.0
+    assert maf_ratio_te3 == 0.05
 
 
 def test_individual_sexes_per_population():

@@ -22,6 +22,18 @@ OBSERVED_SNP_FILE_TE5 = (
     / "toy_example5"
     / "simu_dataset_test_divergence_admixture_001.snp"
 )
+OBSERVED_SNP_FILE_TE3 = (
+    Path(__file__).parent.parent
+    / "reference"
+    / "toy_example3"
+    / "pseudo_observed_DATASET_SNP_INDSEQ_4pops_Scenario3_MER.snp"
+)
+OBSERVED_SNP_FILE_TE3_SCENARIO1 = (
+    Path(__file__).parent.parent
+    / "reference"
+    / "toy_example3_scenario1"
+    / "pseudo_observed_DATASET_SNP_INDSEQ_4pops_Scenario3_MER.snp"
+)
 
 
 @pytest.fixture
@@ -32,3 +44,11 @@ def header_text() -> str:
 @pytest.fixture
 def header_text_te5() -> str:
     return (OBSERVED_SNP_FILE_TE5.parent / "headerRF.txt").read_text()
+
+
+@pytest.fixture
+def header_text_te3_scenario1() -> str:
+    """toy_example3, scénario 1 isolé (split+admixture, 8 priors) --
+    seul dataset de ce projet avec un vrai filtre MAF actif (<MAF=0.05>,
+    contrairement à human/toy_example5 qui sont <MAF=hudson>)."""
+    return (OBSERVED_SNP_FILE_TE3_SCENARIO1.parent / "headerRF.txt").read_text()

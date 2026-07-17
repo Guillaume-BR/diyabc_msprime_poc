@@ -4,7 +4,11 @@ et mutation Hudson (exactement une mutation par locus, toujours
 polymorphe)."""
 
 import pytest
-from conftest import OBSERVED_SNP_FILE, OBSERVED_SNP_FILE_TE5
+from conftest import (
+    OBSERVED_SNP_FILE,
+    OBSERVED_SNP_FILE_TE3_SCENARIO1,
+    OBSERVED_SNP_FILE_TE5,
+)
 
 from bridge.ancestry_simulation import (
     build_male_only_samples_argument,
@@ -14,6 +18,14 @@ from bridge.ancestry_simulation import (
     simulate_independent_loci,
     simulate_shared_ancestry_loci,
     simulate_snp_genotypes,
+    with_maf_filter,
+    with_maf_filter_shared_ancestry,
+)
+from bridge.demography_builder import rescale_demography
+from bridge.observed_data import (
+    coalescence_coefficient,
+    parse_maf_ratio,
+    parse_sex_ratio,
 )
 from bridge.pipeline import build_random_demography_for_scenario_index
 
@@ -161,3 +173,170 @@ def test_simulate_genotypes_for_locus_type(header_text_te5):
                 0,
                 1,
             }, f"Locus non polymorphe : {locus_genotypes}"
+
+
+def _observed_maf(locus_genotypes: dict[str, list[int]]) -> float:
+    """MAF poolée sur toutes les populations, comme ParticleC::mafreached
+    (min(dérivé, ancestral) / total) -- pas juste la fréquence dérivée."""
+    all_genotypes = [g for genos in locus_genotypes.values() for g in genos]
+    n1 = sum(all_genotypes)
+    n0 = len(all_genotypes) - n1
+    return min(n0, n1) / len(all_genotypes)
+
+
+def test_with_maf_filter_no_filter_matches_direct_call(header_text):
+    """maf=0.0 doit produire EXACTEMENT le même résultat qu'un appel
+    direct à simulate_independent_loci + simulate_snp_genotypes (même
+    graine pour les deux, comme fait déjà chaque branche de
+    simulate_genotypes_for_locus_type) -- garantit que with_maf_filter
+    ne change rien aux datasets déjà validés sans filtre MAF actif
+    (human, toy_example5)."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text, scenario_index=1, seed=42
+    )
+    samples = build_samples_argument(OBSERVED_SNP_FILE)
+    num_loci = 10
+
+    direct = list(
+        simulate_snp_genotypes(
+            simulate_independent_loci(
+                demography, samples, num_loci, seed=123, ploidy=2
+            ),
+            seed=123,
+        )
+    )
+    via_filter = list(
+        with_maf_filter(demography, samples, num_loci, maf=0.0, seed=123, ploidy=2)
+    )
+
+    assert via_filter == direct
+
+
+def test_with_maf_filter_rejects_low_maf_loci(header_text_te3_scenario1):
+    """Avec maf>0, chaque locus retourné doit avoir une MAF poolée
+    (min(dérivé, ancestral)/total) >= au seuil -- reproduit
+    ParticleC::mafreached (particuleC.cpp:2194-2210)."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te3_scenario1, scenario_index=1, seed=42
+    )
+    samples = build_samples_argument(OBSERVED_SNP_FILE_TE3_SCENARIO1)
+    maf = parse_maf_ratio(OBSERVED_SNP_FILE_TE3_SCENARIO1)
+    assert maf == 0.05  # sanity check sur la fixture
+
+    num_loci = 30
+    loci = list(
+        with_maf_filter(demography, samples, num_loci, maf=maf, seed=7, ploidy=2)
+    )
+
+    assert len(loci) == num_loci
+    for locus_genotypes in loci:
+        assert _observed_maf(locus_genotypes) >= maf
+
+
+def test_simulate_genotypes_for_locus_type_maf_filter(header_text_te3_scenario1):
+    """Bout en bout via simulate_genotypes_for_locus_type (comme le vrai
+    pipeline), sur le seul dataset du projet avec un filtre MAF actif
+    (toy_example3_scenario1, <MAF=0.05>)."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te3_scenario1, scenario_index=1, seed=42
+    )
+    num_loci = 30
+    loci = list(
+        simulate_genotypes_for_locus_type(
+            demography=demography,
+            locus_type="A",
+            snp_file_path=OBSERVED_SNP_FILE_TE3_SCENARIO1,
+            num_loci=num_loci,
+            seed=7,
+        )
+    )
+
+    assert len(loci) == num_loci
+    for locus_genotypes in loci:
+        assert _observed_maf(locus_genotypes) >= 0.05
+
+
+def test_with_maf_filter_shared_ancestry_no_filter_matches_direct_call(
+    header_text_te5,
+):
+    """maf=0.0 doit produire EXACTEMENT le même résultat qu'un appel
+    direct à simulate_shared_ancestry_loci + simulate_snp_genotypes
+    (même graine pour les deux) -- garantit que
+    with_maf_filter_shared_ancestry ne change rien à toy_example5, qui
+    n'a pas de filtre MAF actif."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te5, scenario_index=1, seed=42
+    )
+    sex_ratio = parse_sex_ratio(OBSERVED_SNP_FILE_TE5)
+    samples = build_male_only_samples_argument(OBSERVED_SNP_FILE_TE5)
+    rescaled_demography = rescale_demography(
+        demography, coalescence_coefficient("Y", sex_ratio) / 2
+    )
+    num_loci = 8
+
+    direct = list(
+        simulate_snp_genotypes(
+            simulate_shared_ancestry_loci(
+                rescaled_demography, samples, num_loci, seed=99, ploidy=1
+            ),
+            seed=99,
+        )
+    )
+    via_filter = list(
+        with_maf_filter_shared_ancestry(
+            rescaled_demography, samples, num_loci, maf=0.0, seed=99, ploidy=1
+        )
+    )
+
+    assert via_filter == direct
+
+
+def test_with_maf_filter_shared_ancestry_rejects_low_maf_loci(header_text_te5):
+    """Avec maf>0, chaque locus retourné doit respecter le seuil -- même
+    contrat que with_maf_filter, mais ici sur une généalogie UNIQUE
+    partagée entre tous les loci (reproduit particuleC.cpp:2424-2495 :
+    le cache GeneTreeY est rempli avant le test MAF, donc un rejet ne
+    redessine jamais l'arbre, seulement la mutation)."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te5, scenario_index=1, seed=42
+    )
+    sex_ratio = parse_sex_ratio(OBSERVED_SNP_FILE_TE5)
+    samples = build_male_only_samples_argument(OBSERVED_SNP_FILE_TE5)
+    rescaled_demography = rescale_demography(
+        demography, coalescence_coefficient("Y", sex_ratio) / 2
+    )
+
+    num_loci = 15
+    maf = 0.2
+    loci = list(
+        with_maf_filter_shared_ancestry(
+            rescaled_demography, samples, num_loci, maf=maf, seed=7, ploidy=1
+        )
+    )
+
+    assert len(loci) == num_loci
+    for locus_genotypes in loci:
+        assert _observed_maf(locus_genotypes) >= maf
+
+
+def test_simulate_genotypes_for_locus_type_maf_filter_y_m(header_text_te3_scenario1):
+    """Bout en bout via simulate_genotypes_for_locus_type pour <Y>/<M>,
+    sur le seul dataset du projet avec un filtre MAF actif
+    (toy_example3_scenario1, <MAF=0.05>)."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te3_scenario1, scenario_index=1, seed=42
+    )
+    num_loci = 10
+    for locus_type in ["Y", "M"]:
+        loci = list(
+            simulate_genotypes_for_locus_type(
+                demography=demography,
+                locus_type=locus_type,
+                snp_file_path=OBSERVED_SNP_FILE_TE3_SCENARIO1,
+                num_loci=num_loci,
+                seed=7,
+            )
+        )
+        assert len(loci) == num_loci
+        for locus_genotypes in loci:
+            assert _observed_maf(locus_genotypes) >= 0.05
