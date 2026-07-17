@@ -10,6 +10,23 @@ des autres (son propre tirage, sa propre simulation), donc embarrassingly
 parallel.
 """
 
+import os
+
+# Doit s'exécuter AVANT le premier import de numpy (transitif, via
+# bridge.pipeline plus bas) : numpy/BLAS lit ces variables une seule fois
+# à l'initialisation de son pool de threads, pas à chaque appel. Sans ça,
+# chacun des max_workers process de ProcessPoolExecutor essaie d'utiliser
+# TOUS les cœurs pour ses propres opérations BLAS -- avec 16 workers sur
+# une machine à 16 cœurs, jusqu'à 256 threads se battent pour 16 cœurs
+# physiques. Mesuré empiriquement (toy_example3_scenario1, 1000
+# particules, filtre MAF actif) : ~30 minutes sans ce fix, <60s avec.
+# setdefault() pour ne jamais écraser un réglage déjà choisi explicitement
+# par l'appelant.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 import struct
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
