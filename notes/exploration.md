@@ -453,4 +453,38 @@ incompressible : plafond des 8 cœurs physiques + coût de matérialiser
 une `TreeSequence` par locus (nécessaire de toute façon pour y tirer la
 mutation).
 
+## Note du 20/07/26 (suite 2) -- cache étendu à with_maf_filter (maf>0), gain marginal cette fois
+
+Extension de l'optimisation précédente au chemin `maf>0.0` (boucle de
+rejet, `with_maf_filter`/`with_maf_filter_shared_ancestry`) :
+`simulate_snp_genotypes` accepte maintenant un paramètre optionnel
+`population_layout` (factorisé dans un nouveau helper
+`_population_layout(ts)`) -- si fourni par l'appelant, jamais
+recalculé. Les deux boucles de rejet le calculent une seule fois (au
+premier `ts` généré pour `with_maf_filter`, à partir de l'arbre partagé
+déjà unique pour `with_maf_filter_shared_ancestry`) et le réutilisent à
+travers toutes les tentatives suivantes, acceptées ou rejetées.
+
+**Gain mesuré** (avant/après par patch réversible sur le seul fichier
+`ancestry_simulation.py`, `toy_example3_scenario1`, `<MAF=0.05>`, 300
+loci acceptés) : **0.69s -> 0.67s, soit ~2-3% seulement** -- beaucoup
+plus faible que les ~17% obtenus sur le chemin `maf=0.0` de `human`.
+
+Explication : dans la boucle de rejet, chaque tentative simule déjà un
+seul locus via son propre appel à `simulate_independent_loci(num_loci=
+1, ...)` -- l'essentiel du coût par tentative est là (création d'un
+nouveau générateur `sim_ancestry` à chaque tentative), pas dans le
+décodage du metadata des populations qu'on élimine ici. Ce dernier
+pesait lourd sur `human` parce qu'un SEUL appel traitait 5000 loci d'un
+coup (4 populations x 5000 décodages redondants économisés en une
+fois) ; ici chaque tentative ne fait qu'UN seul décodage de toute façon,
+il n'y a donc qu'un tout petit nombre d'économies à faire par tentative.
+
+Le changement reste correct (0 régression, 62/62 tests toujours verts,
+y compris les tests qui valident sémantiquement le filtre MAF --
+`test_with_maf_filter_rejects_low_maf_loci`,
+`test_with_maf_filter_shared_ancestry_rejects_low_maf_loci`) et gratuit
+à garder, mais ne pas s'attendre à un gain comparable à celui du chemin
+`maf=0.0` si ce dataset redevient un sujet de perf.
+
 

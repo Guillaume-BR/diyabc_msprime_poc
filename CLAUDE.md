@@ -284,10 +284,16 @@ the same `demography`/`samples`, only the coalescent topology differs
 (2.35s → 1.96s/particle), ~26% on the full 1000-particle parallel run
 (384s → ~284s). Remaining gap vs. DIYABC (~284s vs. 137s) is the
 incompressible part: the 8-physical-core ceiling and materializing a
-`TreeSequence` per locus at all. This `maf=0.0` fast path is the one
-that benefits — `with_maf_filter`'s rejection loop (maf>0 datasets)
-calls `simulate_snp_genotypes` per single locus and doesn't get this
-caching for free, not yet extended there.
+`TreeSequence` per locus at all. `simulate_snp_genotypes` now accepts
+an optional pre-computed `population_layout` (see `_population_layout`)
+so `with_maf_filter`/`with_maf_filter_shared_ancestry`'s rejection loop
+(maf>0 datasets) can also cache it across attempts — but the measured
+gain there is much smaller (~2-3% on `toy_example3_scenario1`, vs. ~17%
+on the `maf=0.0` fast path): each rejection-loop attempt already
+simulates a single locus via its own `simulate_independent_loci`
+call, so the eliminated per-locus metadata decode is a much smaller
+share of that per-attempt cost than it was when one call handled 5000
+loci at once.
 
 Not blocking for this POC (goal: prove feasibility, already done) —
 don't re-investigate the formulas or `max_workers` if this comes up

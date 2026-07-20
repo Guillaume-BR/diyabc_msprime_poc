@@ -277,6 +277,31 @@ def _draw_single_mutation_edge_child(
     return int(edges.child[idx])
 
 
+def _population_layout(ts: msprime.TreeSequence) -> list[tuple[str | None, np.ndarray]]:
+    """Calcule la liste (nom de population, IDs des noeuds échantillons de
+    cette population) pour une TreeSequence donnée.
+
+    Factorisé pour pouvoir être calculé UNE SEULE FOIS et réutilisé sur
+    plusieurs loci/tentatives qui partagent la même `demography`/
+    `samples` d'origine -- seule la topologie coalescente varie d'un
+    réplicat à l'autre, jamais l'assignation des noeuds échantillons aux
+    populations (vérifié empiriquement, y compris entre réplicats tirés
+    avec des graines différentes). Voir `simulate_snp_genotypes` (cache
+    par défaut sur un flux de plusieurs loci) et les boucles de rejet MAF
+    de `with_maf_filter`/`with_maf_filter_shared_ancestry` (cache
+    explicite à travers les tentatives, voir notes/exploration.md,
+    entrée du 20/07/2026).
+    """
+    layout = []
+    for pop_index, population in enumerate(ts.tables.populations):
+        sample_ids = ts.samples(population=pop_index)
+        if len(sample_ids) == 0:
+            continue
+        pop_name = population.metadata.get("name") if population.metadata else None
+        layout.append((pop_name, sample_ids))
+    return layout
+
+
 def with_maf_filter(
     demography: msprime.Demography,
     samples: dict[str, int] | list[msprime.SampleSet],
@@ -309,6 +334,14 @@ def with_maf_filter(
     identiques à un appel direct de ces deux fonctions, pour ne rien
     changer aux datasets déjà validés qui n'ont pas de filtre MAF actif
     (human, toy_example5, ...).
+
+    `maf>0.0` : chaque tentative simule son PROPRE locus (nouvelle
+    généalogie à chaque rejet, voir docstring plus haut), mais la
+    structure population/échantillons de ce locus (`_population_layout`)
+    ne dépend que de `demography`/`samples`, jamais de la graine tirée --
+    elle est donc calculée une seule fois, à la première tentative, et
+    réutilisée pour toutes les suivantes plutôt que d'être recalculée à
+    chaque rejet (voir notes/exploration.md, entrée du 20/07/2026).
     """
     if maf == 0.0:
         tree_sequences = simulate_independent_loci(
@@ -319,15 +352,20 @@ def with_maf_filter(
 
     attempt = 0
     accepted_loci = 0
+    population_layout = None
     while accepted_loci < num_loci:
         ts = next(
             simulate_independent_loci(
                 demography, samples, num_loci=1, seed=seed + attempt, ploidy=ploidy
             )
         )
+        if population_layout is None:
+            population_layout = _population_layout(ts)
         genotypes_by_population = next(
             simulate_snp_genotypes(
-                [ts], seed=seed + attempt + _MAF_REJECTION_SEED_OFFSET
+                [ts],
+                seed=seed + attempt + _MAF_REJECTION_SEED_OFFSET,
+                population_layout=population_layout,
             )
         )
 
@@ -388,13 +426,19 @@ def with_maf_filter_shared_ancestry(
             demography, samples, num_loci=1, seed=seed, ploidy=ploidy
         )
     )
+    # Calculée une seule fois : même généalogie PARTAGÉE à chaque
+    # tentative, donc même structure population/échantillons -- voir
+    # _population_layout.
+    population_layout = _population_layout(shared_tree)
 
     attempt = 0
     accepted_loci = 0
     while accepted_loci < num_loci:
         genotypes_by_population = next(
             simulate_snp_genotypes(
-                [shared_tree], seed=seed + attempt + _MAF_REJECTION_SEED_OFFSET
+                [shared_tree],
+                seed=seed + attempt + _MAF_REJECTION_SEED_OFFSET,
+                population_layout=population_layout,
             )
         )
 
@@ -417,6 +461,7 @@ def with_maf_filter_shared_ancestry(
 def simulate_snp_genotypes(
     tree_sequences: Iterator[msprime.TreeSequence],
     seed: int,
+    population_layout: list[tuple[str | None, np.ndarray]] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
     """Pour chaque TreeSequence (un locus = un arbre indépendant), tire
     une mutation UNIQUE selon l'algorithme de Hudson (vectorisé), et
@@ -428,15 +473,20 @@ def simulate_snp_genotypes(
     section 2.4.3 : exactement une mutation par locus, locus toujours
     polymorphe).
 
-    La liste des populations (noms + IDs d'échantillons par population)
-    est calculée UNE SEULE FOIS, au premier locus, et réutilisée pour
+    `population_layout` (voir `_population_layout`) : si `None` (cas
+    d'un appel unique sur tout un flux de loci, ex: chemin `maf=0.0`),
+    calculé UNE SEULE FOIS ici même, au premier locus, et réutilisé pour
     tous les suivants -- valable car tous les `tree_sequences` d'un même
     appel partagent la même `demography`/`samples` d'origine (mêmes
     réplicats d'un seul appel à simulate_independent_loci/
     simulate_shared_ancestry_loci) : seule la topologie coalescente varie
     d'un locus à l'autre, jamais l'assignation des noeuds échantillons
-    aux populations (vérifié empiriquement). Sans ce cache, le
-    redécodage du metadata des populations et le refiltrage de
+    aux populations (vérifié empiriquement). Si fourni par l'appelant
+    (ex: boucles de rejet MAF de `with_maf_filter`/`with_maf_filter_
+    shared_ancestry`, qui appellent cette fonction une fois PAR
+    TENTATIVE et calculent donc leur propre cache à travers les
+    tentatives), utilisé tel quel sans jamais être recalculé. Sans ce
+    cache, le redécodage du metadata des populations et le refiltrage de
     ts.samples(population=...) à CHAQUE locus représentaient à eux seuls
     ~20% du temps d'une particule sur 5000 loci (voir
     notes/exploration.md, entrée du 20/07/2026) -- le plus gros poste
@@ -444,7 +494,6 @@ def simulate_snp_genotypes(
     investigation.
     """
     rng = random.Random(seed)
-    population_layout: list[tuple[str | None, np.ndarray]] | None = None
 
     for ts in tree_sequences:
         tree = ts.first()
@@ -452,15 +501,7 @@ def simulate_snp_genotypes(
         derived_samples = set(tree.samples(mutated_node))
 
         if population_layout is None:
-            population_layout = []
-            for pop_index, population in enumerate(ts.tables.populations):
-                sample_ids = ts.samples(population=pop_index)
-                if len(sample_ids) == 0:
-                    continue
-                pop_name = (
-                    population.metadata.get("name") if population.metadata else None
-                )
-                population_layout.append((pop_name, sample_ids))
+            population_layout = _population_layout(ts)
 
         genotypes_by_population = {
             pop_name: [1 if s in derived_samples else 0 for s in sample_ids]
