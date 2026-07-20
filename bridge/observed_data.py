@@ -1,13 +1,17 @@
 """
 Lecture des données observées DIYABC (fichiers .snp, format individu par
 ligne) -- comptage du nombre d'individus par population (nécessaire pour
-savoir combien d'échantillons demander à msprime.sim_ancestry()), et
-lecture du sex-ratio et du sexe par individu (nécessaires pour les loci
+savoir combien d'échantillons demander à msprime.sim_ancestry()), lecture
+du sex-ratio et du sexe par individu (nécessaires pour les loci
 <X>/<Y>/<M>, dont la ploïdie et le coefficient de coalescence dépendent du
-sexe -- voir ParticleC::calploidy et DataC::cal_coeffcoal).
+sexe -- voir ParticleC::calploidy et DataC::cal_coeffcoal), et lecture du
+seuil MAF ("<MAF=N%>" ou "<MAF=hudson>" en tête de fichier, via
+parse_maf_ratio) consommé par with_maf_filter/with_maf_filter_shared_
+ancestry (ancestry_simulation.py) pour décider s'il faut rejeter-et-
+resimuler un locus sous le seuil.
 
 Référence : src-JMC-C++/data.cpp (détection du format "IND SEX POP",
-lecture du sex-ratio "<NM=xNF>" en tête de fichier).
+lecture du sex-ratio "<NM=xNF>" et du MAF en tête de fichier).
 Ce module ne lit PAS les génotypes eux-mêmes : on simule des données
 artificielles avec msprime, on ne réutilise jamais les données observées
 réelles dans le pipeline de simulation.
