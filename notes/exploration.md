@@ -517,14 +517,24 @@ différentes :
 même journée, `human_modif_scenario1_5000loci`) :
 - Séquentiel : 1.96s -> **~1.84s**/particule (~6% de plus)
 - Parallèle réel (128 particules, `max_workers=16`) : 36.4s -> **34.0s**
-- Extrapolé 1000 particules : 284s -> **~265s**
+- Extrapolé 1000 particules (depuis l'échantillon de 128) : 284s -> ~265s
 
-**Bilan cumulé de la journée (3 optimisations)** : 384s -> ~265s, soit
-**~31% de temps en moins** sur le run complet `human_modif_scenario1_
-5000loci`, pour 0 régression (62/62 tests toujours verts à chaque
-étape). L'écart résiduel avec DIYABC (~265s vs 137s, facteur ~1.9x)
-reste la partie incompressible identifiée dès la première note du jour
-: plafond des 8 cœurs physiques de la machine de dev + coût de
-matérialiser une `TreeSequence` par locus.
+**Confirmation en conditions réelles** : rejeu complet des 1000
+particules réelles (pas un échantillon) de `human_modif_scenario1_
+5000loci` par l'utilisateur -- **300s**, contre 384s avant les 3
+optimisations du jour, soit un **gain réel de ~22%** (un peu en dessous
+du ~31% extrapolé depuis l'échantillon de 128, ce qui est normal --
+une extrapolation depuis un sous-échantillon reste approximative). Ce
+chiffre (300s), mesuré sur le run complet, est plus fiable que
+l'extrapolation et remplace le ~265s ci-dessus comme référence.
+
+**Bilan cumulé de la journée (3 optimisations)** : 384s -> **300s**
+(mesuré sur les 1000 particules réelles), soit **~22% de temps en
+moins** sur le run complet `human_modif_scenario1_5000loci`, pour 0
+régression (62/62 tests toujours verts à chaque étape). L'écart
+résiduel avec DIYABC (~300s vs 137s, facteur ~2.2x) reste la partie
+incompressible identifiée dès la première note du jour : plafond des 8
+cœurs physiques de la machine de dev + coût de matérialiser une
+`TreeSequence` par locus.
 
 

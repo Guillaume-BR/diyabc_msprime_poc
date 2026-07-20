@@ -305,10 +305,11 @@ second time just to get `population_names`: they're read for free off
 the keys of the already-simulated `genotypes_list`'s first locus
 (`_population_names` helper), which `simulate_snp_genotypes` already
 populates with the same names. Combined measured gain (all three fixes
-together): ~1.84s/particle single-threaded (from 2.35s), ~265s on the
-full 1000-particle parallel run (from 384s) — **~31% overall**, 0
-regressions (62/62 tests green throughout). Remaining ~1.9x gap vs.
-DIYABC (~265s vs. 137s) is the incompressible part described above.
+together): ~1.84s/particle single-threaded (from 2.35s). Confirmed on
+the full 1000-particle run (not a sub-sample extrapolation): **300s**
+(from 384s) — **~22% overall**, 0 regressions (62/62 tests green
+throughout). Remaining ~2.2x gap vs. DIYABC (~300s vs. 137s) is the
+incompressible part described above.
 
 Not blocking for this POC (goal: prove feasibility, already done) —
 don't re-investigate the formulas or `max_workers` if this comes up
