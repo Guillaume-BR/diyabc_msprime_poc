@@ -16,6 +16,7 @@ from bridge.observed_data import (
     count_samples_per_population,
     detect_snp_file_type,
     individual_sexes_per_population,
+    observed_reads,
     parse_maf_ratio,
     parse_mrc_ratio,
     parse_sex_ratio,
@@ -77,6 +78,21 @@ def test_parse_mrc_ratio():
     assert mrc_ratio_te5 == 1
     assert mrc_ratio_te3 == 1
     assert mrc_ratio_te4 == 5
+
+
+def test_observed_reads():
+    """Vérifie que le parsing du fichier snp renvoie bien le nombre de reads
+    observés par population, pour les fichiers POOLSEQ toy_example4 et
+    toy_example5."""
+    observed_reads_te4 = observed_reads(OBSERVED_SNP_FILE_TE4)
+    assert observed_reads_te4[0] == {
+        "POP1": (0, 93),
+        "POP2": (0, 100),
+        "POP3": (1, 116),
+        "POP4": (0, 139),
+    }
+    with pytest.raises(ValueError, match="format POOLSEQ"):
+        observed_reads(OBSERVED_SNP_FILE_HUMAN)  # fichier INDSEQ
 
 
 def test_individual_sexes_per_population():

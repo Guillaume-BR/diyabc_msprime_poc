@@ -66,6 +66,34 @@ def detect_snp_file_type(snp_file_path: str | Path) -> str:
         return "IND"
 
 
+def _parse_pool_header_line(lines: list[str], header_index: int) -> dict[str, int]:
+    """Parse la ligne d'en-tête POOL du fichier .snp DIYABC, au format
+    'POOL POP_NAME:HAPLOID_SAMPLE_SIZE  POP1:200 POP2:200 POP3:200 POP4:200',
+    et retourne un dictionnaire {nom_population: taille_haploïde}.
+
+    Ex: pour toy_example4 -> {"POP1": 200, "POP2": 200, "POP3": 200, "POP4": 200}
+    """
+    header_line = lines[header_index]
+    first_pop = header_line.find("POP")
+    if first_pop == -1:
+        raise ValueError(
+            f"En-tête 'POOL' trouvé mais aucune population déclarée dans la ligne : "
+            f"{header_line!r}"
+        )
+    second_pop = header_line.find("POP", first_pop + 1)
+    if second_pop == -1:
+        raise ValueError(
+            f"En-tête 'POOL' trouvé mais aucune population déclarée dans la ligne : "
+            f"{header_line!r}"
+        )
+    counts_by_population = {}
+    for part in header_line[second_pop:].split():
+        if part.startswith("POP"):
+            pop_name, haploid_sample_size = part.split(":")
+            counts_by_population[pop_name] = int(haploid_sample_size)
+    return counts_by_population
+
+
 def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
     """Compte le nombre d'individus par population dans un fichier .snp
     DIYABC au format 'IND SEX POP <génotypes...>'.
@@ -99,24 +127,7 @@ def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
                 continue
             counts[fields[pop_index]] += 1
     elif type_of_file == "POOL":
-        first_pop = lines[header_index].find("POP")
-        if first_pop == -1:
-            # Pas de pool déclaré, on ne peut pas compter les individus par population
-            raise ValueError(
-                f"En-tête 'POOL' trouvé mais aucune population déclarée dans la ligne : "
-                f"{lines[header_index]!r}"
-            )
-        second_pop = lines[header_index].find("POP", first_pop + 1)
-        if second_pop == -1:
-            # Pas de pool déclaré, on ne peut pas compter les individus par population
-            raise ValueError(
-                f"En-tête 'POOL' trouvé mais aucune population déclarée dans la ligne : "
-                f"{lines[header_index]!r}"
-            )
-        for part in lines[header_index][second_pop:].split():
-            if part.startswith("POP"):
-                pop_name, haploid_sample_size = part.split(":")
-                counts[pop_name] = int(haploid_sample_size)
+        counts.update(_parse_pool_header_line(lines, header_index))
     return dict(counts)
 
 
@@ -250,6 +261,38 @@ def population_index_to_name(snp_file_path: str | Path) -> dict[int, str]:
     """
     names_in_order = list(count_samples_per_population(snp_file_path).keys())
     return {i + 1: name for i, name in enumerate(names_in_order)}
+
+
+def observed_reads(snp_file_path: str | Path) -> list[dict[str, tuple[int, int]]]:
+    """Lit les lignes de génotypes du fichier .snp DIYABC POOLSEQ, en ignorant
+    l'en-tête et les lignes vides. Retourne la liste des lignes de
+    comptage de reads (nreads1, nreads1 + nreads2) par population, dans l'ordre d'apparition des populations
+    dans le fichier. Chaque tuple contient le nombre de lectures pour l'allèle 1 et
+    le nombre total de lectures (allèle 1 + allèle 2) pour cette population.
+    On retourne une ligne de la forme POP1: (nreads1, nreads1 + nreads2), POP2: (nreads1, nreads1 + nreads2), ...
+    """
+    if detect_snp_file_type(snp_file_path) != "POOL":
+        raise ValueError(
+            f"Le fichier {snp_file_path} n'est pas au format POOLSEQ. "
+            f"Seul le format POOLSEQ est supporté pour la lecture des reads observés."
+        )
+    path = Path(snp_file_path)
+    lines = path.read_text().splitlines()
+    header_index = _find_header_index(lines)
+    liste_pop = list(_parse_pool_header_line(lines, header_index).keys())
+    rows = []
+    for line in lines[header_index + 1 :]:
+        fields = line.split()
+        if not fields:
+            continue
+        counts_by_population = {}
+        for i in range(len(liste_pop)):
+            pop_name = liste_pop[i]
+            nreads1 = int(fields[2 * i])
+            nreads2 = int(fields[2 * i + 1])
+            counts_by_population[pop_name] = (nreads1, nreads1 + nreads2)
+        rows.append(counts_by_population)
+    return rows
 
 
 def coalescence_coefficient(locus_type: str, sex_ratio: float) -> float:
