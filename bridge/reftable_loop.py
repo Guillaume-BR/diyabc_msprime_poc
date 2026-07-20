@@ -364,6 +364,10 @@ def replay_reftable_simulation(
     write_reftable_bin (même type que run_reftable_simulation).
     """
     reference_directory = Path(reference_directory)
+
+    # On lit les sorties de diyabc (scénario tiré + valeurs de paramètres RÉELLEMENT tirées) pour
+    # les rejouer ensuite côté msprime, afin de comparer les deux simulateurs sur EXACTEMENT
+    # les mêmes tirages de priors.
     rows = parse_real_reftable_params(real_reftable_path, priors, scenarios)
 
     results_by_index: dict[int, ParticleResult] = {}
@@ -384,7 +388,6 @@ def replay_reftable_simulation(
         for future in as_completed(futures):
             particle_index = futures[future]
             results_by_index[particle_index] = future.result()
-
     return [results_by_index[i] for i in range(len(rows))]
 
 

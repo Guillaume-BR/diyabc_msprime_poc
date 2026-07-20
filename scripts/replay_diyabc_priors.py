@@ -15,12 +15,14 @@ différent (voir notebook/correlation_N2_N3_HWm_anomaly.ipynb, section
 
 import shutil
 from pathlib import Path
+from time import time
 
+from bridge.loci_parser import parse_loci_description
 from bridge.prior_parser import parse_priors
 from bridge.reftable_loop import replay_reftable_simulation, write_reftable_txt
 from bridge.scenario_parser import parse_header_scenarios
 
-REFERENCE_DIR = Path("reference/toy_example5_1000loci")
+REFERENCE_DIR = Path("reference/human_modif_scenario1_5000loci")
 REAL_REFTABLE_PATH = REFERENCE_DIR / "first_records_of_the_reference_table_0.txt"
 # None = utilise les vrais comptes par type déclarés dans header.txt
 # (500 <A> / 50 <X> / 50 <M> / 50 <Y> pour ce dataset), pas un override.
@@ -28,6 +30,8 @@ NUM_LOCI = None
 STATS_FILTER = "HEADER"
 OUTPUT_PATH = REFERENCE_DIR / "reftable_msprime_replay.txt"
 
+start_time = time()
+print("Début du lecture du headerRF.txt")
 header_text = (REFERENCE_DIR / "headerRF.txt").read_text()
 
 priors, _constraints = parse_priors(header_text)
@@ -37,6 +41,10 @@ priors, _constraints = parse_priors(header_text)
 # filtrer qu'un seul scenario ferait planter le rejeu des lignes tirées
 # sur un autre scénario (KeyError dans _kept_param_names_by_scenario).
 scenarios = parse_header_scenarios(header_text)
+t1 = time()
+print(
+    f"Lecture du headerRF.txt terminée en {t1 - start_time:.2f}s : {len(priors)} priors, {len(scenarios)} scénarios"
+)
 
 # read_header_text (bridge/pipeline.py) préfère header.txt à headerRF.txt
 # si les deux existent dans le dossier -- or c'est headerRF.txt qui
@@ -54,6 +62,17 @@ WORK_DIR.mkdir(parents=True)
 shutil.copy(REFERENCE_DIR / "headerRF.txt", WORK_DIR / "headerRF.txt")
 shutil.copy(REFERENCE_DIR / snp_filename, WORK_DIR / snp_filename)
 
+t2 = time()
+print(f"Copie du répertoire de travail terminée en {t2 - t1:.2f}s : {WORK_DIR}")
+
+
+header_text = (WORK_DIR / "headerRF.txt").read_text()
+total_loci = parse_loci_description(header_text).total_loci.values()
+total_loci = sum(total_loci)
+
+print(
+    f"Début de la simulation des {total_loci} loci pour rejouer les tirages de priors DIYABC..."
+)
 results = replay_reftable_simulation(
     reference_directory=WORK_DIR,
     priors=priors,
@@ -64,6 +83,13 @@ results = replay_reftable_simulation(
     max_workers=16,
 )
 
+t3 = time()
+print(
+    f"Rejeu des {len(results)} particules de {total_loci} loci terminé en {t3 - t2:.2f}s"
+)
+
 write_reftable_txt(results, priors, scenarios, OUTPUT_PATH)
+t4 = time()
+print(f"Écriture du reftable terminé en {t4 - t3:.2f}s")
 print(f"{len(results)} particules rejouées avec les tirages réels de DIYABC.")
 print(f"Écrit dans {OUTPUT_PATH}")

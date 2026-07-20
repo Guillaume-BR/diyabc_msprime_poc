@@ -55,7 +55,7 @@ de 30 lignes consécutives.
 
 ## Choix de ploidy=2 pour human
 
-Confirmé : human/header.txt déclare ses 51250 loci en <A> (autosomal),
+Confirmé : human/header.txt déclare ses 51250 loci A (autosomal),
 cohérent avec une transmission diploïde classique. ploidy=2 (valeur par
 défaut de msprime.sim_ancestry) est donc le bon choix : chaque "sample
 individual" = 2 lignées génomiques, et l'échelle de temps de la
@@ -76,20 +76,20 @@ la doc orienté parallélisation multi-process).
 
 ## Format condensé "loci description" pour fichiers SNP -- confirmé (header.cpp::readHeaderLoci, branche SNP)
 
-Syntaxe : <n1> <type1> [<n2> <type2> ...] <groupe> from <indice>
+Syntaxe : n1 type1 [n2 type2 ...] groupe from indice
 
 - Chaque paire (n_i, type_i) = n_i loci consécutifs de ce type d'héritage
-  (<A>,<H>,<X>,<Y>,<M>), pris dans l'ordre d'apparition du fichier .snp
+  (A,H,X,Y,M), pris dans l'ordre d'apparition du fichier .snp
 - "from N" (1-based dans le fichier) = indice de départ dans dataobs.locus[]
   (converti en 0-based : prem = N - 1)
 - Somme des n_i = nombre total de loci de ce groupe à extraire
 
-Exemple human : "5000 <A> G1 from 1" = prendre les 5000 PREMIERS loci
-(indices 0 à 4999) du fichier .snp, tous <A>, assignés au groupe G1.
+Exemple human : "5000 A G1 from 1" = prendre les 5000 PREMIERS loci
+(indices 0 à 4999) du fichier .snp, tous A, assignés au groupe G1.
 
-Exemple théorique : "70 <A> 10 <X> 10 <M> 10 <Y> G1 from 1" = prendre
+Exemple théorique : "70 A 10 X 10 M 10 Y G1 from 1" = prendre
 les 100 loci à partir de 1, positions 0-69
-=<A>, puis les 10 premiers <X>, puis les 10 premiers <Y> et enfin les 10 premiers <M>.
+=A, puis les 10 premiers X, puis les 10 premiers Y et enfin les 10 premiers M.
 
 IMPORTANT : le FICHIER .snp peut contenir bien plus de loci (51250 pour
 human) que ce qui est réellement simulé/comparé (5000 pour le scénario
@@ -137,7 +137,7 @@ un dataset avec MAF != hudson.
 
 Décision pragmatique : on écrit "9" (valeur observée dans human réel)
 pour tous les individus simulés, sans avoir confirmé dans le C++ que
-cette colonne n'est jamais lue pour des loci <A> (autosomaux). Justifié
+cette colonne n'est jamais lue pour des loci A (autosomaux). Justifié
 par : (1) aucune des 6 catégories de stats SNP listées dans la doc
 DIYABC (ML, HW/HB, FST, F3/F4, Nei, AML) ne mentionne le sexe comme
 paramètre ; (2) readheaderdata (data.cpp) ne semble utiliser SEX que
@@ -275,24 +275,139 @@ Problème qqpart car la comparaison des statistiques de sorties montrent qu'il y
   standard, rien d'anormal.
 - 6. Doublons de branches / MRCA artificiel — arbre binaire propre, rien d'anormal.
 
-## Notes du 10/07/2026 — RÉSOLUTION : la ligne de fin de header.txt/headerRF.txt n'est pas cosmétique
+## Notes du 08/07/26
 
-Cause racine trouvée (découverte par l'utilisateur, root-causée et reproduite indépendamment le même jour) de l'essentiel de l'écart documenté le 03/07 et le 07/07 : la dernière ligne du header ("scenario N1 N2 N3 ta ts ML1p_1 ...", qu'on pensait être une simple documentation des colonnes de sortie générée par DIYABC) est en réalité **relue comme une entrée** par le binaire `general`.
+Ajout de l'option "initially_active = True" dans le modèle de démographie : a permis d'avoir des valeurs cohérentes avec diyabc pour ML1, ML2... 
 
-Dans `header.cpp::HeaderC::readHeaderAllStat` (~lignes 789-799) :
-```cpp
-getline(file, this->entete);  // relit la DERNIÈRE ligne du header EN ENTRÉE
-...
-size_t nparamhist = header_lastline.size() - 1 - nstat - nparamut;
-```
-`nparamhist` (le nombre de paramètres historiques que DIYABC croit exister) est dérivé du **nombre de tokens de cette ligne de fin**, pas d'un comptage réel des priors déclarés dans `historical parameters priors`. Si cette ligne contient des noms de paramètres en trop (ex: `N4 r` recopiés d'un header d'un autre scénario, alors que `historical parameters priors` n'en déclare que 5), `nparamhist` est faux et corrompt un état interne en aval.
+## Notes du 09/07/26
 
-**Signature du bug** : la population "hub" (première déclarée / celle qui survit à toutes les fusions) reste correcte ; toutes les autres populations montrent des statistiques massivement fausses (HWm/ML1p écroulés vers 0, FST1m explosé au-dessus de 1) — écarts de 300% à 10000%, alors que les tirages de priors (N1..ts) restent statistiquement normaux. C'est exactement la signature "asymétrie population 1 vs populations 2/3" observée et creusée pendant toute l'investigation du notebook `correlation_N2_N3_HWm_anomaly.ipynb`.
+Ce qui est confirmé propre : j'ai testé le fix sur une dizaine de points fixes très variés — N
+  minuscule (100) avec ta/ts énormes, N minuscule avec ta/ts du même ordre de grandeur, ta≈ts (10
+  générations d'écart sur 10000), N1 très petit vs N2/N3 énormes, et les valeurs exactes tirées par 
+  DIYABC lui-même pour les lignes les plus aberrantes de son reftable (ex: ligne avec N1=1744, N2=19984,
+  ta=24641, ts=25586). À chaque fois, en moyennant sur 1000 répliques du même point, DIYABC et msprime
+  tombent d'accord au pourcent près. Le fix initially_active est donc solide partout où je l'ai testé
+  ponctuellement.
 
-**Vérification** : `toy_example5_scenario1` (utilisé dans tout ce notebook) déclarait "6 parameters" avec seulement 5 priors réels, et sa ligne de fin listait `N4 r` en trop. En reconstruisant un header identique mais avec une ligne de fin propre (5 tokens), sur 1000 particules DIYABC réelles vs msprime (tirages indépendants, mêmes priors) :
-- `ML1p_1/2/3` et `HWm_1/2/3` : écarts tombés de 300-10000% à <3%, plus aucun significatif (avant : très significatifs sur pop2/pop3 uniquement).
-- Nombre de stats significativement différentes (test KS, p<0.05) : passé de ~48/55 à ~22/55.
-- Il reste un biais résiduel modeste (5-16%) sur les statistiques de paires (FST2, NEI, F3, HB) — du même ordre que ce qu'on observe ailleurs dans le projet avec des headers propres, un problème bien plus petit et probablement plus classique, encore ouvert.
+  Ce qui ne colle pas : en comparant les deux reftables complets (1000 particules à priors tirés
+  indépendamment, une seule réplique par particule), HWm_2 et HWm_3 divergent nettement (DIYABC≈0.022,
+  msprime≈0.086) alors que HWm_1 est correct. Et ce n'est pas du bruit d'échantillonnage — les
+  écarts-types sont petits (SEM≈0.0003-0.001, écart observé = 0.064, donc >50 SEM).
 
-**Conclusion révisée** : la quasi-totalité de l'écart documenté le 03/07 et 07/07 était un artefact de fichier de test mal formé (ligne de fin recopiée depuis un autre scénario), pas un désaccord réel entre les deux simulateurs. Voir mémoire persistante `diyabc_header_trailer_line_bug` pour le détail complet et comment vérifier un header pour ce piège avant de le réutiliser.
+  Le vrai signal que j'ai trouvé : dans le reftable réel de DIYABC, HWm_2 et HWm_3 sont quasi 
+  indépendants de N2/N3 (corr≈-0.18/-0.19, alors qu'on attend une corrélation positive forte), alors que
+  HWm_1 corrèle bien avec N1 (0.34) — et msprime montre la corrélation attendue et correcte pour les 3
+  populations (0.82 / 0.70 / 0.46). Pourtant, mon test contrôlé (ne faire varier que N2, ta/ts fixes)
+  montre que DIYABC sait parfaitement faire varier HWm_2 avec N2 quand on isole la variable. Autrement
+  dit : DIYABC scale correctement avec N en isolation, mais dans le vrai reftable à tous les paramètres
+  tirés simultanément, cette dépendance disparaît spécifiquement pour les populations "dérivées" (2 et 3,
+  qui disparaissent chacune dans une fusion) — jamais pour la population "ancestrale" (1, qui survit aux
+  deux fusions).
+
+  Je n'ai pas encore d'explication ferme — ça ressemble à un problème côté binaire DIYABC réel (pas notre
+  port msprime) spécifique à ce header avec contrainte ts>ta par rejet sur intervalles superposés, mais
+  je ne peux pas l'affirmer sans regarder le code source plus près. Tu veux que je creuse ça côté C++
+  (particuleC.cpp/history.cpp) pour voir si ts>ta DRAW UNTIL a un effet de bord sur N2/N3, ou on met ça
+  de côté pour l'instant ?
+
+## Note du 10/07/26
+
+Correction du bug : une différence de lecture du header par notre implémentation en Python et celle de Diyabc. Notre implémentaiton utilise la première partie pour déterminer la liste des priors et des stat tandis que diyabc utilise la dernière ligne qui fait office de référence. Ainsi il y avait un décalage qui faussait les calculs et donc les interprétations. 
+
+Il reste des écarts relatifs qui peuvent paraître important mais rien de comparable avec ce que l'on avait précédemment. Les tests de Kolmogorov-Smirnov passent par contre tous validant ainsi l'hypothèse d'égalité des distributions de nos sumstats. Ceci a été testé sur le dataset human avec 5000 loci dans la version avec plusieurs scénarios.
+
+## Note du 17/07/26 -- le "biais résiduel" n'est pas un vrai désaccord DIYABC/msprime
+
+** `reference/toy_example5_1000loci/compare_reftables_te5_1000loci.ipynb`**
+(rejeu exact des tirages RÉELS de DIYABC via
+`scripts/replay_diyabc_priors.py` -- comparaison appariée, mêmes
+N1..r pour chaque particule des deux côtés, 1000 particules x 650 loci
+= 500 `<A>` + 50 `<X>` + 50 `<M>` + 50 `<Y>`). 
+Le test avec  70 `<A>` + 10 `<X>` + 10 `<M>` + 10 `<Y>` donne des résultats
+décevants certainement du fait du faible nombre de loci simulés. 
+L'exécution complète du notebook (~8s) : priors identiques des deux côtés à 0.0 près (rdiff=0,
+KS=0, p=1.0 -- confirme l'appariement), et sur les 50 statistiques,
+écart relatif moyen 3.6% (max -7.7% sur F3v_3.1.2), **0 statistique
+avec p<0.05** (KS, min p=0.12). C'est le même ordre de grandeur que le
+"biais résiduel 5-16%" documenté le 10/07, mais désormais confirmé
+non significatif statistiquement sur 650 loci.
+
+## Note du 20/07/26 -- écart de performance DIYABC/msprime : le coût par particule est quasi identique, le vrai plafond est la parallélisation + le surcoût tskit par locus
+
+Point de départ : sur `human_modif_scenario1_5000loci` (rejeu des
+priors réels DIYABC via `replay_diyabc_priors.py`, 1000 particules,
+5000 loci, scénario 1, `max_workers=16`), le pipeline msprime/Python
+met **384s** contre **137s** pour le vrai DIYABC sur la même config
+(`time ./diyabc -p ./ -R ALL -r 1000 -g 1000 -m -t 16`, mesuré le
+03/07) -- un facteur **~2.8x**. Investigation pour savoir si ça vient
+du simulateur, des formules de stats, ou d'autre chose.
+
+**1. Coût par particule en séquentiel (mesuré, valeurs réelles DIYABC
+rejouées, 5000 loci)** :
+- Simulation seule (coalescence msprime + mutation Hudson) : 2.12s
+- `compute_summary_statistics_from_values` complet (simulation + 130
+  stats + I/O) : 2.35-2.4s -- le calcul des stats + la lecture des
+  fichiers ne pèsent donc que ~0.25s (~10%), pas le goulot.
+- Comparé au coût DIYABC équivalent par particule (137s x 16 threads /
+  1000 particules ~= 2.19s) : **quasi identique** (facteur ~1.1x). Le
+  simulateur/les formules ne sont PAS le problème.
+
+**2. D'où vient alors le facteur ×2.8 ?** -- de la mise à l'échelle
+parallèle, pas du coût unitaire. Test empirique de `max_workers` sur
+128 particules réelles (mêmes conditions) :
+
+| max_workers | temps réel | idéal (linéaire depuis le seq.) | efficacité |
+|---|---|---|---|
+| 16 | 44.9s | 18.8s | 42% |
+| 8  | 54.5s | 37.6s | 69% |
+| 7  | 60.8s | 43.0s | 71% |
+
+16 workers reste le MEILLEUR choix en absolu malgré une "efficacité"
+plus faible -- donc `max_workers=16` (déjà utilisé) n'est pas un
+mauvais réglage. Cause identifiée via `lscpu` : la machine a **8 cœurs
+physiques / 16 threads logiques** (Xeon W-11955M, hyperthreading). Le
+calcul est purement numérique (msprime + numpy), qui tire peu de
+bénéfice de l'hyperthreading -- donc 16 workers Python se disputent en
+réalité 8 cœurs physiques. C'est un plafond matériel de la machine de
+dev, pas un défaut de notre code ou de son réglage.
+
+**3. Où va le temps DANS la simulation** (profil détaillé d'une
+particule via `cProfile`) -- ~93% du temps total est dans
+`simulate_snp_genotypes` (boucle sur les 5000 loci), décomposé
+ainsi :
+- ~30% moteur de simulation msprime en C (`Simulator.run`/`reset`/
+  `finalise_tables`) -- difficilement compressible, c'est le vrai
+  calcul de coalescence.
+- **~40% construction/inspection des objets Python `tskit.TreeSequence`/
+  `Tables` PAR LOCUS** (dont le décodage du metadata des populations,
+  refait pour CHACUN des 5000 loci alors qu'il est strictement
+  identique à chaque fois) -- le plus gros poste, et le plus évitable.
+- ~15% l'algorithme de Hudson (tirage de la mutation, déjà vectorisé
+  sur les tables d'edges).
+
+Cohérent avec l'archi : DIYABC en C++ reste dans une boucle serrée sans
+jamais recréer d'objets haut niveau par locus, alors que nous
+matérialisons une vraie `TreeSequence` Python complète (avec décodage
+de schéma de métadonnées) 5000 fois par particule.
+
+**Petit à-côté relevé au passage, pas encore corrigé** :
+`build_samples_argument` (parsing du `.snp`, 12 Mo) est appelé DEUX
+fois par particule au lieu d'une (une fois dans
+`run_poc_for_directory_with_values`, une fois dans
+`compute_summary_statistics_from_values`) -- redondant, ~0.1s/particule
+(~4% du total), pas le facteur principal mais un gain facile.
+
+**Conclusion** : l'écart de perf n'est ni un problème de nos formules
+de stats (quasi identiques en coût unitaire à DIYABC), ni un mauvais
+choix de `max_workers` -- c'est le plafond des 8 cœurs physiques de la
+machine de dev combiné au surcoût Python/tskit de recréer un objet
+`TreeSequence` complet par locus (5000x par particule). Pour l'objectif
+du POC (démontrer la faisabilité, déjà acquis), pas bloquant. Une
+vraie optimisation nécessiterait de réduire ce surcoût tskit par locus
+(ex: éviter le redécodage du metadata des populations à chaque
+itération, dédupliquer le double appel à `build_samples_argument`) --
+un chantier réel à part entière, pas un réglage rapide. Reste à faire
+si on veut industrialiser au-delà du POC.
+
+
 

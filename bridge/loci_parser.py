@@ -70,7 +70,7 @@ def parse_loci_description(header_text: str) -> LociDescription:
 
     Lève NotImplementedError si le format détecté est le format détaillé
     (plusieurs lignes, un locus nommé par ligne) -- non nécessaire pour
-    human/toy_example5, à implémenter si on traite un jour un dataset
+    human/toy_example5/toy_example3, à implémenter si on traite un jour un dataset
     sequences-mut.
     """
     lines = header_text.splitlines()
@@ -81,7 +81,7 @@ def parse_loci_description(header_text: str) -> LociDescription:
         raise NotImplementedError(
             f"Format détaillé (loci description ({num_lines}), {num_lines} "
             f"lignes attendues) non géré par ce parser -- limité au format "
-            f"condensé à une seule ligne (cas de human/toy_example5)."
+            f"condensé à une seule ligne (cas de human/toy_example5/toy_example3)."
         )
 
     content_line = lines[section_index + 1].strip()
