@@ -6,3 +6,6 @@ __pycache__/
 *.log
 tmp/
 temp/
+.claude/
+.ruff_cache/
+.pytest_cache/
