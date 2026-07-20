@@ -427,22 +427,45 @@ def simulate_snp_genotypes(
     la docstring d'origine pour la justification du modèle (doc DIYABC
     section 2.4.3 : exactement une mutation par locus, locus toujours
     polymorphe).
+
+    La liste des populations (noms + IDs d'échantillons par population)
+    est calculée UNE SEULE FOIS, au premier locus, et réutilisée pour
+    tous les suivants -- valable car tous les `tree_sequences` d'un même
+    appel partagent la même `demography`/`samples` d'origine (mêmes
+    réplicats d'un seul appel à simulate_independent_loci/
+    simulate_shared_ancestry_loci) : seule la topologie coalescente varie
+    d'un locus à l'autre, jamais l'assignation des noeuds échantillons
+    aux populations (vérifié empiriquement). Sans ce cache, le
+    redécodage du metadata des populations et le refiltrage de
+    ts.samples(population=...) à CHAQUE locus représentaient à eux seuls
+    ~20% du temps d'une particule sur 5000 loci (voir
+    notes/exploration.md, entrée du 20/07/2026) -- le plus gros poste
+    évitable du surcoût tskit par locus identifié dans cette
+    investigation.
     """
     rng = random.Random(seed)
+    population_layout: list[tuple[str | None, np.ndarray]] | None = None
+
     for ts in tree_sequences:
         tree = ts.first()
         mutated_node = _draw_single_mutation_edge_child(ts, rng)
         derived_samples = set(tree.samples(mutated_node))
 
-        genotypes_by_population = {}
-        for pop_index, population in enumerate(ts.tables.populations):
-            pop_name = population.metadata.get("name") if population.metadata else None
-            sample_ids = ts.samples(population=pop_index)
-            if len(sample_ids) == 0:
-                continue
-            genotypes_by_population[pop_name] = [
-                1 if s in derived_samples else 0 for s in sample_ids
-            ]
+        if population_layout is None:
+            population_layout = []
+            for pop_index, population in enumerate(ts.tables.populations):
+                sample_ids = ts.samples(population=pop_index)
+                if len(sample_ids) == 0:
+                    continue
+                pop_name = (
+                    population.metadata.get("name") if population.metadata else None
+                )
+                population_layout.append((pop_name, sample_ids))
+
+        genotypes_by_population = {
+            pop_name: [1 if s in derived_samples else 0 for s in sample_ids]
+            for pop_name, sample_ids in population_layout
+        }
         yield genotypes_by_population
 
 

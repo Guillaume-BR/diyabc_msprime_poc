@@ -409,5 +409,48 @@ itération, dédupliquer le double appel à `build_samples_argument`) --
 un chantier réel à part entière, pas un réglage rapide. Reste à faire
 si on veut industrialiser au-delà du POC.
 
+## Note du 20/07/26 (suite) -- optimisation du cache population/samples dans simulate_snp_genotypes, gain mesuré
+
+Implémentation de la première piste identifiée ci-dessus : dans
+`simulate_snp_genotypes` (`bridge/ancestry_simulation.py`), la liste
+(nom de population, IDs d'échantillons) était recalculée à CHAQUE locus
+(`ts.tables.populations`, décodage du metadata, `ts.samples(population=
+...)`) alors qu'elle est strictement identique pour tous les réplicats
+d'un même appel à `simulate_independent_loci`/`simulate_shared_
+ancestry_loci` -- seule la topologie coalescente varie d'un locus à
+l'autre, jamais l'assignation des noeuds échantillons aux populations.
+Vérifié empiriquement avant de coder (5 loci, 4 populations : IDs
+d'échantillons et noms de population identiques sur tous les loci).
+
+Changement : cette liste est maintenant calculée une seule fois, au
+premier locus consommé par le générateur, et réutilisée pour tous les
+suivants (le tirage de la mutation et le calcul de `derived_samples`
+restent bien par-locus, seule la structure pop->samples est mise en
+cache).
+
+**Gain mesuré** (mêmes conditions que l'investigation ci-dessus,
+`human_modif_scenario1_5000loci`) :
+- Séquentiel : 2.35s -> **1.96s**/particule (~17%)
+- Parallèle réel (128 particules, `max_workers=16`) : 44.9s -> **36.4s**
+  (~19%)
+- Extrapolé sur les 1000 particules réelles : 384s -> **~284s**
+  (~26% de temps en moins sur le run complet)
+
+Suite de tests complète (62/62) toujours verte après le changement.
+
+**Limite** : ce cache ne profite qu'au chemin rapide `maf=0.0`
+(`<MAF=hudson>` ou tag absent, cas de `human`) où `simulate_snp_
+genotypes` est appelée UNE FOIS sur tous les loci d'un coup. Le chemin
+`with_maf_filter`/`with_maf_filter_shared_ancestry` avec un vrai seuil
+MAF numérique (boucle de rejet) appelle `simulate_snp_genotypes` locus
+par locus (un seul élément à chaque appel) -- le cache ne s'y active
+donc pas tel quel, il faudrait restructurer la boucle de rejet pour
+partager ce cache entre tentatives si on veut aussi optimiser ce
+chemin-là. Pas fait pour l'instant.
+
+L'écart résiduel avec DIYABC (~284s vs 137s) reste la partie
+incompressible : plafond des 8 cœurs physiques + coût de matérialiser
+une `TreeSequence` par locus (nécessaire de toute façon pour y tirer la
+mutation).
 
 

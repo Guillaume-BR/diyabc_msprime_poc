@@ -268,12 +268,26 @@ on the same config (`-t 16`) — a ~2.8x gap. Investigated in full in
   for this CPU-bound numeric workload) — `max_workers=16` still beats
   8 and 7 in absolute wall time, measured empirically.
 - **The real cost**: ~93% of one particle's time is in the per-locus
-  simulate+mutate loop, and within that, ~40% is Python/tskit overhead
+  simulate+mutate loop, and within that, ~40% was Python/tskit overhead
   of materializing a full `TreeSequence`/`Tables` object (incl.
   re-decoding population metadata) for each of the 5000 independent
   loci — more than the actual msprime C coalescent engine itself
-  (~30%). This is the concrete lever if perf ever needs improving
-  beyond POC scope; not yet attempted.
+  (~30%).
+
+**Partly fixed 2026-07-20**: `simulate_snp_genotypes`
+(`ancestry_simulation.py`) now computes the population names + sample
+IDs per population ONCE (from the first locus) instead of re-decoding
+them for all 5000 — safe because every replicate of the same
+`simulate_independent_loci`/`simulate_shared_ancestry_loci` call shares
+the same `demography`/`samples`, only the coalescent topology differs
+(verified empirically). Measured gain: ~17% single-threaded
+(2.35s → 1.96s/particle), ~26% on the full 1000-particle parallel run
+(384s → ~284s). Remaining gap vs. DIYABC (~284s vs. 137s) is the
+incompressible part: the 8-physical-core ceiling and materializing a
+`TreeSequence` per locus at all. This `maf=0.0` fast path is the one
+that benefits — `with_maf_filter`'s rejection loop (maf>0 datasets)
+calls `simulate_snp_genotypes` per single locus and doesn't get this
+caching for free, not yet extended there.
 
 Not blocking for this POC (goal: prove feasibility, already done) —
 don't re-investigate the formulas or `max_workers` if this comes up
