@@ -127,6 +127,23 @@ def _simulate_genotypes_for_all_locus_types(
     return itertools.chain(*liste_iterateurs_par_type)
 
 
+def _population_names(
+    genotypes_list: list[dict[str, list[int]]], snp_path: Path
+) -> list[str]:
+    """Noms de population ("pop1", "pop2"...) dans le même ordre que
+    build_samples_argument -- dérivés GRATUITEMENT des clés du premier
+    locus déjà simulé (simulate_snp_genotypes construit ce dict avec
+    exactement les mêmes noms, voir ancestry_simulation._population_layout)
+    plutôt que de rescanner le fichier .snp une deuxième fois par
+    particule (mesuré : ~4% du temps d'une particule sur human, voir
+    notes/exploration.md, entrée du 20/07/2026). Repli sur
+    build_samples_argument si genotypes_list est vide (num_loci=0, cas
+    dégénéré qui n'arrive pas en pratique)."""
+    if genotypes_list:
+        return list(genotypes_list[0].keys())
+    return list(build_samples_argument(snp_path).keys())
+
+
 def _filter_statistics(
     summary_stats: dict[str, float],
     header_text: str,
@@ -281,8 +298,7 @@ def compute_summary_statistics(
     )
     genotypes_list = list(genotypes_per_locus)
 
-    samples = build_samples_argument(snp_path)
-    population_names = list(samples.keys())
+    population_names = _population_names(genotypes_list, snp_path)
 
     summary_stats = compute_all_statistics(genotypes_list, population_names)
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
@@ -366,8 +382,7 @@ def compute_summary_statistics_from_values(
     )
     genotypes_list = list(genotypes_per_locus)
 
-    samples = build_samples_argument(snp_path)
-    population_names = list(samples.keys())
+    population_names = _population_names(genotypes_list, snp_path)
 
     summary_stats = compute_all_statistics(genotypes_list, population_names)
     return _filter_statistics(summary_stats, header_text, stats_filter)

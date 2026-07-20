@@ -52,12 +52,19 @@ def build_samples_argument(
     header.txt, mappé sur le nombre réel d'individus observés pour la
     population correspondante (voir observed_data.py pour la
     justification du mapping par ordre d'apparition).
+
+    Un seul appel à count_samples_per_population (pas
+    population_index_to_name EN PLUS, qui relit et rescanne tout le
+    fichier .snp pour ne faire que redériver les mêmes clés dans le même
+    ordre) -- l'indice 1-based se déduit directement de la position dans
+    ce même dict, garanti dans l'ordre de première apparition (voir sa
+    docstring).
     """
-    index_to_name = population_index_to_name(snp_file_path)
     counts_by_name = count_samples_per_population(snp_file_path)
 
     return {
-        f"pop{index}": counts_by_name[name] for index, name in index_to_name.items()
+        f"pop{index}": count
+        for index, count in enumerate(counts_by_name.values(), start=1)
     }
 
 

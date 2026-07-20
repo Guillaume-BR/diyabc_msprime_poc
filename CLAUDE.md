@@ -295,6 +295,21 @@ call, so the eliminated per-locus metadata decode is a much smaller
 share of that per-attempt cost than it was when one call handled 5000
 loci at once.
 
+**Also fixed 2026-07-20**: `build_samples_argument` was scanning the
+`.snp` file twice internally (`population_index_to_name`, which itself
+calls `count_samples_per_population`, followed by a second independent
+call to `count_samples_per_population`) — now a single scan. And
+`pipeline.py`'s `compute_summary_statistics`/`compute_summary_
+statistics_from_values` no longer call `build_samples_argument` a
+second time just to get `population_names`: they're read for free off
+the keys of the already-simulated `genotypes_list`'s first locus
+(`_population_names` helper), which `simulate_snp_genotypes` already
+populates with the same names. Combined measured gain (all three fixes
+together): ~1.84s/particle single-threaded (from 2.35s), ~265s on the
+full 1000-particle parallel run (from 384s) — **~31% overall**, 0
+regressions (62/62 tests green throughout). Remaining ~1.9x gap vs.
+DIYABC (~265s vs. 137s) is the incompressible part described above.
+
 Not blocking for this POC (goal: prove feasibility, already done) —
 don't re-investigate the formulas or `max_workers` if this comes up
 again, the cause is understood.

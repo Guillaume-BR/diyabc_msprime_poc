@@ -487,4 +487,44 @@ y compris les tests qui valident sémantiquement le filtre MAF --
 à garder, mais ne pas s'attendre à un gain comparable à celui du chemin
 `maf=0.0` si ce dataset redevient un sujet de perf.
 
+## Note du 20/07/26 (suite 3) -- dédup de build_samples_argument (double scan interne + double appel pipeline.py)
+
+Dernière piste facile identifiée dans l'investigation initiale : le
+`.snp` (12 Mo pour `human`) était scanné en trop DEUX FOIS
+différentes :
+
+1. **En interne à `build_samples_argument`** (`ancestry_simulation.py`)
+   : la fonction appelait `population_index_to_name(snp_file_path)` --
+   qui appelle lui-même `count_samples_per_population` -- PUIS
+   rappelait `count_samples_per_population(snp_file_path)` une seconde
+   fois, indépendamment, juste pour les comptes. Corrigé : un seul
+   appel à `count_samples_per_population`, l'indice 1-based se déduit
+   directement de la position dans ses clés (même ordre garanti).
+2. **Entre `pipeline.py` et `ancestry_simulation.py`** : comme identifié
+   le 20/07 (suite 1), `compute_summary_statistics(_from_values)`
+   rappelait `build_samples_argument(snp_path)` juste pour obtenir
+   `population_names = list(samples.keys())`, alors que
+   `genotypes_list` (déjà calculé juste avant) contient EXACTEMENT ces
+   mêmes noms comme clés de chaque dict par locus (produits par
+   `simulate_snp_genotypes`/`_population_layout`, mêmes noms "pop1"..
+   "popN" dans le même ordre). Nouveau helper `_population_names`
+   (`pipeline.py`) : prend les clés du premier locus déjà simulé --
+   zéro I/O supplémentaire -- avec repli sur `build_samples_argument`
+   si `genotypes_list` est vide (cas dégénéré `num_loci=0`, n'arrive
+   pas en pratique).
+
+**Gain mesuré** (cumulé avec les deux optimisations précédentes de la
+même journée, `human_modif_scenario1_5000loci`) :
+- Séquentiel : 1.96s -> **~1.84s**/particule (~6% de plus)
+- Parallèle réel (128 particules, `max_workers=16`) : 36.4s -> **34.0s**
+- Extrapolé 1000 particules : 284s -> **~265s**
+
+**Bilan cumulé de la journée (3 optimisations)** : 384s -> ~265s, soit
+**~31% de temps en moins** sur le run complet `human_modif_scenario1_
+5000loci`, pour 0 régression (62/62 tests toujours verts à chaque
+étape). L'écart résiduel avec DIYABC (~265s vs 137s, facteur ~1.9x)
+reste la partie incompressible identifiée dès la première note du jour
+: plafond des 8 cœurs physiques de la machine de dev + coût de
+matérialiser une `TreeSequence` par locus.
+
 
