@@ -40,15 +40,30 @@ def _find_header_index(lines: list[str]) -> int:
             i
             for i in range(min(2, len(lines)))
             if lines[i].split()[:3] == ["IND", "SEX", "POP"]
+            or lines[i].split()[:1] == ["POOL"]
         ),
         None,
     )
     if header_index is None:
         raise ValueError(
-            f"En-tête 'IND SEX POP' non trouvé dans les deux premières "
+            f"En-tête 'IND SEX POP' ou 'POOL' non trouvé dans les deux premières "
             f"lignes. Lignes lues : {lines[:2]!r}"
         )
     return header_index
+
+
+def detect_snp_file_type(snp_file_path: str | Path) -> str:
+    """Détecte le type de fichier .snp DIYABC : "INDSEQ" (individus par
+    ligne) ou "POOLSEQ" (pools par ligne), à l'aide du header_index
+    trouvé par _find_header_index, en lisant la première ligne
+    non vide du fichier contenant "IND" ou "POOL".
+    """
+    lines = Path(snp_file_path).read_text().splitlines()
+    header_index = _find_header_index(lines)
+    if lines[header_index].split()[0] == "POOL":
+        return "POOL"
+    elif lines[header_index].split()[0] == "IND":
+        return "IND"
 
 
 def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
@@ -72,15 +87,36 @@ def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
     path = Path(snp_file_path)
     lines = path.read_text().splitlines()
     header_index = _find_header_index(lines)
-    pop_index = lines[header_index].split().index("POP")
-
+    type_of_file = detect_snp_file_type(snp_file_path)
     counts = Counter()
-    for line in lines[header_index + 1 :]:
-        fields = line.split()
-        if not fields:
-            continue
-        counts[fields[pop_index]] += 1
+    if type_of_file == "IND":
+        pop_index = lines[header_index].split().index("POP")
 
+        counts = Counter()
+        for line in lines[header_index + 1 :]:
+            fields = line.split()
+            if not fields:
+                continue
+            counts[fields[pop_index]] += 1
+    elif type_of_file == "POOL":
+        first_pop = lines[header_index].find("POP")
+        if first_pop == -1:
+            # Pas de pool déclaré, on ne peut pas compter les individus par population
+            raise ValueError(
+                f"En-tête 'POOL' trouvé mais aucune population déclarée dans la ligne : "
+                f"{lines[header_index]!r}"
+            )
+        second_pop = lines[header_index].find("POP", first_pop + 1)
+        if second_pop == -1:
+            # Pas de pool déclaré, on ne peut pas compter les individus par population
+            raise ValueError(
+                f"En-tête 'POOL' trouvé mais aucune population déclarée dans la ligne : "
+                f"{lines[header_index]!r}"
+            )
+        for part in lines[header_index][second_pop:].split():
+            if part.startswith("POP"):
+                pop_name, haploid_sample_size = part.split(":")
+                counts[pop_name] = int(haploid_sample_size)
     return dict(counts)
 
 
@@ -173,6 +209,32 @@ def parse_maf_ratio(snp_file_path: str | Path) -> float:
         return float(maf_value)
     except ValueError:
         return 0.0
+
+
+def parse_mrc_ratio(snp_file_path: str | Path) -> float:
+    """Lit le MRC déclaré en tête de fichier .snp DIYABC, au format
+    '<MRC=xxx> ...' où xxx = MRC ).
+
+    Retourne le seuil MRC, reproduisant exactement DataC::readfile
+    (data.cpp:498-508) : 1 si le token '<MRC=' est absent de la première
+    ligne, ou si xxx n'est pas numérique (ex: 'hudson'), comme le ferait
+    atof() en C++ -- 1 veut dire "pas de filtre"
+    """
+
+    path = Path(snp_file_path)
+    with path.open() as f:
+        first_line = f.readline()
+
+    start = first_line.find("<MRC=")
+    if start == -1:
+        return 1
+
+    end = first_line.find(">", start + 5)
+    mrc_value = first_line[start + 5 : end]
+    try:
+        return float(mrc_value)
+    except ValueError:
+        return 1
 
 
 def population_index_to_name(snp_file_path: str | Path) -> dict[int, str]:
