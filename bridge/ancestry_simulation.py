@@ -40,6 +40,9 @@ from bridge.observed_data import (
 # convention existante plutôt qu'avec autre chose.
 _MAF_REJECTION_SEED_OFFSET = 2_000_000
 
+_BINOMIAL_SEED_OFFSET = (
+    3_000_000  # pour séparer le tirage binomial du tirage de mutation
+)
 # ── Construction de l'argument samples (un builder par type de locus) ──────
 
 
@@ -515,6 +518,47 @@ def simulate_snp_genotypes(
             for pop_name, sample_ids in population_layout
         }
         yield genotypes_by_population
+
+
+def simulate_poolseq_reads(
+    tree_sequences: Iterator[msprime.TreeSequence],
+    observed_reads_per_locus: list[dict[str, tuple[int, int]]],
+    seed: int,
+) -> Iterator[dict[str, tuple[int, int]]]:
+    """Simule les lectures Pool-seq pour chaque locus simulé,
+    en utilisant les génotypes simulés et le nombre de lectures observées par population.
+    `tree_sequences` : un itérateur de TreeSequence simulées pour chaque locus.
+    `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
+    `seed` : graine aléatoire pour la reproductibilité.
+    Retourne un itérateur de dictionnaires contenant le nombre de lectures dérivées et
+    ancestrales par population pour chaque locus.
+
+    A voir si zip pose problème, car longeur différente entre tree_sequences et observed_reads_per_locus,
+    sinon utiliser itertools.zip_longest(tree_sequence, obeserved_reads_per_locus, fillvalue=_SENTINEL)
+    """
+
+    rng = random.Random(seed)
+    binom_rng = np.random.default_rng(seed + _BINOMIAL_SEED_OFFSET)
+
+    for ts, observed_reads in zip(
+        tree_sequences, observed_reads_per_locus, strict=False
+    ):
+        tree = ts.first()
+        mutated_node = _draw_single_mutation_edge_child(ts, rng)
+        derived_samples = tree.samples(mutated_node)
+        population_layout = _population_layout(ts)
+
+        reads_by_population = {}
+        for pop_name, sample_ids in population_layout:
+            total_reads = observed_reads[pop_name][1]
+            pop_derived_count = len(set(derived_samples).intersection(sample_ids))
+            p = pop_derived_count / len(sample_ids) if len(sample_ids) > 0 else 0.0
+            if total_reads > 0:
+                derived_reads = binom_rng.binomial(total_reads, p)
+                reads_by_population[pop_name] = (derived_reads, total_reads)
+            else:
+                reads_by_population[pop_name] = (0, 0)
+        yield reads_by_population
 
 
 # ── Dispatch par type de locus (compose tout ce qui précède) ──────────────
