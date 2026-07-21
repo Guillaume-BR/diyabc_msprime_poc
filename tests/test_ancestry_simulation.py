@@ -19,6 +19,7 @@ from bridge.ancestry_simulation import (
     simulate_genotypes_for_locus_type,
     simulate_independent_loci,
     simulate_poolseq_reads,
+    simulate_poolseq_reads_with_mrc_filter,
     simulate_shared_ancestry_loci,
     simulate_snp_genotypes,
     with_maf_filter,
@@ -30,6 +31,7 @@ from bridge.observed_data import (
     coalescence_coefficient,
     observed_reads,
     parse_maf_ratio,
+    parse_mrc_ratio,
     parse_sex_ratio,
 )
 from bridge.pipeline import build_random_demography_for_scenario_index
@@ -429,3 +431,33 @@ def test_simulate_poolseq_reads(header_text_te4):
     assert (
         len(valeurs_pop1) > 1
     ), "simulate_poolseq_reads should produce different read counts for different loci"
+
+
+def test_simulate_poolseq_reads_with_mrc_filter(header_text_te4):
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te4, scenario_index=1, seed=42
+    )
+
+    n = 30
+    mrc = parse_mrc_ratio(OBSERVED_SNP_FILE_TE4)
+
+    results = list(
+        simulate_poolseq_reads_with_mrc_filter(
+            demography,
+            OBSERVED_SNP_FILE_TE4,
+            num_loci=n,
+            seed=12,
+        )
+    )
+
+    assert len(results) == n
+    assert results[0].keys() == {"pop1", "pop2", "pop3", "pop4"}
+    for reads_by_population in results:
+        sum_derived = sum(
+            derived_reads for derived_reads, _ in reads_by_population.values()
+        )
+        sum_total = sum(total_reads for _, total_reads in reads_by_population.values())
+        mrc_observed = (
+            min(sum_derived, sum_total - sum_derived) if sum_total > 0 else 0.0
+        )
+        assert mrc_observed >= mrc

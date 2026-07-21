@@ -15,7 +15,7 @@ import pytest
 REFERENCE_DIR = Path(__file__).parent.parent / "reference" / "human"
 GENERAL_BINARY_PATH = os.environ.get("DIYABC_GENERAL_PATH")
 
-OBSERVED_SNP_FILE = REFERENCE_DIR / "human_snp_all22chr_maf5.snp"
+OBSERVED_SNP_FILE_HUMAN = REFERENCE_DIR / "human_snp_all22chr_maf5.snp"
 OBSERVED_SNP_FILE_TE5 = (
     Path(__file__).parent.parent
     / "reference"
@@ -35,6 +35,13 @@ OBSERVED_SNP_FILE_TE3_SCENARIO1 = (
     / "pseudo_observed_DATASET_SNP_INDSEQ_4pops_Scenario3_MER.snp"
 )
 
+OBSERVED_SNP_FILE_TE4 = (
+    Path(__file__).parent.parent
+    / "reference"
+    / "toy_example4"
+    / "pseudo_observed_DATASET_SNP_POOLSEQ_4pops_Scenario3_MER.snp"
+)
+
 
 @pytest.fixture
 def header_text() -> str:
@@ -44,6 +51,11 @@ def header_text() -> str:
 @pytest.fixture
 def header_text_te5() -> str:
     return (OBSERVED_SNP_FILE_TE5.parent / "headerRF.txt").read_text()
+
+
+@pytest.fixture
+def header_text_te4() -> str:
+    return (OBSERVED_SNP_FILE_TE4.parent / "headerRF.txt").read_text()
 
 
 @pytest.fixture

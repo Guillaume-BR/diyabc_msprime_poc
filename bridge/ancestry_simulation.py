@@ -28,7 +28,9 @@ from bridge.observed_data import (
     coalescence_coefficient,
     count_samples_per_population,
     individual_sexes_per_population,
+    observed_reads,
     parse_maf_ratio,
+    parse_mrc_ratio,
     parse_sex_ratio,
     population_index_to_name,
 )
@@ -541,7 +543,7 @@ def simulate_poolseq_reads(
     rng = random.Random(seed)
     binom_rng = np.random.default_rng(seed + _BINOMIAL_SEED_OFFSET)
 
-    for ts, observed_reads in zip(
+    for ts, reads_observed in zip(
         tree_sequences, observed_reads_per_locus, strict=False
     ):
         tree = ts.first()
@@ -551,7 +553,7 @@ def simulate_poolseq_reads(
 
         reads_by_population = {}
         for pop_name, sample_ids in population_layout:
-            total_reads = observed_reads[pop_name][1]
+            total_reads = reads_observed[pop_name][1]
             pop_derived_count = len(set(derived_samples).intersection(sample_ids))
             p = pop_derived_count / len(sample_ids) if len(sample_ids) > 0 else 0.0
             if total_reads > 0:
@@ -744,3 +746,53 @@ def simulate_genotypes_for_locus_type(
         )
     else:
         raise NotImplementedError(f"Type de locus non supporté: {locus_type!r}")
+
+
+def simulate_poolseq_reads_with_mrc_filter(
+    demography: msprime.Demography,
+    snp_file_path: str,
+    num_loci: int,
+    seed: int,
+) -> Iterator[dict[str, tuple[int, int]]]:
+    """Point d'entrée unique pour un fichier PoolSeq -- pendant de
+    simulate_genotypes_for_locus_type (IndSeq), mais sans dispatch
+    multi-type : un fichier PoolSeq n'a jamais qu'un seul type de locus
+    déclaré (`<A>`, cf. `data.cpp:529` -- seule la classe de locus
+    autosomale diploïde est supportée pour PoolSeq côté DIYABC).
+
+    `demography` : la démographie de base, PAS encore rescalée -- comme
+    pour `<A>` en IndSeq, aucun rescale n'est nécessaire ici (ploidy=1
+    directement, contrairement à `<H>/<X>/<Y>/<M>`).
+
+    Compose, dans l'ordre :
+      - `parse_mrc_ratio(snp_file_path)` -- seuil MRC (défaut 1 si
+        `<MRC=...>` absent, PAS 0 comme pour MAF -- voir
+        `parse_mrc_ratio`).
+      - `build_samples_argument(snp_file_path)` -- déjà compatible
+        PoolSeq telle quelle (retourne la taille HAPLOÏDE du pool par
+        population, cf. `count_samples_per_population`/
+        `_parse_pool_header_line`) ; utilisée ici avec `ploidy=1`, donc
+        chaque unité compte directement pour une copie de gène, pas un
+        individu diploïde à multiplier par 2.
+      - `observed_reads(snp_file_path)` -- les lectures RÉELLEMENT
+        observées par locus/population, ensuite retraduites vers les
+        noms de population msprime (`"pop1"`, `"pop2"`...) via
+        `_reindex_reads_by_msprime_name` (les noms réels du fichier .snp
+        n'ont aucune raison de coïncider avec cette convention -- voir
+        son docstring). Tronquées aux `num_loci` premières entrées :
+        c'est CETTE couverture réelle, fixe par emplacement de locus,
+        qui sert de paramètre `n` au tirage binomial dans
+        `simulate_poolseq_reads`, jamais retirée au hasard (voir
+        `with_mrc_filter`/`simulate_poolseq_reads`).
+      - `with_mrc_filter(..., ploidy=1)` -- simulation + rejet-et-
+        resimule si le critère MRC (min des reads dérivés/ancestraux,
+        toutes populations combinées) n'est pas atteint.
+    """
+    mrc = parse_mrc_ratio(snp_file_path)
+    samples = build_samples_argument(snp_file_path)
+    observed_reads_per_locus = _reindex_reads_by_msprime_name(
+        observed_reads(snp_file_path), snp_file_path
+    )[:num_loci]
+    return with_mrc_filter(
+        demography, samples, num_loci, mrc, observed_reads_per_locus, seed, ploidy=1
+    )
