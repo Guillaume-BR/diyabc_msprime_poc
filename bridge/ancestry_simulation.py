@@ -33,16 +33,17 @@ from bridge.observed_data import (
     population_index_to_name,
 )
 
-# Offset de graine dédié à la boucle de rejet MAF, distinct du +1_000_000
+# Offset de graine dédié à la boucle de rejet MAF et du rejet MRC, distinct du +1_000_000
 # déjà utilisé partout ailleurs dans le projet pour séparer la graine de
 # mutation de la graine de généalogie (voir notebooks/scripts) -- ne
 # jamais réutiliser 1_000_000 ici, ça collisionnerait avec cette
 # convention existante plutôt qu'avec autre chose.
 _MAF_REJECTION_SEED_OFFSET = 2_000_000
+_MRC_REJECTION_SEED_OFFSET = 3_000_000
 
-_BINOMIAL_SEED_OFFSET = (
-    3_000_000  # pour séparer le tirage binomial du tirage de mutation
-)
+# pour séparer le tirage binomial du tirage de mutation
+_BINOMIAL_SEED_OFFSET = 4_000_000
+
 # ── Construction de l'argument samples (un builder par type de locus) ──────
 
 
@@ -559,6 +560,88 @@ def simulate_poolseq_reads(
             else:
                 reads_by_population[pop_name] = (0, 0)
         yield reads_by_population
+
+
+def _reindex_reads_by_msprime_name(
+    observed_reads_per_locus: list[dict[str, tuple[int, int]]],
+    snp_file_path: str,
+) -> list[dict[str, tuple[int, int]]]:
+    """Reindexe les lectures observées par locus pour correspondre aux noms de population utilisés par msprime.
+    `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
+    `snp_file_path` : chemin vers le fichier .snp pour obtenir la correspondance des noms de population.
+    Retourne une liste de dictionnaires avec les noms de population msprime comme clés.
+    """
+    index_to_name = population_index_to_name(snp_file_path)
+    real_name_to_msprime_name = {
+        name: f"pop{index}" for index, name in index_to_name.items()
+    }
+    return [
+        {
+            real_name_to_msprime_name[pop_name]: reads
+            for pop_name, reads in locus_reads.items()
+        }
+        for locus_reads in observed_reads_per_locus
+    ]
+
+
+def with_mrc_filter(
+    demography: msprime.Demography,
+    samples: dict[str, int] | list[msprime.SampleSet],
+    num_loci: int,
+    mrc: float,
+    observed_reads_per_locus: list[dict[str, tuple[int, int]]],
+    seed: int,
+    ploidy: int = 1,
+) -> Iterator[dict[str, tuple[int, int]]]:
+    """Simule des loci SNP indépendants avec filtre MRC (minimum read count).
+    Si le nombre de lectures dérivées est strictement inférieur à `mrc`, on rejette ce locus et on en resimule un nouveau.
+    Reproduit le comportement de `ParticleC::mrc_reached`.
+
+    `mrc` doit déjà être résolu (ex: via `parse_mrc_ratio` sur le fichier .snp observé).
+
+    `ploidy` : transmis tel quel à `simulate_independent_loci`.
+
+    `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
+    """
+
+    if mrc <= 0:
+        tree_sequences = simulate_independent_loci(
+            demography, samples, num_loci=num_loci, seed=seed, ploidy=ploidy
+        )
+        yield from simulate_poolseq_reads(
+            tree_sequences, observed_reads_per_locus, seed=seed
+        )
+        return
+    for locus_index in range(num_loci):
+        attempt = 0
+        while True:
+            ts = next(
+                simulate_independent_loci(
+                    demography, samples, num_loci=1, seed=seed + attempt, ploidy=ploidy
+                )
+            )
+            reads_by_population = next(
+                simulate_poolseq_reads(
+                    [ts],
+                    observed_reads_per_locus[locus_index : locus_index + 1],
+                    seed=seed + attempt + _MRC_REJECTION_SEED_OFFSET,
+                )
+            )
+            sum_derived = sum(
+                derived_reads for derived_reads, _ in reads_by_population.values()
+            )
+            sum_total = sum(
+                total_reads for _, total_reads in reads_by_population.values()
+            )
+            mrc_observed = (
+                min(sum_derived, sum_total - sum_derived) if sum_total > 0 else 0.0
+            )
+
+            if mrc_observed >= mrc:
+                yield reads_by_population
+                break
+
+            attempt += 1
 
 
 # ── Dispatch par type de locus (compose tout ce qui précède) ──────────────

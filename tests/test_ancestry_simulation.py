@@ -5,25 +5,30 @@ polymorphe)."""
 
 import pytest
 from conftest import (
-    OBSERVED_SNP_FILE,
+    OBSERVED_SNP_FILE_HUMAN,
     OBSERVED_SNP_FILE_TE3_SCENARIO1,
+    OBSERVED_SNP_FILE_TE4,
     OBSERVED_SNP_FILE_TE5,
 )
 
 from bridge.ancestry_simulation import (
+    _reindex_reads_by_msprime_name,
     build_male_only_samples_argument,
     build_samples_argument,
     build_sex_stratified_samples_argument,
     simulate_genotypes_for_locus_type,
     simulate_independent_loci,
+    simulate_poolseq_reads,
     simulate_shared_ancestry_loci,
     simulate_snp_genotypes,
     with_maf_filter,
     with_maf_filter_shared_ancestry,
+    with_mrc_filter,
 )
 from bridge.demography_builder import rescale_demography
 from bridge.observed_data import (
     coalescence_coefficient,
+    observed_reads,
     parse_maf_ratio,
     parse_sex_ratio,
 )
@@ -38,7 +43,7 @@ def test_simulate_independent_loci_scenario1(header_text):
     demography, _ = build_random_demography_for_scenario_index(
         header_text, scenario_index=1, seed=42
     )
-    samples = build_samples_argument(OBSERVED_SNP_FILE)
+    samples = build_samples_argument(OBSERVED_SNP_FILE_HUMAN)
 
     # 4 populations, 30 individus chacune attendus
     assert samples == {"pop1": 30, "pop2": 30, "pop3": 30, "pop4": 30}
@@ -67,7 +72,7 @@ def test_simulate_snp_genotypes_scenario1(header_text):
     demography, _ = build_random_demography_for_scenario_index(
         header_text, scenario_index=1, seed=42
     )
-    samples = build_samples_argument(OBSERVED_SNP_FILE)
+    samples = build_samples_argument(OBSERVED_SNP_FILE_HUMAN)
 
     num_loci = 20
     tree_sequences = simulate_independent_loci(
@@ -90,7 +95,7 @@ def test_simulate_snp_genotypes_grouped_by_population(header_text):
     demography, _ = build_random_demography_for_scenario_index(
         header_text, scenario_index=1, seed=42
     )
-    samples = build_samples_argument(OBSERVED_SNP_FILE)
+    samples = build_samples_argument(OBSERVED_SNP_FILE_HUMAN)
 
     num_loci = 10
     tree_sequences = simulate_independent_loci(
@@ -117,7 +122,9 @@ def test_build_sex_stratified_samples_argument():
     """
 
     with pytest.raises(ValueError, match="sexe inconnu"):
-        build_sex_stratified_samples_argument(OBSERVED_SNP_FILE)  # sexe non renseigné
+        build_sex_stratified_samples_argument(
+            OBSERVED_SNP_FILE_HUMAN
+        )  # sexe non renseigné
 
     liste_samples = build_sex_stratified_samples_argument(OBSERVED_SNP_FILE_TE5)
     assert len(liste_samples) == 6  # 3 populations x 2 sexes (M/F)
@@ -134,7 +141,7 @@ def test_build_male_only_samples_argument():
     besoin que d'un ploidy uniforme=1 parmi les mâles, pas d'hétérogénéité
     au sein d'une population."""
     with pytest.raises(ValueError, match="sexe inconnu"):
-        build_male_only_samples_argument(OBSERVED_SNP_FILE)  # sexe non renseigné
+        build_male_only_samples_argument(OBSERVED_SNP_FILE_HUMAN)  # sexe non renseigné
 
     samples = build_male_only_samples_argument(OBSERVED_SNP_FILE_TE5)
     assert samples == {"pop1": 10, "pop2": 10, "pop3": 10}
@@ -144,7 +151,7 @@ def test_simulate_shared_ancestry_loci(header_text):
     demography, _ = build_random_demography_for_scenario_index(
         header_text, scenario_index=1, seed=42
     )
-    samples = build_samples_argument(OBSERVED_SNP_FILE)
+    samples = build_samples_argument(OBSERVED_SNP_FILE_HUMAN)
     shared_ancestry = simulate_shared_ancestry_loci(
         demography=demography, samples=samples, num_loci=5, seed=42, ploidy=1
     )
@@ -194,7 +201,7 @@ def test_with_maf_filter_no_filter_matches_direct_call(header_text):
     demography, _ = build_random_demography_for_scenario_index(
         header_text, scenario_index=1, seed=42
     )
-    samples = build_samples_argument(OBSERVED_SNP_FILE)
+    samples = build_samples_argument(OBSERVED_SNP_FILE_HUMAN)
     num_loci = 10
 
     direct = list(
@@ -340,3 +347,85 @@ def test_simulate_genotypes_for_locus_type_maf_filter_y_m(header_text_te3_scenar
         assert len(loci) == num_loci
         for locus_genotypes in loci:
             assert _observed_maf(locus_genotypes) >= 0.05
+
+
+def test_reindex_reads_by_msprime_name():
+    """Vérifie que reindex_reads_by_msprime_name renvoie bien un dict
+    {nom_population: (derived_reads, total_reads)} avec les bons noms de
+    populations, et que le nombre total de reads est correct."""
+    observed_reads_te4 = observed_reads(OBSERVED_SNP_FILE_TE4)
+    reindexed = _reindex_reads_by_msprime_name(
+        observed_reads_te4, OBSERVED_SNP_FILE_TE4
+    )[0]
+    assert set(reindexed.keys()) == {"pop1", "pop2", "pop3", "pop4"}
+
+
+def test_with_mrc_filter(header_text_te4):
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te4, scenario_index=1, seed=42
+    )
+    samples = build_samples_argument(OBSERVED_SNP_FILE_TE4)
+    num_loci = 10
+    mrc = 5
+    observed_reads_per_locus = observed_reads(OBSERVED_SNP_FILE_TE4)
+    observed_reads_per_locus = _reindex_reads_by_msprime_name(
+        observed_reads_per_locus, OBSERVED_SNP_FILE_TE4
+    )
+    loci = list(
+        with_mrc_filter(
+            demography,
+            samples,
+            num_loci,
+            mrc,
+            observed_reads_per_locus,
+            seed=7,
+            ploidy=1,
+        )
+    )
+    assert len(loci) == num_loci
+    for reads_by_population in loci:
+        sum_derived = sum(
+            derived_reads for derived_reads, _ in reads_by_population.values()
+        )
+        sum_total = sum(total_reads for _, total_reads in reads_by_population.values())
+        mrc_observed = (
+            min(sum_derived, sum_total - sum_derived) if sum_total > 0 else 0.0
+        )
+        assert mrc_observed >= mrc
+
+
+def test_simulate_poolseq_reads(header_text_te4):
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te4, scenario_index=1, seed=42
+    )
+    observed_reads_per_locus = observed_reads(OBSERVED_SNP_FILE_TE4)
+    observed_reads_per_locus = _reindex_reads_by_msprime_name(
+        observed_reads_per_locus, OBSERVED_SNP_FILE_TE4
+    )
+
+    n = 30
+
+    def run():
+        tree_sequences = simulate_independent_loci(
+            demography,
+            build_samples_argument(OBSERVED_SNP_FILE_TE4),
+            num_loci=n,
+            seed=123,
+            ploidy=1,
+        )
+        return list(
+            simulate_poolseq_reads(
+                tree_sequences, observed_reads_per_locus[:n], seed=12
+            )
+        )
+
+    results1 = run()
+    results2 = run()
+    assert (
+        results1 == results2
+    ), "simulate_poolseq_reads should be deterministic with the same seed"
+
+    valeurs_pop1 = {r["pop1"] for r in results1}
+    assert (
+        len(valeurs_pop1) > 1
+    ), "simulate_poolseq_reads should produce different read counts for different loci"
