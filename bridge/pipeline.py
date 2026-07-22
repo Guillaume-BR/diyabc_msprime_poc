@@ -28,15 +28,20 @@ import msprime
 from bridge.ancestry_simulation import (
     build_samples_argument,
     simulate_genotypes_for_locus_type,
+    simulate_poolseq_reads_with_mrc_filter,
 )
 from bridge.demography_builder import build_demography
 from bridge.loci_parser import parse_loci_description
+from bridge.observed_data import detect_snp_file_type
 from bridge.parameter_sampling import draw_parameter_values
 from bridge.prior_parser import parse_priors
 from bridge.scenario_parser import parse_header_scenarios
 from bridge.scenario_types import Scenario
 from bridge.stats_group_parser import parse_requested_statistic_names
-from bridge.summary_statistics import compute_all_statistics
+from bridge.summary_statistics import (
+    compute_all_statistics,
+    compute_all_statistics_poolseq,
+)
 
 # Décalage fixe et bien séparé par type de locus, à ajouter à la seed de
 # base avant d'appeler simulate_genotypes_for_locus_type : réutiliser la
@@ -293,16 +298,35 @@ def compute_summary_statistics(
     snp_filename = header_text.splitlines()[0].strip()
     snp_path = reference_directory / snp_filename
 
-    genotypes_per_locus, values = run_poc_for_directory(
-        reference_directory, scenario_index=scenario_index, num_loci=num_loci, seed=seed
-    )
-    genotypes_list = list(genotypes_per_locus)
+    if detect_snp_file_type(snp_path) == "IND":
+        genotypes_per_locus, values = run_poc_for_directory(
+            reference_directory,
+            scenario_index=scenario_index,
+            num_loci=num_loci,
+            seed=seed,
+        )
+        genotypes_list = list(genotypes_per_locus)
 
-    population_names = _population_names(genotypes_list, snp_path)
+        population_names = _population_names(genotypes_list, snp_path)
+        summary_stats = compute_all_statistics(genotypes_list, population_names)
+        summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
+    else:
+        total_loci_poolseq = parse_loci_description(header_text).total_loci["A"]
+        demography, values = build_random_demography_for_scenario_index(
+            header_text, scenario_index, seed
+        )
 
-    summary_stats = compute_all_statistics(genotypes_list, population_names)
-    summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
-
+        reads_list = list(
+            simulate_poolseq_reads_with_mrc_filter(
+                demography, snp_path, total_loci_poolseq, seed
+            )
+        )
+        pool_sizes = build_samples_argument(snp_path)
+        population_names = list(pool_sizes.keys())
+        summary_stats = compute_all_statistics_poolseq(
+            reads_list, population_names, pool_sizes
+        )
+        summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
     return summary_stats, values
 
 
@@ -377,12 +401,30 @@ def compute_summary_statistics_from_values(
     snp_filename = header_text.splitlines()[0].strip()
     snp_path = reference_directory / snp_filename
 
-    genotypes_per_locus = run_poc_for_directory_with_values(
-        reference_directory, scenario_index, values, num_loci=num_loci, seed=seed
-    )
-    genotypes_list = list(genotypes_per_locus)
+    if detect_snp_file_type(snp_path) == "IND":
+        genotypes_per_locus = run_poc_for_directory_with_values(
+            reference_directory, scenario_index, values, num_loci=num_loci, seed=seed
+        )
+        genotypes_list = list(genotypes_per_locus)
 
-    population_names = _population_names(genotypes_list, snp_path)
+        population_names = _population_names(genotypes_list, snp_path)
+        summary_stats = compute_all_statistics(genotypes_list, population_names)
+        summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
+    else:
+        total_loci_poolseq = parse_loci_description(header_text).total_loci["A"]
+        demography = build_demography_for_scenario_index(
+            header_text, scenario_index, values
+        )
 
-    summary_stats = compute_all_statistics(genotypes_list, population_names)
-    return _filter_statistics(summary_stats, header_text, stats_filter)
+        reads_list = list(
+            simulate_poolseq_reads_with_mrc_filter(
+                demography, snp_path, total_loci_poolseq, seed
+            )
+        )
+        pool_sizes = build_samples_argument(snp_path)
+        population_names = list(pool_sizes.keys())
+        summary_stats = compute_all_statistics_poolseq(
+            reads_list, population_names, pool_sizes
+        )
+        summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
+    return summary_stats
