@@ -1,20 +1,31 @@
 """
-Lecture des données observées DIYABC (fichiers .snp, format individu par
-ligne) -- comptage du nombre d'individus par population (nécessaire pour
-savoir combien d'échantillons demander à msprime.sim_ancestry()), lecture
-du sex-ratio et du sexe par individu (nécessaires pour les loci
-<X>/<Y>/<M>, dont la ploïdie et le coefficient de coalescence dépendent du
-sexe -- voir ParticleC::calploidy et DataC::cal_coeffcoal), et lecture du
-seuil MAF ("<MAF=N%>" ou "<MAF=hudson>" en tête de fichier, via
-parse_maf_ratio) consommé par with_maf_filter/with_maf_filter_shared_
-ancestry (ancestry_simulation.py) pour décider s'il faut rejeter-et-
-resimuler un locus sous le seuil.
+Lecture des données observées DIYABC (fichiers .snp, IndSeq -- format
+individu par ligne -- ou PoolSeq -- format pool par population, un locus
+par ligne, voir detect_snp_file_type) -- comptage du nombre d'individus
+(IndSeq) ou taille haploïde des pools (PoolSeq) par population
+(nécessaire pour savoir combien d'échantillons demander à
+msprime.sim_ancestry()), lecture du sex-ratio et du sexe par individu
+(nécessaires pour les loci <X>/<Y>/<M>, dont la ploïdie et le
+coefficient de coalescence dépendent du sexe -- voir ParticleC::calploidy
+et DataC::cal_coeffcoal), et lecture des seuils MAF ("<MAF=N%>" ou
+"<MAF=hudson>", via parse_maf_ratio) et MRC ("<MRC=N>", via
+parse_mrc_ratio, PoolSeq uniquement) consommés par with_maf_filter/
+with_maf_filter_shared_ancestry/with_mrc_filter (ancestry_simulation.py)
+pour décider s'il faut rejeter-et-resimuler un locus sous le seuil.
 
-Référence : src-JMC-C++/data.cpp (détection du format "IND SEX POP",
-lecture du sex-ratio "<NM=xNF>" et du MAF en tête de fichier).
-Ce module ne lit PAS les génotypes eux-mêmes : on simule des données
-artificielles avec msprime, on ne réutilise jamais les données observées
-réelles dans le pipeline de simulation.
+Référence : src-JMC-C++/data.cpp (détection du format "IND SEX POP" vs
+"POOL", lecture du sex-ratio "<NM=xNF>", du MAF et du MRC en tête de
+fichier).
+
+Ce module ne lit PAS les génotypes IndSeq eux-mêmes : on simule des
+données artificielles avec msprime, sans jamais réutiliser les
+génotypes observés réels dans le pipeline de simulation. Ce n'est PLUS
+vrai pour PoolSeq : `observed_reads` lit les comptages de lectures
+RÉELLEMENT observés, et leur profondeur totale (`nreads_total`) est
+réutilisée telle quelle comme paramètre `n` du tirage binomial des
+lectures simulées (voir `simulate_poolseq_reads`,
+`ancestry_simulation.py`) -- seule la répartition allèle1/allèle2 est
+simulée, jamais la couverture elle-même.
 """
 
 from collections import Counter
@@ -270,6 +281,19 @@ def observed_reads(snp_file_path: str | Path) -> list[dict[str, tuple[int, int]]
     dans le fichier. Chaque tuple contient le nombre de lectures pour l'allèle 1 et
     le nombre total de lectures (allèle 1 + allèle 2) pour cette population.
     On retourne une ligne de la forme POP1: (nreads1, nreads1 + nreads2), POP2: (nreads1, nreads1 + nreads2), ...
+
+    Purge les loci sous le seuil MRC (`<MRC=N>`, via parse_mrc_ratio) --
+    reproduit `DataC::purgelocMRCPOOLSEQ` (data.cpp), qui élimine ces
+    loci de l'observé AU CHARGEMENT du fichier, avant toute utilisation
+    (simulation ou calcul de statobs). Le critère est le même que
+    `with_mrc_filter`/`mrcreached` : min(somme reads allèle1, somme
+    reads allèle2), TOUTES populations combinées, doit être >= MRC.
+    Sans cette purge, les loci quasi-monomorphes (très peu de lectures
+    pour l'allèle minoritaire, souvent des erreurs de séquençage) restent
+    inclus et faussent silencieusement toutes les statistiques en aval
+    -- confirmé empiriquement le 22/07/2026 : 130/130 stats divergaient
+    de >1% par rapport au vrai statobs.txt de DIYABC sans cette purge,
+    0/130 avec.
     """
     if detect_snp_file_type(snp_file_path) != "POOL":
         raise ValueError(
@@ -292,7 +316,18 @@ def observed_reads(snp_file_path: str | Path) -> list[dict[str, tuple[int, int]]
             nreads2 = int(fields[2 * i + 1])
             counts_by_population[pop_name] = (nreads1, nreads1 + nreads2)
         rows.append(counts_by_population)
-    return rows
+
+    mrc = parse_mrc_ratio(snp_file_path)
+    if mrc <= 0:
+        return rows
+
+    def _passes_mrc(locus_reads: dict[str, tuple[int, int]]) -> bool:
+        sum_derived = sum(derived for derived, _ in locus_reads.values())
+        sum_total = sum(total for _, total in locus_reads.values())
+        minor_allele_count = min(sum_derived, sum_total - sum_derived)
+        return minor_allele_count >= mrc
+
+    return [locus_reads for locus_reads in rows if _passes_mrc(locus_reads)]
 
 
 def coalescence_coefficient(locus_type: str, sex_ratio: float) -> float:

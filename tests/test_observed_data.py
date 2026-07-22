@@ -83,13 +83,21 @@ def test_parse_mrc_ratio():
 def test_observed_reads():
     """Vérifie que le parsing du fichier snp renvoie bien le nombre de reads
     observés par population, pour les fichiers POOLSEQ toy_example4 et
-    toy_example5."""
+    toy_example5, APRÈS purge des loci sous le seuil MRC (<MRC=5> ici) --
+    reproduit DataC::purgelocMRCPOOLSEQ, qui élimine ces loci au
+    chargement, avant toute utilisation. Le tout premier locus BRUT du
+    fichier ({"POP1": (0, 93), "POP2": (0, 100), "POP3": (1, 116),
+    "POP4": (0, 139)}) a min(somme reads1, somme reads2) = min(1, 447) =
+    1 < 5 -- il doit donc être absent du résultat ; le premier élément
+    retourné est le premier locus du fichier qui passe réellement le
+    seuil."""
     observed_reads_te4 = observed_reads(OBSERVED_SNP_FILE_TE4)
+    assert len(observed_reads_te4) == 14388
     assert observed_reads_te4[0] == {
-        "POP1": (0, 93),
-        "POP2": (0, 100),
-        "POP3": (1, 116),
-        "POP4": (0, 139),
+        "POP1": (52, 112),
+        "POP2": (29, 95),
+        "POP3": (45, 106),
+        "POP4": (18, 93),
     }
     with pytest.raises(ValueError, match="format POOLSEQ"):
         observed_reads(OBSERVED_SNP_FILE_HUMAN)  # fichier INDSEQ
