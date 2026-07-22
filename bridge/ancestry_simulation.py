@@ -548,13 +548,20 @@ def simulate_poolseq_reads(
     ):
         tree = ts.first()
         mutated_node = _draw_single_mutation_edge_child(ts, rng)
-        derived_samples = tree.samples(mutated_node)
+        # set(...) impératif ICI (pas dans la boucle plus bas) : tree.samples()
+        # renvoie un générateur, épuisé après la 1ère population -- sans ce
+        # set() immédiat, pop_derived_count tombait silencieusement à 0 pour
+        # TOUTES les populations sauf la première de population_layout
+        # (confirmé empiriquement le 22/07/2026 : seule pop1 montrait jamais
+        # de variation dans tout un reftable simulé). simulate_snp_genotypes
+        # fait déjà ce set() immédiat, c'est le bon modèle à suivre.
+        derived_samples = set(tree.samples(mutated_node))
         population_layout = _population_layout(ts)
 
         reads_by_population = {}
         for pop_name, sample_ids in population_layout:
             total_reads = reads_observed[pop_name][1]
-            pop_derived_count = len(set(derived_samples).intersection(sample_ids))
+            pop_derived_count = len(derived_samples.intersection(sample_ids))
             p = pop_derived_count / len(sample_ids) if len(sample_ids) > 0 else 0.0
             if total_reads > 0:
                 derived_reads = binom_rng.binomial(total_reads, p)
@@ -615,18 +622,30 @@ def with_mrc_filter(
         )
         return
     for locus_index in range(num_loci):
+        # seed_for_locus dédié : sans lui, `seed + attempt` (tentative 0, 1, 2...)
+        # est IDENTIQUE pour tous les locus_index -- deux loci qui ont besoin du
+        # même nombre de tentatives pour passer le filtre MRC tirent alors
+        # EXACTEMENT le même arbre/mutation, écrasant la diversité entre loci
+        # (confirmé empiriquement le 22/07/2026 : des loci différents donnaient
+        # des p identiques). 1000 = marge largement suffisante par locus, jamais
+        # atteinte en pratique par le nombre de tentatives de rejet MRC.
+        seed_for_locus = seed + locus_index * 1_000
         attempt = 0
         while True:
             ts = next(
                 simulate_independent_loci(
-                    demography, samples, num_loci=1, seed=seed + attempt, ploidy=ploidy
+                    demography,
+                    samples,
+                    num_loci=1,
+                    seed=seed_for_locus + attempt,
+                    ploidy=ploidy,
                 )
             )
             reads_by_population = next(
                 simulate_poolseq_reads(
                     [ts],
                     observed_reads_per_locus[locus_index : locus_index + 1],
-                    seed=seed + attempt + _MRC_REJECTION_SEED_OFFSET,
+                    seed=seed_for_locus + attempt + _MRC_REJECTION_SEED_OFFSET,
                 )
             )
             sum_derived = sum(
@@ -761,19 +780,50 @@ def simulate_poolseq_reads_with_mrc_filter(
     autosomale diploïde est supportée pour PoolSeq côté DIYABC).
 
     `demography` : la démographie de base, PAS encore rescalée -- comme
-    pour `<A>` en IndSeq, aucun rescale n'est nécessaire ici (ploidy=1
-    directement, contrairement à `<H>/<X>/<Y>/<M>`).
+    pour `<A>` en IndSeq, aucun rescale de Ne n'est nécessaire ici (même
+    `coeffcoal` que l'IndSeq `<A>` standard, cf. `data.cpp:1589-1603` --
+    PoolSeq a `type=15`, `15 % 5 == 0`, donc tombe dans exactement la
+    même branche que le cas autosomal diploïde standard).
+
+    ploidy=2, PAS ploidy=1 (corrigé le 22/07/2026 -- voir
+    notes/exploration.md) : DIYABC construit l'arbre de généalogie
+    PoolSeq en réutilisant tel quel le chemin `<A>` standard --
+    `HAPLOID_SAMPLE_SIZE` (déclaré dans le fichier .snp, `POOL
+    pop:N`) est le nombre de COPIES DE GÈNES à échantillonner, mais le
+    Ne (N1/N2/...) reste interprété en individus DIPLOÏDES, exactement
+    comme `<A>` IndSeq (`particuleC.cpp:1185`, `data.cpp:970-974`,
+    confirmé par exploration du code source réel -- aucune branche de
+    simulation généalogique spécifique à PoolSeq n'existe, seule la
+    lecture du fichier et le tirage des reads le sont). Passer
+    `samples=build_samples_argument(...)` (comptes haploïdes) avec
+    `ploidy=1` -- ce qui a été fait par erreur avant cette correction --
+    revient à traiter le Ne comme s'il était HAPLOÏDE : la coalescence
+    devient deux fois plus rapide en unités de générations réelles pour
+    le MÊME Ne déclaré, ce qui gonfle artificiellement toute
+    différenciation entre populations (FST/F3/F4 ~60-140% trop élevés,
+    confirmé empiriquement sur toy_example4 en comparaison appariée
+    contre un vrai reftable DIYABC) sans affecter les statistiques
+    mono-population (HW/ML1, qui ne dépendent pas de la vitesse relative
+    de coalescence entre populations). D'où le //2 ci-dessous : on donne
+    à msprime un compte d'INDIVIDUS (`ploidy=2` double automatiquement
+    en lignées), pas un compte de lignées déjà doublé -- le nombre total
+    de lignées échantillonnées (donc la taille de l'arbre) reste
+    identique (`HAPLOID_SAMPLE_SIZE`), seule la vitesse de coalescence
+    relative au Ne change, pour retomber sur la même convention que
+    l'IndSeq `<A>`.
 
     Compose, dans l'ordre :
       - `parse_mrc_ratio(snp_file_path)` -- seuil MRC (défaut 1 si
         `<MRC=...>` absent, PAS 0 comme pour MAF -- voir
         `parse_mrc_ratio`).
-      - `build_samples_argument(snp_file_path)` -- déjà compatible
-        PoolSeq telle quelle (retourne la taille HAPLOÏDE du pool par
-        population, cf. `count_samples_per_population`/
-        `_parse_pool_header_line`) ; utilisée ici avec `ploidy=1`, donc
-        chaque unité compte directement pour une copie de gène, pas un
-        individu diploïde à multiplier par 2.
+      - `build_samples_argument(snp_file_path)` -- retourne la taille
+        HAPLOÏDE du pool par population (cf.
+        `count_samples_per_population`/`_parse_pool_header_line`) --
+        divisée par 2 ici pour obtenir un compte d'INDIVIDUS diploïdes
+        (voir ci-dessus) ; utilisée TELLE QUELLE (non divisée) partout
+        ailleurs, notamment comme `pool_sizes` dans
+        `summary_statistics.py` (la correction de biais de lecture Q1
+        a besoin du vrai `HAPLOID_SAMPLE_SIZE`, pas de sa moitié).
       - `observed_reads(snp_file_path)` -- les lectures RÉELLEMENT
         observées par locus/population, ensuite retraduites vers les
         noms de population msprime (`"pop1"`, `"pop2"`...) via
@@ -784,15 +834,16 @@ def simulate_poolseq_reads_with_mrc_filter(
         qui sert de paramètre `n` au tirage binomial dans
         `simulate_poolseq_reads`, jamais retirée au hasard (voir
         `with_mrc_filter`/`simulate_poolseq_reads`).
-      - `with_mrc_filter(..., ploidy=1)` -- simulation + rejet-et-
+      - `with_mrc_filter(..., ploidy=2)` -- simulation + rejet-et-
         resimule si le critère MRC (min des reads dérivés/ancestraux,
         toutes populations combinées) n'est pas atteint.
     """
     mrc = parse_mrc_ratio(snp_file_path)
-    samples = build_samples_argument(snp_file_path)
+    haploid_pool_sizes = build_samples_argument(snp_file_path)
+    samples = {pop: count // 2 for pop, count in haploid_pool_sizes.items()}
     observed_reads_per_locus = _reindex_reads_by_msprime_name(
         observed_reads(snp_file_path), snp_file_path
     )[:num_loci]
     return with_mrc_filter(
-        demography, samples, num_loci, mrc, observed_reads_per_locus, seed, ploidy=1
+        demography, samples, num_loci, mrc, observed_reads_per_locus, seed, ploidy=2
     )
