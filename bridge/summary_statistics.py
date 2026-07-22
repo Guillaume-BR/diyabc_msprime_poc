@@ -98,6 +98,34 @@ def _prepare_matrices(
     return counts, ns, freq0, freq1
 
 
+def _prepare_matrices_poolseq(
+    reads_per_locus: list[dict[str, tuple[int, int]]], population_names: list[str]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Construit les matrices (npop, nloci) de comptes et tailles d'échantillon pour POOLSEQ.
+
+    Retourne (counts, ns) :
+      counts[i, l] = nb d'allèles dérivés (1) observés dans pop i au locus l
+      ns[i, l]     = nb total de reads observés dans pop i au locus l
+    """
+    counts = np.array(
+        [
+            [reads_per_locus[loc][p][0] for loc in range(len(reads_per_locus))]
+            for p in population_names
+        ],
+        dtype=float,
+    )
+    ns = np.array(
+        [
+            [reads_per_locus[loc][p][1] for loc in range(len(reads_per_locus))]
+            for p in population_names
+        ],
+        dtype=float,
+    )
+    freq1 = counts / ns
+    freq0 = 1.0 - freq1
+    return counts, ns, freq0, freq1
+
+
 def _forward_fill(
     values: np.ndarray, valid: np.ndarray, fill: float = 0.0
 ) -> np.ndarray:
@@ -253,6 +281,52 @@ def compute_HW_HB(
     return results
 
 
+def compute_HW_HB_poolseq(
+    reads_per_locus: list[dict[str, tuple[int, int]]],
+    population_names: list[str],
+    pool_sizes: dict[str, int],
+    _mats=None,
+) -> dict[str, float]:
+    results = {}
+    (
+        counts,
+        ns,
+        _,
+        _,
+    ) = _mats or _prepare_matrices_poolseq(reads_per_locus, population_names)
+    npop = len(population_names)
+    ## Calcul de HWm et HWv pour chaque population
+    for i in range(npop):
+        r1 = counts[i]
+        c1 = ns[i]
+        r2 = c1 - r1
+        s1 = r1 * (r1 - 1)
+        s2 = r2 * (r2 - 1)
+        np_i = pool_sizes[population_names[i]]
+        q1 = ((np_i / (c1 * (c1 - 1))) * (s1 + s2) - 1) / (np_i - 1)
+        hw = 1 - q1
+        results[f"HWm_{i + 1}"] = float(hw.mean())
+        results[f"HWv_{i + 1}"] = float(hw.var(ddof=1))
+
+    # Calcul de HBm et HBv pour chaque paire de populations
+    for i in range(npop):
+        for j in range(i + 1, npop):
+            r11 = counts[i]
+            c1 = ns[i]
+            r12 = c1 - r11
+            r21 = counts[j]
+            c2 = ns[j]
+            r22 = c2 - r21
+            q2 = (r11 * r21 + r12 * r22) / (c1 * c2)
+            hb = 1 - q2
+
+            key = f"{i + 1}.{j + 1}"
+            results[f"HBm_{key}"] = float(hb.mean())
+            results[f"HBv_{key}"] = float(hb.var(ddof=1))
+
+    return results
+
+
 # ---------------------------------------------------------------------------
 # FST1 : FST population-spécifique (cal_snfsti)
 # ---------------------------------------------------------------------------
@@ -287,6 +361,59 @@ def compute_FST1(
     for i in range(npop):
         hwm = float(hw[i].mean())
         hwv = float(hw[i].var(ddof=1))
+        if hbmoy != 0:
+            results[f"FST1m_{i + 1}"] = 1.0 - hwm / hbmoy
+            results[f"FST1v_{i + 1}"] = hwv / (hbmoy**2)
+        else:
+            results[f"FST1m_{i + 1}"] = float("nan")
+            results[f"FST1v_{i + 1}"] = float("nan")
+
+    return results
+
+
+def compute_FST1_poolseq(
+    reads_per_locus: list[dict[str, tuple[int, int]]],
+    population_names: list[str],
+    pool_sizes: dict[str, int],
+    _mats=None,
+) -> dict[str, float]:
+    """Variante PoolSeq de compute_FST1 (cal_snfsti n'a pas de branche
+    type==3 : elle combine juste des HW/HB déjà calculés). Duplique donc
+    ici la formule q1/q2 poolseq de compute_HW_HB_poolseq, exactement
+    comme compute_FST1 duplique déjà la formule q1/q2 IndSeq plutôt que
+    d'appeler compute_HW_HB -- même style que l'existant.
+    """
+    counts, ns, _, _ = _mats or _prepare_matrices_poolseq(
+        reads_per_locus, population_names
+    )
+    npop = len(population_names)
+
+    hw_by_pop = []
+    for i in range(npop):
+        np_i = pool_sizes[population_names[i]]
+        r1, c1 = counts[i], ns[i]
+        r2 = c1 - r1
+        s1, s2 = r1 * (r1 - 1), r2 * (r2 - 1)
+        q1 = ((np_i / (c1 * (c1 - 1))) * (s1 + s2) - 1) / (np_i - 1)
+        hw_by_pop.append(1.0 - q1)
+
+    all_hbm = []
+    for i in range(npop):
+        for j in range(i + 1, npop):
+            r11, c1 = counts[i], ns[i]
+            r12 = c1 - r11
+            r21, c2 = counts[j], ns[j]
+            r22 = c2 - r21
+            q2 = (r11 * r21 + r12 * r22) / (c1 * c2)
+            hb = 1.0 - q2
+            all_hbm.append(float(hb.mean()))
+
+    hbmoy = float(np.mean(all_hbm)) if all_hbm else float("nan")
+
+    results = {}
+    for i in range(npop):
+        hwm = float(hw_by_pop[i].mean())
+        hwv = float(hw_by_pop[i].var(ddof=1))
         if hbmoy != 0:
             results[f"FST1m_{i + 1}"] = 1.0 - hwm / hbmoy
             results[f"FST1v_{i + 1}"] = hwv / (hbmoy**2)
@@ -374,6 +501,125 @@ def compute_FST2(
             )
             results[f"FST2m_{key}"] = m
             results[f"FST2v_{key}"] = v
+    return results
+
+
+def _fst_wc_poolseq(pops, pool_sizes, _counts, _ns):
+    """Variante PoolSeq de _fst_wc (cal_snfstd, branche grouplist[gr].type==3).
+
+    Calcul en DEUX passes (contrairement à l'IndSeq) : pi1/pi2 (moyennes
+    pondérées par la profondeur de lecture) doivent être connues avant de
+    calculer SSP. C_1/C_1_star mélangent la profondeur de lecture (`n`,
+    variable par locus) et la VRAIE taille du pool (`c`, constante par
+    population) -- c'est ce mélange qui constitue la correction propre à
+    PoolSeq (le terme de variance intra-pool supplémentaire).
+
+    L'agrégation finale (ratio de sommes num/den + variance via
+    _forward_fill) est IDENTIQUE à _fst_wc -- confirmé par l'exploration
+    C++, même code d'agrégation pour les deux types de population.
+
+    _counts, _ns : matrices (len(pops), nloci) pré-calculées, slices de
+    la matrice globale (nreads1, nreads_total) -- même contrat que
+    _fst_wc.
+    """
+    x1, n = _counts, _ns  # (npop, nloci) : reads allèle1, profondeur de lecture
+    x2 = n - x1
+    nloci = n.shape[1]
+    c = np.array([pool_sizes[p] for p in pops], dtype=float).reshape(-1, 1)
+
+    # --- Passe 1 ---
+    term = n / c + (c - 1) / c  # (npop, nloci)
+    C_1 = term.sum(axis=0)  # (nloci,)
+    C_1_star = (n * term).sum(axis=0)  # (nloci,)
+    R_1 = n.sum(axis=0)
+    R_2 = (n * n).sum(axis=0)
+    SSI = (x1 - x1 * x1 / n + x2 - x2 * x2 / n).sum(axis=0)
+
+    pi1 = x1.sum(axis=0) / R_1
+    pi2 = x2.sum(axis=0) / R_1
+    C_1_star = C_1_star / R_1
+
+    # --- Passe 2 (a besoin de pi1/pi2 de la passe 1) ---
+    r1 = x1 / n - pi1
+    r2 = x2 / n - pi2
+    SSP = (n * (r1 * r1 + r2 * r2)).sum(axis=0)
+
+    n_c = (R_1 - R_2 / R_1) / (C_1 - C_1_star)
+    MSI = SSI / (R_1 - C_1)
+    MSP = SSP / (C_1 - C_1_star)
+    num = MSP - MSI
+    den = MSP + (n_c - 1.0) * MSI
+
+    # --- Agrégation : identique à _fst_wc ---
+    valid = np.abs(den) > 0
+    ratio = np.where(valid, num / np.where(valid, den, 1.0), 0.0)
+    xs = _forward_fill(ratio, valid, fill=0.0)
+
+    numt = num.sum()
+    dent = den.sum()
+    fstm = numt / dent if abs(dent) > 0 else 0.0
+
+    sw2diff = nloci * (nloci - 1)
+    mean = xs.mean()
+    fstv = ((xs - mean) ** 2).sum() * nloci / sw2diff if sw2diff > 0 else 0.0
+
+    return float(fstm), float(fstv)
+
+
+def compute_FST2_poolseq(
+    reads_per_locus: list[dict[str, tuple[int, int]]],
+    population_names: list[str],
+    pool_sizes: dict[str, int],
+    _mats=None,
+) -> dict[str, float]:
+    """Variante PoolSeq de compute_FST2 : FST2m_i.j / FST2v_i.j par paire."""
+    counts, ns, _, _ = _mats or _prepare_matrices_poolseq(
+        reads_per_locus, population_names
+    )
+    npop = len(population_names)
+    results = {}
+    for i in range(npop):
+        for j in range(i + 1, npop):
+            key = f"{i + 1}.{j + 1}"
+            pops = [population_names[i], population_names[j]]
+            m, v = _fst_wc_poolseq(
+                pops, pool_sizes, _counts=counts[[i, j]], _ns=ns[[i, j]]
+            )
+            results[f"FST2m_{key}"] = m
+            results[f"FST2v_{key}"] = v
+    return results
+
+
+def compute_FST3_FST4_poolseq(
+    reads_per_locus: list[dict[str, tuple[int, int]]],
+    population_names: list[str],
+    pool_sizes: dict[str, int],
+    _mats=None,
+) -> dict[str, float]:
+    """Variante PoolSeq de compute_FST3_FST4_FSTG : FST3/FST4 sur
+    triplets/quadruplets (COMB)."""
+    counts, ns, _, _ = _mats or _prepare_matrices_poolseq(
+        reads_per_locus, population_names
+    )
+    npop = len(population_names)
+    results = {}
+
+    for combo in combinations(range(npop), 3):
+        idx = list(combo)
+        key = ".".join(str(i + 1) for i in idx)
+        pops = [population_names[i] for i in idx]
+        m, v = _fst_wc_poolseq(pops, pool_sizes, _counts=counts[idx], _ns=ns[idx])
+        results[f"FST3m_{key}"] = m
+        results[f"FST3v_{key}"] = v
+
+    for combo in combinations(range(npop), 4):
+        idx = list(combo)
+        key = ".".join(str(i + 1) for i in idx)
+        pops = [population_names[i] for i in idx]
+        m, v = _fst_wc_poolseq(pops, pool_sizes, _counts=counts[idx], _ns=ns[idx])
+        results[f"FST4m_{key}"] = m
+        results[f"FST4v_{key}"] = v
+
     return results
 
 
@@ -511,16 +757,13 @@ def compute_AML(
 # ---------------------------------------------------------------------------
 
 
-def compute_F3_F4(
+def compute_F3(
     genotypes_per_locus: list[dict[str, list[int]]],
     population_names: list[str],
     _mats=None,
 ) -> dict[str, float]:
-    """F3m/F3v sur triplets HALF, F4m/F4v sur quadruplets HALF.
-
+    """F3m/F3v sur triplets HALF,
     F3 = (f1-f2)*(f1-f3) - f1*(1-f1)/(np-1)   [pop0=hybride, pop1/2=parents]
-    F4 = (a-b)*(c-d)
-
     Tous les loci ont w=1 → mean/var(ddof=1) directement.
     """
     counts, ns, freq0, _ = _mats or _prepare_matrices(
@@ -544,6 +787,72 @@ def compute_F3_F4(
 
         results[f"F3m_{key}"] = float(x_vals.mean())
         results[f"F3v_{key}"] = float(x_vals.var(ddof=1))
+
+    return results
+
+
+def compute_F3_poolseq(
+    reads_per_locus: list[dict[str, tuple[int, int]]],
+    population_names: list[str],
+    pool_sizes: dict[str, int],
+    _mats=None,
+) -> dict[str, float]:
+    """Variante PoolSeq de compute_F3 (cal_snf3r, branche grouplist[gr].type==3).
+
+    alpha = ((np*a1p*(a1p-1))/(c1p*(c1p-1)) - a1p/c1p) / (np-1)  [pop0=hybride]
+    F3 = alpha + betaBC - betaAB - betaAC, avec beta_XY = (aXp*aYp)/(cXp*cYp)
+
+    np = taille du pool (VRAIE, pas la profondeur de lecture) de la
+    population hybride -- vient de pool_sizes, pas de `ns`/`_mats`
+    (contrairement à ns, qui est la profondeur de lecture, variable par
+    locus). Agrégation identique à compute_F3 (mean/var(ddof=1) simples
+    sur les loci, pas de ratio de sommes).
+    """
+    counts, ns, _, _ = _mats or _prepare_matrices_poolseq(
+        reads_per_locus, population_names
+    )
+    npop = len(population_names)
+    results = {}
+
+    for t in _half_arrangements(npop, 3):
+        i0, i1, i2 = t[0], t[1], t[2]
+        key = f"{i0 + 1}.{i1 + 1}.{i2 + 1}"
+
+        np_i0 = pool_sizes[population_names[i0]]
+
+        a1p, c1p = counts[i0], ns[i0]
+        a2p, c2p = counts[i1], ns[i1]
+        a3p, c3p = counts[i2], ns[i2]
+
+        alpha = ((np_i0 * a1p * (a1p - 1)) / (c1p * (c1p - 1)) - a1p / c1p) / (
+            np_i0 - 1
+        )
+        betaAB = (a1p * a2p) / (c1p * c2p)
+        betaAC = (a1p * a3p) / (c1p * c3p)
+        betaBC = (a2p * a3p) / (c2p * c3p)
+        x_vals = alpha + betaBC - betaAB - betaAC
+
+        results[f"F3m_{key}"] = float(x_vals.mean())
+        results[f"F3v_{key}"] = float(x_vals.var(ddof=1))
+
+    return results
+
+
+def compute_F4(
+    genotypes_per_locus: list[dict[str, list[int]]],
+    population_names: list[str],
+    _mats=None,
+) -> dict[str, float]:
+    """
+    F4m/F4v sur quadruplets HALF.
+    F4 = (a-b)*(c-d)
+    Tous les loci ont w=1 → mean/var(ddof=1) directement.
+    """
+    counts, ns, freq0, _ = _mats or _prepare_matrices(
+        genotypes_per_locus, population_names
+    )
+    npop = len(population_names)
+    results = {}
 
     # --- F4 ---
     for t in _half_arrangements(npop, 4):
@@ -588,8 +897,52 @@ def compute_all_statistics(
     results.update(compute_FST2(genotypes_per_locus, population_names, _mats=mats))
     results.update(compute_NEI(genotypes_per_locus, population_names, _mats=mats))
     results.update(compute_AML(genotypes_per_locus, population_names, _mats=mats))
-    results.update(compute_F3_F4(genotypes_per_locus, population_names, _mats=mats))
+    results.update(compute_F3(genotypes_per_locus, population_names, _mats=mats))
+    results.update(compute_F4(genotypes_per_locus, population_names, _mats=mats))
     results.update(
         compute_FST3_FST4_FSTG(genotypes_per_locus, population_names, _mats=mats)
     )
+    return results
+
+
+def compute_all_statistics_poolseq(
+    reads_per_locus: list[dict[str, tuple[int, int]]],
+    population_names: list[str],
+    pool_sizes: dict[str, int],
+) -> dict[str, float]:
+    """Calcule les statistiques résumées SNP pour POOLSEQ et retourne un dict
+    {nom_stat: valeur} -- même format que parse_statobs().
+
+    Les matrices (npop × nloci) de comptes et tailles d'échantillon sont construites
+    une seule fois (_prepare_matrices_poolseq) et transmises à toutes les familles
+    de statistiques via _mats.
+    """
+    mats = _prepare_matrices_poolseq(reads_per_locus, population_names)
+
+    results = {}
+    results.update(compute_ML1(None, population_names, _mats=mats))
+    results.update(compute_ML2(None, population_names, _mats=mats))
+    results.update(compute_ML3(None, population_names, _mats=mats))
+    results.update(
+        compute_HW_HB_poolseq(
+            reads_per_locus, population_names, pool_sizes=pool_sizes, _mats=mats
+        )
+    )
+    results.update(compute_NEI(reads_per_locus, population_names, _mats=mats))
+    results.update(compute_F4(reads_per_locus, population_names, _mats=mats))
+    results.update(
+        compute_F3_poolseq(reads_per_locus, population_names, pool_sizes, _mats=mats)
+    )
+    results.update(
+        compute_FST2_poolseq(reads_per_locus, population_names, pool_sizes, _mats=mats)
+    )
+    results.update(
+        compute_FST3_FST4_poolseq(
+            reads_per_locus, population_names, pool_sizes, _mats=mats
+        )
+    )
+    results.update(
+        compute_FST1_poolseq(reads_per_locus, population_names, pool_sizes, _mats=mats)
+    )
+    results.update(compute_AML(reads_per_locus, population_names, _mats=mats))
     return results
