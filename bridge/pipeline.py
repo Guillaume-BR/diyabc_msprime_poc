@@ -270,6 +270,7 @@ def compute_summary_statistics(
     work_directory: str | Path = None,  # gardé pour compatibilité, ignoré
     general_binary_path: str | Path = None,  # gardé pour compatibilité, ignoré
     stats_filter: str = "ALL",
+    observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Calcule les statistiques résumées sur des données SIMULÉES par
     notre pipeline, en utilisant nos formules Python validées
@@ -318,7 +319,11 @@ def compute_summary_statistics(
 
         reads_list = list(
             simulate_poolseq_reads_with_mrc_filter(
-                demography, snp_path, total_loci_poolseq, seed
+                demography,
+                snp_path,
+                seed,
+                num_loci=total_loci_poolseq,
+                observed_reads_per_locus=observed_reads_per_locus,
             )
         )
         pool_sizes = build_samples_argument(snp_path)
@@ -388,6 +393,7 @@ def compute_summary_statistics_from_values(
     num_loci: int | None = None,
     seed: int,
     stats_filter: str = "ALL",
+    observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
 ) -> dict[str, float]:
     """Variante de compute_summary_statistics qui NE TIRE AUCUNE valeur de
     prior : reprend telles quelles des valeurs de paramètres déjà
@@ -411,6 +417,9 @@ def compute_summary_statistics_from_values(
         summary_stats = compute_all_statistics(genotypes_list, population_names)
         summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
     else:
+        # l'argument num_loci est ignoré ici, côté PoolSeq on simule tous les loci déclarés dans header.txt
+        # alors qu'en Indseq num_loci sert à limiter le nombre de loci simulés
+
         total_loci_poolseq = parse_loci_description(header_text).total_loci["A"]
         demography = build_demography_for_scenario_index(
             header_text, scenario_index, values
@@ -418,7 +427,11 @@ def compute_summary_statistics_from_values(
 
         reads_list = list(
             simulate_poolseq_reads_with_mrc_filter(
-                demography, snp_path, total_loci_poolseq, seed
+                demography,
+                snp_path,
+                seed,
+                num_loci=total_loci_poolseq,
+                observed_reads_per_locus=observed_reads_per_locus,
             )
         )
         pool_sizes = build_samples_argument(snp_path)

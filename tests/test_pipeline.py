@@ -4,11 +4,17 @@ filtrage ALL/HEADER)."""
 
 import msprime
 import pytest
-from conftest import GENERAL_BINARY_PATH, OBSERVED_SNP_FILE, REFERENCE_DIR
+from conftest import (
+    GENERAL_BINARY_PATH,
+    OBSERVED_SNP_FILE_HUMAN,
+    OBSERVED_SNP_FILE_TE4,
+    REFERENCE_DIR,
+)
 
 from bridge.pipeline import (
     build_random_demography_for_scenario_index,
     compute_summary_statistics,
+    compute_summary_statistics_from_values,
     read_header_text,
     run_poc_for_directory,
 )
@@ -90,6 +96,66 @@ def test_compute_summary_statistics_multi_type():
     assert not any(v != v for v in summary_stats.values())  # v != v <=> NaN
 
 
+def test_compute_summary_statistics_poolseq_varies_with_seed():
+    """Vérifie que compute_summary_statistics simule bien pour PoolSeq
+    (branche else de la fonction) au lieu de recopier telles quelles les
+    statistiques de l'observé -- régression du bug du 2026-07-23 où
+    l'appel à simulate_poolseq_reads_with_mrc_filter avait été supprimé
+    par erreur en câblant observed_reads_per_locus, ce qui aurait rendu
+    toutes les particules PoolSeq d'un reftable identiques entre elles.
+    Deux graines différentes doivent donc tirer des paramètres différents
+    ET produire des statistiques différentes."""
+    reference_directory = OBSERVED_SNP_FILE_TE4.parent
+
+    stats_seed_1, values_1 = compute_summary_statistics(
+        reference_directory=reference_directory,
+        scenario_index=1,
+        seed=1,
+    )
+    stats_seed_2, values_2 = compute_summary_statistics(
+        reference_directory=reference_directory,
+        scenario_index=1,
+        seed=2,
+    )
+
+    assert values_1 != values_2
+    assert stats_seed_1 != stats_seed_2
+
+
+def test_compute_summary_statistics_from_values_poolseq_varies_with_values(
+    header_text_te4,
+):
+    """Même régression que test_compute_summary_statistics_poolseq_varies_
+    with_seed, mais côté compute_summary_statistics_from_values (l'autre
+    fonction touchée par le bug du 2026-07-23) : deux jeux de paramètres
+    différents (même seed) doivent produire des statistiques
+    différentes."""
+    reference_directory = OBSERVED_SNP_FILE_TE4.parent
+
+    _, values_1 = build_random_demography_for_scenario_index(
+        header_text_te4, scenario_index=1, seed=1
+    )
+    _, values_2 = build_random_demography_for_scenario_index(
+        header_text_te4, scenario_index=1, seed=2
+    )
+    assert values_1 != values_2  # sinon le test ne prouve rien
+
+    stats_1 = compute_summary_statistics_from_values(
+        reference_directory=reference_directory,
+        scenario_index=1,
+        values=values_1,
+        seed=42,
+    )
+    stats_2 = compute_summary_statistics_from_values(
+        reference_directory=reference_directory,
+        scenario_index=1,
+        values=values_2,
+        seed=42,
+    )
+
+    assert stats_1 != stats_2
+
+
 def test_read_header_text_prefers_header_txt(tmp_path):
     """Si les deux fichiers sont présents, header.txt doit être lu en
     priorité (config initiale fournie par l'utilisateur), pas
@@ -168,7 +234,7 @@ def test_compute_summary_statistics_stats_filter_header(tmp_path, header_text):
         ["group summary statistics (4)", "group G1 (4)", "ML1p 1 2", "HWm 1 2"],
     )
     (tmp_path / "header.txt").write_text(modified_header_text)
-    (tmp_path / OBSERVED_SNP_FILE.name).symlink_to(OBSERVED_SNP_FILE)
+    (tmp_path / OBSERVED_SNP_FILE_HUMAN.name).symlink_to(OBSERVED_SNP_FILE_HUMAN)
 
     summary_stats, values = compute_summary_statistics(
         reference_directory=tmp_path,

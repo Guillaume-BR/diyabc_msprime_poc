@@ -11,6 +11,7 @@ from conftest import (
     OBSERVED_SNP_FILE_TE5,
 )
 
+from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
     coalescence_coefficient,
     count_samples_per_population,
@@ -80,7 +81,7 @@ def test_parse_mrc_ratio():
     assert mrc_ratio_te4 == 5
 
 
-def test_observed_reads():
+def test_observed_reads(header_text_te4):
     """Vérifie que le parsing du fichier snp renvoie bien le nombre de reads
     observés par population, pour les fichiers POOLSEQ toy_example4 et
     toy_example5, APRÈS purge des loci sous le seuil MRC (<MRC=5> ici) --
@@ -91,8 +92,13 @@ def test_observed_reads():
     1 < 5 -- il doit donc être absent du résultat ; le premier élément
     retourné est le premier locus du fichier qui passe réellement le
     seuil."""
-    observed_reads_te4 = observed_reads(OBSERVED_SNP_FILE_TE4)
-    assert len(observed_reads_te4) == 14388
+    max_loci = parse_loci_description(header_text_te4).total_loci["A"]
+    observed_reads_te4 = observed_reads(OBSERVED_SNP_FILE_TE4, num_loci=max_loci)
+    observed_reads_te4_total = observed_reads(OBSERVED_SNP_FILE_TE4, num_loci=None)
+    assert len(observed_reads_te4) == 100
+    assert (
+        len(observed_reads_te4_total) == 14388
+    )  # 10x plus de loci bruts dans le fichier
     assert observed_reads_te4[0] == {
         "POP1": (52, 112),
         "POP2": (29, 95),

@@ -537,4 +537,68 @@ incompressible identifiée dès la première note du jour : plafond des 8
 cœurs physiques de la machine de dev + coût de matérialiser une
 `TreeSequence` par locus.
 
+## Note du 21/07/2026
+Codage de simulate_poolseq_reads() dans ancestry_simulaiton.py. Utilisation d'un zip qui va s'arrêter silencieusement dès que l'un des deux mutables, tree_sequence ou observed_reads_per_locus, est consommé. 
+A voir si cela pose problème, sinon utilisé itertools.zip_longest(tree_sequence, obeserved_reads_per_locus, fillvalue=_SENTINEL)
 
+Codage de la simulation des reads avec filtre MRC et tests correspondants.
+
+## Note du 23/07/2026 -- perf PoolSeq
+
+Signalement : la simulation PoolSeq est ~6x plus lente que DIYABC sur
+`toy_example4` (100 loci, MRC=5) -- bien plus que l'écart connu côté
+IndSeq (~2,2-2,8x, voir note du 20/07). Profilage (cProfile, 1 particule) :
+
+1. **~22-24% du temps** : `observed_reads()` (`observed_data.py`)
+   re-scannait et re-purgeait (MRC) les 30000 loci du `.snp` observé à
+   CHAQUE particule, alors que le résultat ne dépend que du fichier
+   (jamais de la graine/démographie tirées). Corrigé : arrêt anticipé du
+   scan dès que `num_loci` loci ont passé le filtre MRC (nouveau
+   paramètre `num_loci=None`, `None` = comportement inchangé/scan
+   complet) -- 0.092s -> 0.005s sur `toy_example4` (~20x), résultat
+   identique vérifié (tous les appelants tronquaient déjà à `num_loci`
+   après coup). Câblé en paramètre optionnel `observed_reads_per_locus`
+   à travers toute la chaîne (`simulate_poolseq_reads_with_mrc_filter` ->
+   `compute_summary_statistics(_from_values)` -> `reftable_loop.py`),
+   calculé UNE SEULE FOIS par run avant `ProcessPoolExecutor(...)` au
+   lieu d'une fois par particule (nouvelle fonction publique
+   `prepare_poolseq_observed_reads`).
+2. **~5%** : `simulate_poolseq_reads` recalculait `_population_layout(ts)`
+   à chaque locus/tentative, sans le paramètre de cache que
+   `simulate_snp_genotypes` a déjà côté IndSeq (20/07). Même fix porté
+   ici (`population_layout=None`, cache externe à travers les tentatives
+   dans `with_mrc_filter`, même principe que `with_maf_filter`).
+3. **~70%, pas un bug** : le rejet-resimulation MRC=5 redessine en
+   moyenne ~1,8 fois par locus (279 appels msprime bas niveau pour 100
+   loci) -- coût fixe par appel `sim_ancestry` (construction du
+   `Simulator`, provenance JSON) qui domine d'autant plus qu'il y a peu
+   de loci. Même mécanisme que le filtre MAF déjà en place côté IndSeq,
+   pas spécifique à PoolSeq, pas traité (pas facile à réduire sans
+   changer l'algorithme).
+
+**3 bugs attrapés en review avant qu'ils ne passent**, tous la même
+famille Python (nom de variable/fonction locale masquant un nom
+englobant -> `UnboundLocalError`) : `_passes_mrc` appelée avant sa
+propre définition dans la boucle, le test MRC imbriqué dans la mauvaise
+boucle (lignes ajoutées plusieurs fois, incomplètes), et
+`observed_reads = observed_reads(...)` dans le nouveau helper (variable
+locale masquant la fonction importée). Un 4e bug, plus grave, a aussi été
+attrapé : en câblant `observed_reads_per_locus` dans `pipeline.py`,
+l'appel réel à `simulate_poolseq_reads_with_mrc_filter` (la simulation
+msprime) a été supprimé par erreur, remplacé par un calcul direct des
+stats sur les données OBSERVÉES -- aurait rendu toutes les particules
+PoolSeq d'un reftable identiques entre elles. Passé inaperçu par la
+suite de tests existante (aucun test ne couvrait la branche PoolSeq de
+`compute_summary_statistics(_from_values)`) -- comblé après coup par 2
+nouveaux tests (`test_pipeline.py`) qui vérifient que deux graines/jeux
+de paramètres différents donnent des statistiques différentes, vérifiés
+en réintroduisant le bug pour confirmer qu'ils l'auraient attrapé.
+
+**Gain mesuré** (run réel `run_reftable_simulation`, 100 particules x
+100 loci, `toy_example4`, `max_workers=8`, comparaison via `git worktree`
+sur le commit précédent) : **~32.3s -> ~27.6s, ~14-16% de gain** sur le
+point 1. Le point 2 (cache `_population_layout`) a un effet non
+mesurable isolément (bruit système ±10-15% > gain attendu ~5%, confirmé
+par un test en double aveugle à charge égale) -- gardé pour sa
+cohérence avec le reste du code, pas pour un gain chiffrable. 73/73
+tests verts.

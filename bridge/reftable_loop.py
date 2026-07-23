@@ -32,7 +32,10 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
+from bridge.ancestry_simulation import prepare_poolseq_observed_reads
 from bridge.demography_builder import get_parameter_names_used_by_scenario
+from bridge.loci_parser import parse_loci_description
+from bridge.observed_data import detect_snp_file_type
 from bridge.parameter_sampling import draw_scenario
 from bridge.pipeline import (
     compute_summary_statistics,
@@ -77,6 +80,7 @@ def _run_single_particle(
     scenarios: list[Scenario],
     *,
     num_loci: int | None = None,
+    observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
     stats_filter: str,
 ) -> ParticleResult:
     """Calcule une seule particule -- fonction top-level (picklable),
@@ -101,6 +105,7 @@ def _run_single_particle(
         num_loci=num_loci,
         seed=seed,
         stats_filter=stats_filter,
+        observed_reads_per_locus=observed_reads_per_locus,
     )
     return ParticleResult(
         particle_index=particle_index,
@@ -145,6 +150,14 @@ def run_reftable_simulation(
 
     results_by_index: dict[int, ParticleResult] = {}
 
+    header_text = read_header_text(reference_directory)
+    snp_path = reference_directory / header_text.splitlines()[0].strip()
+    observed_reads_per_locus = None
+    if detect_snp_file_type(snp_path) == "POOL":
+        total_loci_poolseq = parse_loci_description(header_text).total_loci["A"]
+        observed_reads_per_locus = prepare_poolseq_observed_reads(
+            snp_path, total_loci_poolseq
+        )
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -154,6 +167,7 @@ def run_reftable_simulation(
                 scenarios,
                 num_loci=num_loci,
                 stats_filter=stats_filter,
+                observed_reads_per_locus=observed_reads_per_locus,
             ): particle_index
             for particle_index in range(nrec)
         }
@@ -316,6 +330,7 @@ def _run_single_particle_from_values(
     values: dict[str, float],
     *,
     num_loci: int | None = None,
+    observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
     stats_filter: str,
 ) -> ParticleResult:
     """Variante de _run_single_particle qui NE TIRE AUCUN paramètre :
@@ -329,6 +344,7 @@ def _run_single_particle_from_values(
         num_loci=num_loci,
         seed=seed,
         stats_filter=stats_filter,
+        observed_reads_per_locus=observed_reads_per_locus,
     )
     return ParticleResult(
         particle_index=particle_index,

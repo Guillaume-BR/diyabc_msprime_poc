@@ -527,12 +527,20 @@ def simulate_poolseq_reads(
     tree_sequences: Iterator[msprime.TreeSequence],
     observed_reads_per_locus: list[dict[str, tuple[int, int]]],
     seed: int,
+    population_layout: list[tuple[str | None, np.ndarray]] | None = None,
 ) -> Iterator[dict[str, tuple[int, int]]]:
     """Simule les lectures Pool-seq pour chaque locus simulé,
     en utilisant les génotypes simulés et le nombre de lectures observées par population.
     `tree_sequences` : un itérateur de TreeSequence simulées pour chaque locus.
     `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
     `seed` : graine aléatoire pour la reproductibilité.
+    `population_layout` (voir `_population_layout`) : si `None` (cas d'un
+    appel unique sur tout un flux de loci, ex: chemin `mrc<=0`), calculé
+    UNE SEULE FOIS ici même, au premier locus, et réutilisé pour tous les
+    suivants -- même principe que `simulate_snp_genotypes`. Si fourni par
+    l'appelant (ex: boucle de rejet MRC de `with_mrc_filter`, qui appelle
+    cette fonction une fois PAR TENTATIVE et calcule donc son propre cache
+    à travers les tentatives), utilisé tel quel sans jamais être recalculé.
     Retourne un itérateur de dictionnaires contenant le nombre de lectures dérivées et
     ancestrales par population pour chaque locus.
 
@@ -556,7 +564,8 @@ def simulate_poolseq_reads(
         # de variation dans tout un reftable simulé). simulate_snp_genotypes
         # fait déjà ce set() immédiat, c'est le bon modèle à suivre.
         derived_samples = set(tree.samples(mutated_node))
-        population_layout = _population_layout(ts)
+        if population_layout is None:
+            population_layout = _population_layout(ts)
 
         reads_by_population = {}
         for pop_name, sample_ids in population_layout:
@@ -621,6 +630,11 @@ def with_mrc_filter(
             tree_sequences, observed_reads_per_locus, seed=seed
         )
         return
+    # Calculée une seule fois, à la première tentative, et réutilisée pour
+    # toutes les suivantes (tous les loci/tentatives partagent la même
+    # demography/samples) -- voir _population_layout et with_maf_filter
+    # (même principe côté IndSeq).
+    population_layout = None
     for locus_index in range(num_loci):
         # seed_for_locus dédié : sans lui, `seed + attempt` (tentative 0, 1, 2...)
         # est IDENTIQUE pour tous les locus_index -- deux loci qui ont besoin du
@@ -641,11 +655,14 @@ def with_mrc_filter(
                     ploidy=ploidy,
                 )
             )
+            if population_layout is None:
+                population_layout = _population_layout(ts)
             reads_by_population = next(
                 simulate_poolseq_reads(
                     [ts],
                     observed_reads_per_locus[locus_index : locus_index + 1],
                     seed=seed_for_locus + attempt + _MRC_REJECTION_SEED_OFFSET,
+                    population_layout=population_layout,
                 )
             )
             sum_derived = sum(
@@ -767,11 +784,23 @@ def simulate_genotypes_for_locus_type(
         raise NotImplementedError(f"Type de locus non supporté: {locus_type!r}")
 
 
+def prepare_poolseq_observed_reads(
+    snp_file_path: str, num_loci: int
+) -> list[dict[str, tuple[int, int]]]:
+    """Prépare les lectures observées pour la simulation PoolSeq en lisant le fichier .snp et en tronquant aux `num_loci` premières entrées.
+    Retourne une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
+    """
+    raw_reads = observed_reads(snp_file_path, num_loci=num_loci)
+    reindexed_reads = _reindex_reads_by_msprime_name(raw_reads, snp_file_path)
+    return reindexed_reads
+
+
 def simulate_poolseq_reads_with_mrc_filter(
     demography: msprime.Demography,
     snp_file_path: str,
-    num_loci: int,
     seed: int,
+    num_loci: int,
+    observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
 ) -> Iterator[dict[str, tuple[int, int]]]:
     """Point d'entrée unique pour un fichier PoolSeq -- pendant de
     simulate_genotypes_for_locus_type (IndSeq), mais sans dispatch
@@ -841,9 +870,11 @@ def simulate_poolseq_reads_with_mrc_filter(
     mrc = parse_mrc_ratio(snp_file_path)
     haploid_pool_sizes = build_samples_argument(snp_file_path)
     samples = {pop: count // 2 for pop, count in haploid_pool_sizes.items()}
-    observed_reads_per_locus = _reindex_reads_by_msprime_name(
-        observed_reads(snp_file_path), snp_file_path
-    )[:num_loci]
+    if observed_reads_per_locus is None:
+        observed_reads_per_locus = prepare_poolseq_observed_reads(
+            snp_file_path, num_loci
+        )
+
     return with_mrc_filter(
         demography, samples, num_loci, mrc, observed_reads_per_locus, seed, ploidy=2
     )

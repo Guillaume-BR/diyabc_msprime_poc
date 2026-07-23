@@ -27,6 +27,7 @@ from bridge.ancestry_simulation import (
     with_mrc_filter,
 )
 from bridge.demography_builder import rescale_demography
+from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
     coalescence_coefficient,
     observed_reads,
@@ -438,19 +439,19 @@ def test_simulate_poolseq_reads_with_mrc_filter(header_text_te4):
         header_text_te4, scenario_index=1, seed=42
     )
 
-    n = 30
+    num_loci = parse_loci_description(header_text_te4).total_loci["A"]
     mrc = parse_mrc_ratio(OBSERVED_SNP_FILE_TE4)
 
     results = list(
         simulate_poolseq_reads_with_mrc_filter(
             demography,
             OBSERVED_SNP_FILE_TE4,
-            num_loci=n,
+            num_loci=num_loci,
             seed=12,
         )
     )
 
-    assert len(results) == n
+    assert len(results) == 100
     assert results[0].keys() == {"pop1", "pop2", "pop3", "pop4"}
     for reads_by_population in results:
         sum_derived = sum(

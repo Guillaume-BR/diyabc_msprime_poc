@@ -274,7 +274,9 @@ def population_index_to_name(snp_file_path: str | Path) -> dict[int, str]:
     return {i + 1: name for i, name in enumerate(names_in_order)}
 
 
-def observed_reads(snp_file_path: str | Path) -> list[dict[str, tuple[int, int]]]:
+def observed_reads(
+    snp_file_path: str | Path, num_loci: int | None = None
+) -> list[dict[str, tuple[int, int]]]:
     """Lit les lignes de génotypes du fichier .snp DIYABC POOLSEQ, en ignorant
     l'en-tête et les lignes vides. Retourne la liste des lignes de
     comptage de reads (nreads1, nreads1 + nreads2) par population, dans l'ordre d'apparition des populations
@@ -294,6 +296,11 @@ def observed_reads(snp_file_path: str | Path) -> list[dict[str, tuple[int, int]]
     -- confirmé empiriquement le 22/07/2026 : 130/130 stats divergaient
     de >1% par rapport au vrai statobs.txt de DIYABC sans cette purge,
     0/130 avec.
+
+    num_loci : si non None, limite le nombre de loci lus à ce nombre
+    (utile pour toy_example4, où on ne veut que les 100 premiers loci
+    passants le seuil MRC, pour reproduire exactement le statobs.txt de
+    DIYABC). Si None, lit tous les loci du fichier.
     """
     if detect_snp_file_type(snp_file_path) != "POOL":
         raise ValueError(
@@ -304,30 +311,33 @@ def observed_reads(snp_file_path: str | Path) -> list[dict[str, tuple[int, int]]
     lines = path.read_text().splitlines()
     header_index = _find_header_index(lines)
     liste_pop = list(_parse_pool_header_line(lines, header_index).keys())
-    rows = []
-    for line in lines[header_index + 1 :]:
-        fields = line.split()
-        if not fields:
-            continue
-        counts_by_population = {}
-        for i in range(len(liste_pop)):
-            pop_name = liste_pop[i]
-            nreads1 = int(fields[2 * i])
-            nreads2 = int(fields[2 * i + 1])
-            counts_by_population[pop_name] = (nreads1, nreads1 + nreads2)
-        rows.append(counts_by_population)
-
     mrc = parse_mrc_ratio(snp_file_path)
-    if mrc <= 0:
-        return rows
+    rows = []
 
+    # Fonction interne pour vérifier si le locus passe le seuil MRC
     def _passes_mrc(locus_reads: dict[str, tuple[int, int]]) -> bool:
         sum_derived = sum(derived for derived, _ in locus_reads.values())
         sum_total = sum(total for _, total in locus_reads.values())
         minor_allele_count = min(sum_derived, sum_total - sum_derived)
         return minor_allele_count >= mrc
 
-    return [locus_reads for locus_reads in rows if _passes_mrc(locus_reads)]
+    for line in lines[header_index + 1 :]:
+        fields = line.split()
+        if not fields:
+            continue
+        counts_by_population = {}
+
+        for i in range(len(liste_pop)):
+            pop_name = liste_pop[i]
+            nreads1 = int(fields[2 * i])
+            nreads2 = int(fields[2 * i + 1])
+            counts_by_population[pop_name] = (nreads1, nreads1 + nreads2)
+
+        if mrc <= 0 or _passes_mrc(counts_by_population):
+            rows.append(counts_by_population)
+            if num_loci is not None and len(rows) >= num_loci:
+                break
+    return rows
 
 
 def coalescence_coefficient(locus_type: str, sex_ratio: float) -> float:
