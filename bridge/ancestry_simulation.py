@@ -43,22 +43,27 @@ from bridge.observed_data import (
 _MAF_REJECTION_SEED_OFFSET = 2_000_000
 _MRC_REJECTION_SEED_OFFSET = 3_000_000
 
-# Taille de lot pour with_maf_filter : un seul appel simulate_independent_loci
-# (num_replicates=_MAF_BATCH_SIZE) au lieu d'un appel par tentative de rejet.
-# Mesuré empiriquement (script jetable, toy_example3 scenario3, maf=0.05,
-# 100 loci) : le setup Python/msprime (construction de la Demography,
-# initialisation du simulateur) domine largement le coût réel de coalescence
-# pour ce genre de petit échantillon -- répété à CHAQUE tentative sans
-# batching, il fait payer ce setup une fois par rejet au lieu de le mutualiser.
-# batch_size=20 mesuré à ~5.6x plus rapide que l'appel un-par-un (batch_size=1)
-# sur ce cas ; le gain marginal au-delà de 20-50 s'aplatit (le setup amorti
-# devient négligeable face au coût réel restant). Valeur fixe pour l'instant,
-# pas encore adaptative au taux de rejet observé.
+# Taille de lot PLANCHER pour with_maf_filter : un seul appel
+# simulate_independent_loci (num_replicates=batch_size) au lieu d'un appel
+# par tentative de rejet. Mesuré empiriquement (script jetable,
+# toy_example3 scenario3, maf=0.05, 100 loci) : le setup Python/msprime
+# (construction de la Demography, initialisation du simulateur) domine
+# largement le coût réel de coalescence pour ce genre de petit échantillon
+# -- répété à CHAQUE tentative sans batching, il fait payer ce setup une
+# fois par rejet au lieu de le mutualiser. batch_size=20 mesuré à ~5.6x
+# plus rapide que l'appel un-par-un (batch_size=1) sur ce cas.
+#
+# PLANCHER, pas la taille réelle : with_maf_filter calcule
+# batch_size = max(_MAF_BATCH_SIZE, num_loci // 4) -- un lot fixe à 20 ne
+# scale pas avec num_loci, donc le NOMBRE de lots (et le setup payé par
+# lot) croît proportionnellement à num_loci, ce qui dégrade le facteur de
+# gain sur les gros num_loci (mesuré empiriquement le 24/07/2026 :
+# batch=20 fixe donne encore ~1.35-1.44x d'écart vs batch=num_loci//4 sur
+# 500 loci, alors que le gain est négligeable sur 100 loci -- déjà sur le
+# plateau de rendement décroissant à ce volume). num_loci//4 capture déjà
+# ~94% du gain d'un lot égal à num_loci entier ; pas la peine d'aller
+# jusque là.
 _MAF_BATCH_SIZE = 20
-# Marge entre lots pour dériver des graines de mutation distinctes par
-# tentative dans le lot (attempt_in_batch va de 0 à _MAF_BATCH_SIZE-1) --
-# même idiome que seed_for_locus dans with_mrc_filter (voir plus bas).
-_MAF_BATCH_SEED_STRIDE = 1_000
 
 # Même principe que _MAF_BATCH_SIZE, pour with_mrc_filter (PoolSeq) : la
 # boucle de rejet MRC a le même défaut (un appel simulate_independent_loci
@@ -373,17 +378,19 @@ def with_maf_filter(
     changer aux datasets déjà validés qui n'ont pas de filtre MAF actif
     (human, toy_example5, ...).
 
-    `maf>0.0` : les tentatives sont tirées PAR LOT de `_MAF_BATCH_SIZE`
-    (un seul appel `simulate_independent_loci(num_replicates=_MAF_BATCH_SIZE)`
-    au lieu d'un appel par tentative individuelle) -- mesuré empiriquement
-    ~5.6x plus rapide qu'un appel un-par-un sur toy_example3/scenario3/
-    maf=0.05 (voir _MAF_BATCH_SIZE), le coalescent restant identique
-    (nouvelle généalogie à chaque rejet, jamais de recyclage d'un arbre
-    rejeté, comme avant). La structure population/échantillons
-    (`_population_layout`) ne dépend que de `demography`/`samples`, jamais
-    de la graine tirée -- elle est donc calculée une seule fois, à la
-    toute première tentative, et réutilisée pour toutes les suivantes
-    (voir notes/exploration.md, entrée du 20/07/2026).
+    `maf>0.0` : les tentatives sont tirées PAR LOT de
+    `max(_MAF_BATCH_SIZE, num_loci // 4)` (un seul appel
+    `simulate_independent_loci(num_replicates=batch_size)` au lieu d'un
+    appel par tentative individuelle) -- mesuré empiriquement ~5.6x plus
+    rapide qu'un appel un-par-un sur toy_example3/scenario3/maf=0.05 (voir
+    _MAF_BATCH_SIZE), le coalescent restant identique (nouvelle
+    généalogie à chaque rejet, jamais de recyclage d'un arbre rejeté,
+    comme avant). Le lot scale avec `num_loci` plutôt que d'être fixe :
+    voir _MAF_BATCH_SIZE pour le détail. La structure population/
+    échantillons (`_population_layout`) ne dépend que de `demography`/
+    `samples`, jamais de la graine tirée -- elle est donc calculée une
+    seule fois, à la toute première tentative, et réutilisée pour toutes
+    les suivantes (voir notes/exploration.md, entrée du 20/07/2026).
     """
     if maf == 0.0:
         tree_sequences = simulate_independent_loci(
@@ -392,15 +399,23 @@ def with_maf_filter(
         yield from simulate_snp_genotypes(tree_sequences, seed=seed)
         return
 
+    # batch_size dérive num_loci -- voir _MAF_BATCH_SIZE pour la
+    # justification empirique. La graine de lot (batch_seed = seed +
+    # batch_index * batch_size) utilise directement batch_size comme
+    # marge entre lots : contrairement à un stride fixe, elle ne peut
+    # jamais collisionner avec les graines de mutation du lot précédent
+    # (attempt_in_batch va de 0 à batch_size-1), quelle que soit la
+    # taille du lot.
+    batch_size = max(_MAF_BATCH_SIZE, num_loci // 4)
     accepted_loci = 0
     population_layout = None
     batch_index = 0
     while accepted_loci < num_loci:
-        batch_seed = seed + batch_index * _MAF_BATCH_SEED_STRIDE
+        batch_seed = seed + batch_index * batch_size
         tree_sequences = simulate_independent_loci(
             demography,
             samples,
-            num_loci=_MAF_BATCH_SIZE,
+            num_loci=batch_size,
             seed=batch_seed,
             ploidy=ploidy,
         )
