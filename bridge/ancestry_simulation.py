@@ -43,6 +43,31 @@ from bridge.observed_data import (
 _MAF_REJECTION_SEED_OFFSET = 2_000_000
 _MRC_REJECTION_SEED_OFFSET = 3_000_000
 
+# Taille de lot pour with_maf_filter : un seul appel simulate_independent_loci
+# (num_replicates=_MAF_BATCH_SIZE) au lieu d'un appel par tentative de rejet.
+# Mesuré empiriquement (script jetable, toy_example3 scenario3, maf=0.05,
+# 100 loci) : le setup Python/msprime (construction de la Demography,
+# initialisation du simulateur) domine largement le coût réel de coalescence
+# pour ce genre de petit échantillon -- répété à CHAQUE tentative sans
+# batching, il fait payer ce setup une fois par rejet au lieu de le mutualiser.
+# batch_size=20 mesuré à ~5.6x plus rapide que l'appel un-par-un (batch_size=1)
+# sur ce cas ; le gain marginal au-delà de 20-50 s'aplatit (le setup amorti
+# devient négligeable face au coût réel restant). Valeur fixe pour l'instant,
+# pas encore adaptative au taux de rejet observé.
+_MAF_BATCH_SIZE = 20
+# Marge entre lots pour dériver des graines de mutation distinctes par
+# tentative dans le lot (attempt_in_batch va de 0 à _MAF_BATCH_SIZE-1) --
+# même idiome que seed_for_locus dans with_mrc_filter (voir plus bas).
+_MAF_BATCH_SEED_STRIDE = 1_000
+
+# Même principe que _MAF_BATCH_SIZE, pour with_mrc_filter (PoolSeq) : la
+# boucle de rejet MRC a le même défaut (un appel simulate_independent_loci
+# par tentative individuelle) -- reste dans le budget de 1000 tentatives/
+# locus déjà alloué par seed_for_locus (voir with_mrc_filter), jamais
+# atteint en pratique, donc `attempt // _MRC_BATCH_SIZE` (au plus ~50 lots)
+# ne collisionne jamais avec le stride du locus suivant.
+_MRC_BATCH_SIZE = 20
+
 # pour séparer le tirage binomial du tirage de mutation
 _BINOMIAL_SEED_OFFSET = 4_000_000
 
@@ -348,13 +373,17 @@ def with_maf_filter(
     changer aux datasets déjà validés qui n'ont pas de filtre MAF actif
     (human, toy_example5, ...).
 
-    `maf>0.0` : chaque tentative simule son PROPRE locus (nouvelle
-    généalogie à chaque rejet, voir docstring plus haut), mais la
-    structure population/échantillons de ce locus (`_population_layout`)
-    ne dépend que de `demography`/`samples`, jamais de la graine tirée --
-    elle est donc calculée une seule fois, à la première tentative, et
-    réutilisée pour toutes les suivantes plutôt que d'être recalculée à
-    chaque rejet (voir notes/exploration.md, entrée du 20/07/2026).
+    `maf>0.0` : les tentatives sont tirées PAR LOT de `_MAF_BATCH_SIZE`
+    (un seul appel `simulate_independent_loci(num_replicates=_MAF_BATCH_SIZE)`
+    au lieu d'un appel par tentative individuelle) -- mesuré empiriquement
+    ~5.6x plus rapide qu'un appel un-par-un sur toy_example3/scenario3/
+    maf=0.05 (voir _MAF_BATCH_SIZE), le coalescent restant identique
+    (nouvelle généalogie à chaque rejet, jamais de recyclage d'un arbre
+    rejeté, comme avant). La structure population/échantillons
+    (`_population_layout`) ne dépend que de `demography`/`samples`, jamais
+    de la graine tirée -- elle est donc calculée une seule fois, à la
+    toute première tentative, et réutilisée pour toutes les suivantes
+    (voir notes/exploration.md, entrée du 20/07/2026).
     """
     if maf == 0.0:
         tree_sequences = simulate_independent_loci(
@@ -363,39 +392,47 @@ def with_maf_filter(
         yield from simulate_snp_genotypes(tree_sequences, seed=seed)
         return
 
-    attempt = 0
     accepted_loci = 0
     population_layout = None
+    batch_index = 0
     while accepted_loci < num_loci:
-        ts = next(
-            simulate_independent_loci(
-                demography, samples, num_loci=1, seed=seed + attempt, ploidy=ploidy
+        batch_seed = seed + batch_index * _MAF_BATCH_SEED_STRIDE
+        tree_sequences = simulate_independent_loci(
+            demography,
+            samples,
+            num_loci=_MAF_BATCH_SIZE,
+            seed=batch_seed,
+            ploidy=ploidy,
+        )
+        for attempt_in_batch, ts in enumerate(tree_sequences):
+            if population_layout is None:
+                population_layout = _population_layout(ts)
+            genotypes_by_population = next(
+                simulate_snp_genotypes(
+                    [ts],
+                    seed=batch_seed + attempt_in_batch + _MAF_REJECTION_SEED_OFFSET,
+                    population_layout=population_layout,
+                )
             )
-        )
-        if population_layout is None:
-            population_layout = _population_layout(ts)
-        genotypes_by_population = next(
-            simulate_snp_genotypes(
-                [ts],
-                seed=seed + attempt + _MAF_REJECTION_SEED_OFFSET,
-                population_layout=population_layout,
+
+            total_derived = sum(
+                sum(genotypes) for genotypes in genotypes_by_population.values()
             )
-        )
+            total_samples = sum(
+                len(genotypes) for genotypes in genotypes_by_population.values()
+            )
+            minor_allele_count = min(total_derived, total_samples - total_derived)
+            maf_observed = (
+                minor_allele_count / total_samples if total_samples > 0 else 0.0
+            )
 
-        total_derived = sum(
-            sum(genotypes) for genotypes in genotypes_by_population.values()
-        )
-        total_samples = sum(
-            len(genotypes) for genotypes in genotypes_by_population.values()
-        )
-        minor_allele_count = min(total_derived, total_samples - total_derived)
-        maf_observed = minor_allele_count / total_samples if total_samples > 0 else 0.0
+            if maf_observed >= maf:
+                yield genotypes_by_population
+                accepted_loci += 1
+                if accepted_loci >= num_loci:
+                    return
 
-        if maf_observed >= maf:
-            yield genotypes_by_population
-            accepted_loci += 1
-
-        attempt += 1
+        batch_index += 1
 
 
 def with_maf_filter_shared_ancestry(
@@ -620,6 +657,14 @@ def with_mrc_filter(
     `ploidy` : transmis tel quel à `simulate_independent_loci`.
 
     `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
+
+    `mrc>0` : les tentatives sont tirées PAR LOT de `_MRC_BATCH_SIZE` (un
+    seul appel `simulate_independent_loci(num_replicates=_MRC_BATCH_SIZE)`
+    au lieu d'un appel par tentative individuelle) -- même optimisation et
+    même gain mesuré que with_maf_filter (voir sa docstring et
+    _MAF_BATCH_SIZE), le setup Python/msprime répété à chaque tentative
+    dominant largement le coût réel de coalescence pour ce genre de petit
+    échantillon.
     """
 
     if mrc <= 0:
@@ -645,16 +690,29 @@ def with_mrc_filter(
         # atteinte en pratique par le nombre de tentatives de rejet MRC.
         seed_for_locus = seed + locus_index * 1_000
         attempt = 0
+        # tree_sequences_iter : itérateur du lot COURANT de _MRC_BATCH_SIZE
+        # généalogies, régénéré (nouvelle graine, nouveau lot) uniquement
+        # quand il est épuisé -- au lieu d'un appel simulate_independent_loci
+        # par tentative. `attempt // _MRC_BATCH_SIZE` désigne le numéro de
+        # lot courant : comme `attempt` n'avance que d'une unité par rejet
+        # (voir plus bas, jamais réinitialisé entre lots), les lots
+        # successifs couvrent exactement des tranches contiguës de
+        # `_MRC_BATCH_SIZE` tentatives, sans recouvrement ni trou.
+        tree_sequences_iter = None
         while True:
-            ts = next(
-                simulate_independent_loci(
+            if tree_sequences_iter is None:
+                batch_seed = seed_for_locus + attempt // _MRC_BATCH_SIZE
+                tree_sequences_iter = simulate_independent_loci(
                     demography,
                     samples,
-                    num_loci=1,
-                    seed=seed_for_locus + attempt,
+                    num_loci=_MRC_BATCH_SIZE,
+                    seed=batch_seed,
                     ploidy=ploidy,
                 )
-            )
+            ts = next(tree_sequences_iter, None)
+            if ts is None:
+                tree_sequences_iter = None
+                continue
             if population_layout is None:
                 population_layout = _population_layout(ts)
             reads_by_population = next(
