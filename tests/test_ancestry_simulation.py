@@ -355,14 +355,14 @@ def test_simulate_poolseq_reads(header_text_te4):
 
     results1 = run()
     results2 = run()
-    assert (
-        results1 == results2
-    ), "simulate_poolseq_reads should be deterministic with the same seed"
+    assert results1 == results2, (
+        "simulate_poolseq_reads should be deterministic with the same seed"
+    )
 
     valeurs_pop1 = {r["pop1"] for r in results1}
-    assert (
-        len(valeurs_pop1) > 1
-    ), "simulate_poolseq_reads should produce different read counts for different loci"
+    assert len(valeurs_pop1) > 1, (
+        "simulate_poolseq_reads should produce different read counts for different loci"
+    )
 
 
 def test_simulate_poolseq_reads_with_mrc_filter(header_text_te4):

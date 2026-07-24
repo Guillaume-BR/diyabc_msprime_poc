@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.0  # Utilisez la dernière version
+    rev: v0.15.1  # aligné sur la version de ruff de l'environnement conda diyabc_msprime
     hooks:
       # Linter avec correction automatique
       - id: ruff
