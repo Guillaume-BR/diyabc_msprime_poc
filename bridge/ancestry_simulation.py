@@ -65,12 +65,12 @@ _MRC_REJECTION_SEED_OFFSET = 3_000_000
 # jusque là.
 _MAF_BATCH_SIZE = 20
 
-# Même principe que _MAF_BATCH_SIZE, pour with_mrc_filter (PoolSeq) : la
-# boucle de rejet MRC a le même défaut (un appel simulate_independent_loci
-# par tentative individuelle) -- reste dans le budget de 1000 tentatives/
-# locus déjà alloué par seed_for_locus (voir with_mrc_filter), jamais
-# atteint en pratique, donc `attempt // _MRC_BATCH_SIZE` (au plus ~50 lots)
-# ne collisionne jamais avec le stride du locus suivant.
+# Taille de lot pour with_mrc_filter (PoolSeq) : contrairement à
+# _MAF_BATCH_SIZE, ce lot est PARTAGÉ ENTRE TOUS LES LOCI (pas de scaling
+# avec num_loci ici -- mesuré empiriquement le 24/07/2026, toy_example4,
+# mrc=5 : le partage du pool entre loci apporte ~1.5x, mais faire varier
+# la taille du lot une fois le pool partagé n'apporte quasiment rien en
+# plus). Voir with_mrc_filter pour le détail du design.
 _MRC_BATCH_SIZE = 20
 
 # pour séparer le tirage binomial du tirage de mutation
@@ -673,13 +673,28 @@ def with_mrc_filter(
 
     `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
 
-    `mrc>0` : les tentatives sont tirées PAR LOT de `_MRC_BATCH_SIZE` (un
-    seul appel `simulate_independent_loci(num_replicates=_MRC_BATCH_SIZE)`
-    au lieu d'un appel par tentative individuelle) -- même optimisation et
-    même gain mesuré que with_maf_filter (voir sa docstring et
-    _MAF_BATCH_SIZE), le setup Python/msprime répété à chaque tentative
-    dominant largement le coût réel de coalescence pour ce genre de petit
-    échantillon.
+    `mrc>0` : les tentatives sont tirées depuis un POOL PARTAGÉ ENTRE TOUS
+    LES LOCI, pas un pool privé par locus -- contrairement à un batching
+    naïf "par locus" (un nouveau lot de `_MRC_BATCH_SIZE` généalogies à
+    chaque `locus_index`, même si ce locus n'a besoin que d'UNE seule
+    tentative), qui paie un plancher d'un appel `simulate_independent_loci`
+    PAR LOCUS quel que soit le taux d'acceptation. Ici, un seul flux
+    continu de généalogies (régénéré par lot de `_MRC_BATCH_SIZE`
+    uniquement quand épuisé) est consommé par n'importe quel locus qui a
+    besoin d'une nouvelle tentative -- si la plupart des loci passent dès
+    le premier tirage (cas courant), un seul lot peut servir des dizaines
+    de loci au lieu d'un lot par locus. Gain mesuré empiriquement (script
+    jetable, toy_example4, mrc=5) : ~1.5x supplémentaire par rapport au
+    batching par-locus, quelle que soit la taille du lot (le partage
+    compte, pas la taille).
+
+    Le compteur `attempt` est GLOBAL et n'est jamais remis à zéro par
+    locus -- ça élimine par construction le risque de corrélation qui
+    existait avec l'ancien design par-locus (deux loci ayant besoin du
+    même nombre de tentatives tiraient alors le même arbre/mutation,
+    confirmé empiriquement le 22/07/2026) : chaque tentative, tous loci
+    confondus, consomme une position distincte dans un flux continu,
+    jamais réutilisée.
     """
 
     if mrc <= 0:
@@ -695,28 +710,17 @@ def with_mrc_filter(
     # demography/samples) -- voir _population_layout et with_maf_filter
     # (même principe côté IndSeq).
     population_layout = None
+    # tree_sequences_iter : itérateur du lot COURANT de _MRC_BATCH_SIZE
+    # généalogies, PARTAGÉ entre tous les locus_index -- régénéré
+    # (nouveau lot, nouvelle graine) uniquement quand épuisé, jamais
+    # réinitialisé au passage à un nouveau locus (voir docstring).
+    tree_sequences_iter = None
+    batch_index = 0
+    attempt = 0
     for locus_index in range(num_loci):
-        # seed_for_locus dédié : sans lui, `seed + attempt` (tentative 0, 1, 2...)
-        # est IDENTIQUE pour tous les locus_index -- deux loci qui ont besoin du
-        # même nombre de tentatives pour passer le filtre MRC tirent alors
-        # EXACTEMENT le même arbre/mutation, écrasant la diversité entre loci
-        # (confirmé empiriquement le 22/07/2026 : des loci différents donnaient
-        # des p identiques). 1000 = marge largement suffisante par locus, jamais
-        # atteinte en pratique par le nombre de tentatives de rejet MRC.
-        seed_for_locus = seed + locus_index * 1_000
-        attempt = 0
-        # tree_sequences_iter : itérateur du lot COURANT de _MRC_BATCH_SIZE
-        # généalogies, régénéré (nouvelle graine, nouveau lot) uniquement
-        # quand il est épuisé -- au lieu d'un appel simulate_independent_loci
-        # par tentative. `attempt // _MRC_BATCH_SIZE` désigne le numéro de
-        # lot courant : comme `attempt` n'avance que d'une unité par rejet
-        # (voir plus bas, jamais réinitialisé entre lots), les lots
-        # successifs couvrent exactement des tranches contiguës de
-        # `_MRC_BATCH_SIZE` tentatives, sans recouvrement ni trou.
-        tree_sequences_iter = None
         while True:
             if tree_sequences_iter is None:
-                batch_seed = seed_for_locus + attempt // _MRC_BATCH_SIZE
+                batch_seed = seed + batch_index * _MRC_BATCH_SIZE
                 tree_sequences_iter = simulate_independent_loci(
                     demography,
                     samples,
@@ -724,6 +728,7 @@ def with_mrc_filter(
                     seed=batch_seed,
                     ploidy=ploidy,
                 )
+                batch_index += 1
             ts = next(tree_sequences_iter, None)
             if ts is None:
                 tree_sequences_iter = None
@@ -734,10 +739,11 @@ def with_mrc_filter(
                 simulate_poolseq_reads(
                     [ts],
                     observed_reads_per_locus[locus_index : locus_index + 1],
-                    seed=seed_for_locus + attempt + _MRC_REJECTION_SEED_OFFSET,
+                    seed=seed + attempt + _MRC_REJECTION_SEED_OFFSET,
                     population_layout=population_layout,
                 )
             )
+            attempt += 1
             sum_derived = sum(
                 derived_reads for derived_reads, _ in reads_by_population.values()
             )
@@ -751,8 +757,6 @@ def with_mrc_filter(
             if mrc_observed >= mrc:
                 yield reads_by_population
                 break
-
-            attempt += 1
 
 
 # ── Dispatch par type de locus (compose tout ce qui précède) ──────────────
