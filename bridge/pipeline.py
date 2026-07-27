@@ -346,7 +346,7 @@ def build_demography_for_scenario_index(
     """Variante de build_random_demography_for_scenario_index qui NE TIRE
     AUCUNE valeur : construit la Demography directement à partir de
     valeurs de paramètres déjà connues (ex: reprises telles quelles d'un
-    reftable DIYABC réel -- voir reftable_loop.replay_reftable_simulation).
+    reftable DIYABC réel pour servir d'oracle-- voir reftable_loop.replay_reftable_simulation).
     """
     scenarios = parse_header_scenarios(header_text)
     scenario = next((s for s in scenarios if s.index == scenario_index), None)

@@ -571,7 +571,7 @@ def write_reftable_txt(
 # ── Point d'entrée haut niveau (compose tirage indépendant + écriture) ────
 
 
-def simulate_reference_directory(
+def simulate_from_directory(
     test_directory: str | Path,
     *,
     num_loci: int | None = None,
@@ -600,8 +600,13 @@ def simulate_reference_directory(
     header_text = read_header_text(test_directory)
 
     priors, _ = parse_priors(header_text)
+    print(f"{len(priors)} priors parsé depuis {test_directory}/header.txt")
     scenarios = parse_header_scenarios(header_text)
+    print(f"{len(scenarios)} scénarios parsés depuis {test_directory}/header.txt")
 
+    print(
+        f"Simulation de {nrec} particules avec {num_loci if num_loci is not None else 'tous les'} loci)"
+    )
     results = run_reftable_simulation(
         reference_directory=test_directory,
         scenarios=scenarios,
@@ -614,9 +619,11 @@ def simulate_reference_directory(
     write_reftable_txt(
         results, priors, scenarios, test_directory / "reftable_msprime.txt"
     )
+    print(f"Écriture du reftable texte dans {test_directory}/reftable_msprime.txt")
 
     write_reftable_bin(
         results, priors, scenarios, test_directory / "reftable_msprime.bin"
     )
+    print(f"Écriture du reftable binaire dans {test_directory}/reftable_msprime.bin")
 
     return results

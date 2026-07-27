@@ -22,12 +22,14 @@ from collections.abc import Iterator
 
 import msprime
 import numpy as np
+import tskit
 
 from bridge.demography_builder import rescale_demography
 from bridge.observed_data import (
     coalescence_coefficient,
     count_samples_per_population,
     individual_sexes_per_population,
+    observed_mrc,
     observed_reads,
     parse_maf_ratio,
     parse_mrc_ratio,
@@ -75,6 +77,7 @@ _MRC_BATCH_SIZE = 20
 
 # pour séparer le tirage binomial du tirage de mutation
 _BINOMIAL_SEED_OFFSET = 4_000_000
+
 
 # ── Construction de l'argument samples (un builder par type de locus) ──────
 
@@ -206,7 +209,7 @@ def simulate_independent_loci(
     num_loci: int,
     seed: int,
     ploidy: int = 2,
-) -> Iterator[msprime.TreeSequence]:
+) -> Iterator[tskit.TreeSequence]:
     """Simule num_loci généalogies indépendantes (un locus SNP = un
     réplicat, pas de recombinaison interne ni de liaison entre loci),
     sous la démographie donnée.
@@ -252,7 +255,7 @@ def simulate_shared_ancestry_loci(
     num_loci: int,
     seed: int,
     ploidy: int = 1,
-) -> Iterator[msprime.TreeSequence]:
+) -> Iterator[tskit.TreeSequence]:
     """Simule UNE SEULE généalogie puis la retourne répétée num_loci fois
     -- pour <Y>/<M>, dont tous les loci d'un même type partagent la même
     généalogie réelle (non-recombinants, transmission uniparentale),
@@ -289,9 +292,7 @@ def simulate_shared_ancestry_loci(
 # ── Mutation (algorithme de Hudson) ────────────────────────────────────────
 
 
-def _draw_single_mutation_edge_child(
-    ts: msprime.TreeSequence, rng: random.Random
-) -> int:
+def _draw_single_mutation_edge_child(ts: tskit.TreeSequence, rng: random.Random) -> int:
     """Tire le noeud portant la mutation unique, avec probabilité
     proportionnelle à la longueur de sa branche -- algorithme de Hudson,
     entièrement vectorisé via les tables (pas d'appel branch_length() par
@@ -320,7 +321,7 @@ def _draw_single_mutation_edge_child(
     return int(edges.child[idx])
 
 
-def _population_layout(ts: msprime.TreeSequence) -> list[tuple[str | None, np.ndarray]]:
+def _population_layout(ts: tskit.TreeSequence) -> list[tuple[str | None, np.ndarray]]:
     """Calcule la liste (nom de population, IDs des noeuds échantillons de
     cette population) pour une TreeSequence donnée.
 
@@ -345,6 +346,70 @@ def _population_layout(ts: msprime.TreeSequence) -> list[tuple[str | None, np.nd
     return layout
 
 
+def simulate_snp_genotypes(
+    tree_sequences: Iterator[tskit.TreeSequence],
+    seed: int,
+    population_layout: list[tuple[str | None, np.ndarray]] | None = None,
+) -> Iterator[dict[str, list[int]]]:
+    """Pour chaque TreeSequence (un locus = un arbre indépendant), tire
+    une mutation UNIQUE selon l'algorithme de Hudson (vectorisé), et
+    retourne les génotypes (0=ancestral, 1=dérivé) REGROUPÉS PAR
+    POPULATION.
+
+    Voir _draw_single_mutation_edge_child pour l'algorithme de tirage, et
+    la docstring d'origine pour la justification du modèle (doc DIYABC
+    section 2.4.3 : exactement une mutation par locus, locus toujours
+    polymorphe).
+
+    `population_layout` (voir `_population_layout`) : si `None` (cas
+    d'un appel unique sur tout un flux de loci, ex: chemin `maf=0.0`),
+    calculé UNE SEULE FOIS ici même, au premier locus, et réutilisé pour
+    tous les suivants -- valable car tous les `tree_sequences` d'un même
+    appel partagent la même `demography`/`samples` d'origine (mêmes
+    réplicats d'un seul appel à simulate_independent_loci/
+    simulate_shared_ancestry_loci) : seule la topologie coalescente varie
+    d'un locus à l'autre, jamais l'assignation des noeuds échantillons
+    aux populations (vérifié empiriquement). Si fourni par l'appelant
+    (ex: boucles de rejet MAF de `with_maf_filter`/`with_maf_filter_
+    shared_ancestry`, qui appellent cette fonction une fois PAR
+    TENTATIVE et calculent donc leur propre cache à travers les
+    tentatives), utilisé tel quel sans jamais être recalculé. Sans ce
+    cache, le redécodage du metadata des populations et le refiltrage de
+    ts.samples(population=...) à CHAQUE locus représentaient à eux seuls
+    ~20% du temps d'une particule sur 5000 loci (voir
+    notes/exploration.md, entrée du 20/07/2026) -- le plus gros poste
+    évitable du surcoût tskit par locus identifié dans cette
+    investigation.
+    """
+    rng = random.Random(seed)
+
+    for ts in tree_sequences:
+        tree = ts.first()
+        mutated_node = _draw_single_mutation_edge_child(ts, rng)
+        derived_samples = set(tree.samples(mutated_node))
+
+        if population_layout is None:
+            population_layout = _population_layout(ts)
+
+        genotypes_by_population = {
+            pop_name: [1 if s in derived_samples else 0 for s in sample_ids]
+            for pop_name, sample_ids in population_layout
+        }
+        yield genotypes_by_population
+
+
+# Passage des différents filtres pour les SNP
+
+
+def observed_maf(locus_genotypes: dict[str, list[int]]) -> float:
+    """MAF poolée sur toutes les populations, comme ParticleC::mafreached
+    (min(dérivé, ancestral) / total) -- pas juste la fréquence dérivée."""
+    all_genotypes = [g for genos in locus_genotypes.values() for g in genos]
+    n1 = sum(all_genotypes)
+    n0 = len(all_genotypes) - n1
+    return min(n0, n1) / len(all_genotypes)
+
+
 def with_maf_filter(
     demography: msprime.Demography,
     samples: dict[str, int] | list[msprime.SampleSet],
@@ -362,7 +427,7 @@ def with_maf_filter(
     rejeté) jusqu'à obtenir `num_loci` loci acceptés. Reproduit
     `ParticleC::mafreached` (particuleC.cpp:2194-2210).
 
-    `maf` doit déjà être résolu (ex: via `parse_maf_ratio` sur le fichier
+    `maf` doit déjà être extrait (ex: via `parse_maf_ratio` sur le fichier
     .snp observé) -- cette fonction ne lit aucun fichier, à l'appelant de
     décider d'où vient le seuil.
 
@@ -430,16 +495,7 @@ def with_maf_filter(
                 )
             )
 
-            total_derived = sum(
-                sum(genotypes) for genotypes in genotypes_by_population.values()
-            )
-            total_samples = sum(
-                len(genotypes) for genotypes in genotypes_by_population.values()
-            )
-            minor_allele_count = min(total_derived, total_samples - total_derived)
-            maf_observed = (
-                minor_allele_count / total_samples if total_samples > 0 else 0.0
-            )
+            maf_observed = observed_maf(genotypes_by_population)
 
             if maf_observed >= maf:
                 yield genotypes_by_population
@@ -474,7 +530,7 @@ def with_maf_filter_shared_ancestry(
     généalogie à chaque rejet -- les deux mécanismes sont réellement
     différents côté DIYABC, pas juste une simplification.
 
-    `maf` doit déjà être résolu (voir with_maf_filter). `maf=0.0` délègue
+    `maf` doit déjà être extrait (voir with_maf_filter). `maf=0.0` délègue
     directement à simulate_shared_ancestry_loci + simulate_snp_genotypes
     avec la même graine pour les deux, comportement identique à un appel
     direct de ces deux fonctions.
@@ -507,256 +563,13 @@ def with_maf_filter_shared_ancestry(
             )
         )
 
-        total_derived = sum(
-            sum(genotypes) for genotypes in genotypes_by_population.values()
-        )
-        total_samples = sum(
-            len(genotypes) for genotypes in genotypes_by_population.values()
-        )
-        minor_allele_count = min(total_derived, total_samples - total_derived)
-        maf_observed = minor_allele_count / total_samples if total_samples > 0 else 0.0
+        maf_observed = observed_maf(genotypes_by_population)
 
         if maf_observed >= maf:
             yield genotypes_by_population
             accepted_loci += 1
 
         attempt += 1
-
-
-def simulate_snp_genotypes(
-    tree_sequences: Iterator[msprime.TreeSequence],
-    seed: int,
-    population_layout: list[tuple[str | None, np.ndarray]] | None = None,
-) -> Iterator[dict[str, list[int]]]:
-    """Pour chaque TreeSequence (un locus = un arbre indépendant), tire
-    une mutation UNIQUE selon l'algorithme de Hudson (vectorisé), et
-    retourne les génotypes (0=ancestral, 1=dérivé) REGROUPÉS PAR
-    POPULATION.
-
-    Voir _draw_single_mutation_edge_child pour l'algorithme de tirage, et
-    la docstring d'origine pour la justification du modèle (doc DIYABC
-    section 2.4.3 : exactement une mutation par locus, locus toujours
-    polymorphe).
-
-    `population_layout` (voir `_population_layout`) : si `None` (cas
-    d'un appel unique sur tout un flux de loci, ex: chemin `maf=0.0`),
-    calculé UNE SEULE FOIS ici même, au premier locus, et réutilisé pour
-    tous les suivants -- valable car tous les `tree_sequences` d'un même
-    appel partagent la même `demography`/`samples` d'origine (mêmes
-    réplicats d'un seul appel à simulate_independent_loci/
-    simulate_shared_ancestry_loci) : seule la topologie coalescente varie
-    d'un locus à l'autre, jamais l'assignation des noeuds échantillons
-    aux populations (vérifié empiriquement). Si fourni par l'appelant
-    (ex: boucles de rejet MAF de `with_maf_filter`/`with_maf_filter_
-    shared_ancestry`, qui appellent cette fonction une fois PAR
-    TENTATIVE et calculent donc leur propre cache à travers les
-    tentatives), utilisé tel quel sans jamais être recalculé. Sans ce
-    cache, le redécodage du metadata des populations et le refiltrage de
-    ts.samples(population=...) à CHAQUE locus représentaient à eux seuls
-    ~20% du temps d'une particule sur 5000 loci (voir
-    notes/exploration.md, entrée du 20/07/2026) -- le plus gros poste
-    évitable du surcoût tskit par locus identifié dans cette
-    investigation.
-    """
-    rng = random.Random(seed)
-
-    for ts in tree_sequences:
-        tree = ts.first()
-        mutated_node = _draw_single_mutation_edge_child(ts, rng)
-        derived_samples = set(tree.samples(mutated_node))
-
-        if population_layout is None:
-            population_layout = _population_layout(ts)
-
-        genotypes_by_population = {
-            pop_name: [1 if s in derived_samples else 0 for s in sample_ids]
-            for pop_name, sample_ids in population_layout
-        }
-        yield genotypes_by_population
-
-
-def simulate_poolseq_reads(
-    tree_sequences: Iterator[msprime.TreeSequence],
-    observed_reads_per_locus: list[dict[str, tuple[int, int]]],
-    seed: int,
-    population_layout: list[tuple[str | None, np.ndarray]] | None = None,
-) -> Iterator[dict[str, tuple[int, int]]]:
-    """Simule les lectures Pool-seq pour chaque locus simulé,
-    en utilisant les génotypes simulés et le nombre de lectures observées par population.
-    `tree_sequences` : un itérateur de TreeSequence simulées pour chaque locus.
-    `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
-    `seed` : graine aléatoire pour la reproductibilité.
-    `population_layout` (voir `_population_layout`) : si `None` (cas d'un
-    appel unique sur tout un flux de loci, ex: chemin `mrc<=0`), calculé
-    UNE SEULE FOIS ici même, au premier locus, et réutilisé pour tous les
-    suivants -- même principe que `simulate_snp_genotypes`. Si fourni par
-    l'appelant (ex: boucle de rejet MRC de `with_mrc_filter`, qui appelle
-    cette fonction une fois PAR TENTATIVE et calcule donc son propre cache
-    à travers les tentatives), utilisé tel quel sans jamais être recalculé.
-    Retourne un itérateur de dictionnaires contenant le nombre de lectures dérivées et
-    ancestrales par population pour chaque locus.
-
-    A voir si zip pose problème, car longeur différente entre tree_sequences et observed_reads_per_locus,
-    sinon utiliser itertools.zip_longest(tree_sequence, obeserved_reads_per_locus, fillvalue=_SENTINEL)
-    """
-
-    rng = random.Random(seed)
-    binom_rng = np.random.default_rng(seed + _BINOMIAL_SEED_OFFSET)
-
-    for ts, reads_observed in zip(
-        tree_sequences, observed_reads_per_locus, strict=False
-    ):
-        tree = ts.first()
-        mutated_node = _draw_single_mutation_edge_child(ts, rng)
-        # set(...) impératif ICI (pas dans la boucle plus bas) : tree.samples()
-        # renvoie un générateur, épuisé après la 1ère population -- sans ce
-        # set() immédiat, pop_derived_count tombait silencieusement à 0 pour
-        # TOUTES les populations sauf la première de population_layout
-        # (confirmé empiriquement le 22/07/2026 : seule pop1 montrait jamais
-        # de variation dans tout un reftable simulé). simulate_snp_genotypes
-        # fait déjà ce set() immédiat, c'est le bon modèle à suivre.
-        derived_samples = set(tree.samples(mutated_node))
-        if population_layout is None:
-            population_layout = _population_layout(ts)
-
-        reads_by_population = {}
-        for pop_name, sample_ids in population_layout:
-            total_reads = reads_observed[pop_name][1]
-            pop_derived_count = len(derived_samples.intersection(sample_ids))
-            p = pop_derived_count / len(sample_ids) if len(sample_ids) > 0 else 0.0
-            if total_reads > 0:
-                derived_reads = binom_rng.binomial(total_reads, p)
-                reads_by_population[pop_name] = (derived_reads, total_reads)
-            else:
-                reads_by_population[pop_name] = (0, 0)
-        yield reads_by_population
-
-
-def _reindex_reads_by_msprime_name(
-    observed_reads_per_locus: list[dict[str, tuple[int, int]]],
-    snp_file_path: str,
-) -> list[dict[str, tuple[int, int]]]:
-    """Reindexe les lectures observées par locus pour correspondre aux noms de population utilisés par msprime.
-    `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
-    `snp_file_path` : chemin vers le fichier .snp pour obtenir la correspondance des noms de population.
-    Retourne une liste de dictionnaires avec les noms de population msprime comme clés.
-    """
-    index_to_name = population_index_to_name(snp_file_path)
-    real_name_to_msprime_name = {
-        name: f"pop{index}" for index, name in index_to_name.items()
-    }
-    return [
-        {
-            real_name_to_msprime_name[pop_name]: reads
-            for pop_name, reads in locus_reads.items()
-        }
-        for locus_reads in observed_reads_per_locus
-    ]
-
-
-def with_mrc_filter(
-    demography: msprime.Demography,
-    samples: dict[str, int] | list[msprime.SampleSet],
-    num_loci: int,
-    mrc: float,
-    observed_reads_per_locus: list[dict[str, tuple[int, int]]],
-    seed: int,
-    ploidy: int = 1,
-) -> Iterator[dict[str, tuple[int, int]]]:
-    """Simule des loci SNP indépendants avec filtre MRC (minimum read count).
-    Si le nombre de lectures dérivées est strictement inférieur à `mrc`, on rejette ce locus et on en resimule un nouveau.
-    Reproduit le comportement de `ParticleC::mrc_reached`.
-
-    `mrc` doit déjà être résolu (ex: via `parse_mrc_ratio` sur le fichier .snp observé).
-
-    `ploidy` : transmis tel quel à `simulate_independent_loci`.
-
-    `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
-
-    `mrc>0` : les tentatives sont tirées depuis un POOL PARTAGÉ ENTRE TOUS
-    LES LOCI, pas un pool privé par locus -- contrairement à un batching
-    naïf "par locus" (un nouveau lot de `_MRC_BATCH_SIZE` généalogies à
-    chaque `locus_index`, même si ce locus n'a besoin que d'UNE seule
-    tentative), qui paie un plancher d'un appel `simulate_independent_loci`
-    PAR LOCUS quel que soit le taux d'acceptation. Ici, un seul flux
-    continu de généalogies (régénéré par lot de `_MRC_BATCH_SIZE`
-    uniquement quand épuisé) est consommé par n'importe quel locus qui a
-    besoin d'une nouvelle tentative -- si la plupart des loci passent dès
-    le premier tirage (cas courant), un seul lot peut servir des dizaines
-    de loci au lieu d'un lot par locus. Gain mesuré empiriquement (script
-    jetable, toy_example4, mrc=5) : ~1.5x supplémentaire par rapport au
-    batching par-locus, quelle que soit la taille du lot (le partage
-    compte, pas la taille).
-
-    Le compteur `attempt` est GLOBAL et n'est jamais remis à zéro par
-    locus -- ça élimine par construction le risque de corrélation qui
-    existait avec l'ancien design par-locus (deux loci ayant besoin du
-    même nombre de tentatives tiraient alors le même arbre/mutation,
-    confirmé empiriquement le 22/07/2026) : chaque tentative, tous loci
-    confondus, consomme une position distincte dans un flux continu,
-    jamais réutilisée.
-    """
-
-    if mrc <= 0:
-        tree_sequences = simulate_independent_loci(
-            demography, samples, num_loci=num_loci, seed=seed, ploidy=ploidy
-        )
-        yield from simulate_poolseq_reads(
-            tree_sequences, observed_reads_per_locus, seed=seed
-        )
-        return
-    # Calculée une seule fois, à la première tentative, et réutilisée pour
-    # toutes les suivantes (tous les loci/tentatives partagent la même
-    # demography/samples) -- voir _population_layout et with_maf_filter
-    # (même principe côté IndSeq).
-    population_layout = None
-    # tree_sequences_iter : itérateur du lot COURANT de _MRC_BATCH_SIZE
-    # généalogies, PARTAGÉ entre tous les locus_index -- régénéré
-    # (nouveau lot, nouvelle graine) uniquement quand épuisé, jamais
-    # réinitialisé au passage à un nouveau locus (voir docstring).
-    tree_sequences_iter = None
-    batch_index = 0
-    attempt = 0
-    for locus_index in range(num_loci):
-        while True:
-            if tree_sequences_iter is None:
-                batch_seed = seed + batch_index * _MRC_BATCH_SIZE
-                tree_sequences_iter = simulate_independent_loci(
-                    demography,
-                    samples,
-                    num_loci=_MRC_BATCH_SIZE,
-                    seed=batch_seed,
-                    ploidy=ploidy,
-                )
-                batch_index += 1
-            ts = next(tree_sequences_iter, None)
-            if ts is None:
-                tree_sequences_iter = None
-                continue
-            if population_layout is None:
-                population_layout = _population_layout(ts)
-            reads_by_population = next(
-                simulate_poolseq_reads(
-                    [ts],
-                    observed_reads_per_locus[locus_index : locus_index + 1],
-                    seed=seed + attempt + _MRC_REJECTION_SEED_OFFSET,
-                    population_layout=population_layout,
-                )
-            )
-            attempt += 1
-            sum_derived = sum(
-                derived_reads for derived_reads, _ in reads_by_population.values()
-            )
-            sum_total = sum(
-                total_reads for _, total_reads in reads_by_population.values()
-            )
-            mrc_observed = (
-                min(sum_derived, sum_total - sum_derived) if sum_total > 0 else 0.0
-            )
-
-            if mrc_observed >= mrc:
-                yield reads_by_population
-                break
 
 
 # ── Dispatch par type de locus (compose tout ce qui précède) ──────────────
@@ -859,6 +672,191 @@ def simulate_genotypes_for_locus_type(
         )
     else:
         raise NotImplementedError(f"Type de locus non supporté: {locus_type!r}")
+
+
+# Simulation des lectures PoolSeq
+
+
+def simulate_poolseq_reads(
+    tree_sequences: Iterator[tskit.TreeSequence],
+    observed_reads_per_locus: list[dict[str, tuple[int, int]]],
+    seed: int,
+    population_layout: list[tuple[str | None, np.ndarray]] | None = None,
+) -> Iterator[dict[str, tuple[int, int]]]:
+    """Simule les lectures Pool-seq pour chaque locus simulé,
+    en utilisant les génotypes simulés et le nombre de lectures observées par population.
+    `tree_sequences` : un itérateur de TreeSequence simulées pour chaque locus.
+    `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
+    `seed` : graine aléatoire pour la reproductibilité.
+    `population_layout` (voir `_population_layout`) : si `None` (cas d'un
+    appel unique sur tout un flux de loci, ex: chemin `mrc<=0`), calculé
+    UNE SEULE FOIS ici même, au premier locus, et réutilisé pour tous les
+    suivants -- même principe que `simulate_snp_genotypes`. Si fourni par
+    l'appelant (ex: boucle de rejet MRC de `with_mrc_filter`, qui appelle
+    cette fonction une fois PAR TENTATIVE et calcule donc son propre cache
+    à travers les tentatives), utilisé tel quel sans jamais être recalculé.
+    Retourne un itérateur de dictionnaires contenant le nombre de lectures dérivées et
+    ancestrales par population pour chaque locus.
+
+    A voir si zip pose problème, car longeur différente entre tree_sequences et observed_reads_per_locus,
+    sinon utiliser itertools.zip_longest(tree_sequence, obeserved_reads_per_locus, fillvalue=_SENTINEL)
+    """
+
+    rng = random.Random(seed)
+    binom_rng = np.random.default_rng(
+        seed + _BINOMIAL_SEED_OFFSET
+    )  # graine aléatoire séparée pour le tirage binomial, pour ne pas interférer avec le tirage de mutation
+
+    for ts, reads_observed in zip(
+        tree_sequences, observed_reads_per_locus, strict=False
+    ):
+        tree = ts.first()
+        mutated_node = _draw_single_mutation_edge_child(ts, rng)
+        # set(...) impératif ICI (pas dans la boucle plus bas) : tree.samples()
+        # renvoie un générateur, épuisé après la 1ère population -- sans ce
+        # set() immédiat, pop_derived_count tombait silencieusement à 0 pour
+        # TOUTES les populations sauf la première de population_layout
+        # (confirmé empiriquement le 22/07/2026 : seule pop1 montrait jamais
+        # de variation dans tout un reftable simulé). simulate_snp_genotypes
+        # fait déjà ce set() immédiat, c'est le bon modèle à suivre.
+        derived_samples = set(tree.samples(mutated_node))
+        if population_layout is None:
+            population_layout = _population_layout(ts)
+
+        reads_by_population = {}
+        for pop_name, sample_ids in population_layout:
+            total_reads = reads_observed[pop_name][1]
+            pop_derived_count = len(derived_samples.intersection(sample_ids))
+            p = pop_derived_count / len(sample_ids) if len(sample_ids) > 0 else 0.0
+            if total_reads > 0:
+                derived_reads = binom_rng.binomial(total_reads, p)
+                reads_by_population[pop_name] = (derived_reads, total_reads)
+            else:
+                reads_by_population[pop_name] = (0, 0)
+        yield reads_by_population
+
+
+def _reindex_reads_by_msprime_name(
+    observed_reads_per_locus: list[dict[str, tuple[int, int]]],
+    snp_file_path: str,
+) -> list[dict[str, tuple[int, int]]]:
+    """Reindexe les lectures observées par locus pour correspondre aux noms de population utilisés par msprime.
+    `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
+    `snp_file_path` : chemin vers le fichier .snp pour obtenir la correspondance des noms de population.
+    Retourne une liste de dictionnaires avec les noms de population msprime comme clés.
+    """
+    index_to_name = population_index_to_name(
+        snp_file_path
+    )  # {1: "POP1", 2: "POP2", 3: "POP3", 4: "POP4"} pour toy_example4.
+    real_name_to_msprime_name = {
+        name: f"pop{index}" for index, name in index_to_name.items()
+    }
+    return [
+        {
+            real_name_to_msprime_name[pop_name]: reads
+            for pop_name, reads in locus_reads.items()
+        }
+        for locus_reads in observed_reads_per_locus
+    ]
+
+
+def with_mrc_filter(
+    demography: msprime.Demography,
+    samples: dict[str, int] | list[msprime.SampleSet],
+    num_loci: int,
+    mrc: float,
+    observed_reads_per_locus: list[dict[str, tuple[int, int]]],
+    seed: int,
+    ploidy: int = 2,
+) -> Iterator[dict[str, tuple[int, int]]]:
+    """Simule des loci SNP indépendants avec filtre MRC (minimum read count).
+    Si le nombre de lectures dérivées est strictement inférieur à `mrc`, on rejette ce locus et on en resimule un nouveau.
+    Reproduit le comportement de `ParticleC::mrc_reached`.
+
+    `mrc` doit déjà être extrait via `parse_mrc_ratio` sur le fichier .snp observé.
+
+    `ploidy` : transmis tel quel à `simulate_independent_loci`.
+
+    `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
+
+    `mrc>0` : les tentatives sont tirées depuis un POOL PARTAGÉ ENTRE TOUS
+    LES LOCI, pas un pool privé par locus -- contrairement à un batching
+    naïf "par locus" (un nouveau lot de `_MRC_BATCH_SIZE` généalogies à
+    chaque `locus_index`, même si ce locus n'a besoin que d'UNE seule
+    tentative), qui paie un plancher d'un appel `simulate_independent_loci`
+    PAR LOCUS quel que soit le taux d'acceptation. Ici, un seul flux
+    continu de généalogies (régénéré par lot de `_MRC_BATCH_SIZE`
+    uniquement quand épuisé) est consommé par n'importe quel locus qui a
+    besoin d'une nouvelle tentative -- si la plupart des loci passent dès
+    le premier tirage (cas courant), un seul lot peut servir des dizaines
+    de loci au lieu d'un lot par locus. Gain mesuré empiriquement (script
+    jetable, toy_example4, mrc=5) : ~1.5x supplémentaire par rapport au
+    batching par-locus, quelle que soit la taille du lot (le partage
+    compte, pas la taille).
+
+    Le compteur `attempt` est GLOBAL et n'est jamais remis à zéro par
+    locus -- ça élimine par construction le risque de corrélation qui
+    existait avec l'ancien design par-locus (deux loci ayant besoin du
+    même nombre de tentatives tiraient alors le même arbre/mutation,
+    confirmé empiriquement le 22/07/2026) : chaque tentative, tous loci
+    confondus, consomme une position distincte dans un flux continu,
+    jamais réutilisée.
+    """
+
+    if mrc <= 0:
+        tree_sequences = simulate_independent_loci(
+            demography, samples, num_loci=num_loci, seed=seed, ploidy=ploidy
+        )
+        yield from simulate_poolseq_reads(
+            tree_sequences, observed_reads_per_locus, seed=seed
+        )  # liste de dictionnaires contenant le nombre de lectures dérivées et ancestrales par population pour chaque locus
+        return
+    # Calculée une seule fois, à la première tentative, et réutilisée pour
+    # toutes les suivantes (tous les loci/tentatives partagent la même
+    # demography/samples) -- voir _population_layout et with_maf_filter
+    # (même principe côté IndSeq).
+    population_layout = None
+    # tree_sequences_iter : itérateur du lot COURANT de _MRC_BATCH_SIZE
+    # généalogies, PARTAGÉ entre tous les locus_index -- régénéré
+    # (nouveau lot, nouvelle graine) uniquement quand épuisé, jamais
+    # réinitialisé au passage à un nouveau locus (voir docstring).
+    tree_sequences_iter = None
+    batch_index = 0
+    attempt = 0
+    for locus_index in range(num_loci):
+        while True:
+            if tree_sequences_iter is None:
+                batch_seed = seed + batch_index * _MRC_BATCH_SIZE
+                tree_sequences_iter = simulate_independent_loci(
+                    demography,
+                    samples,
+                    num_loci=_MRC_BATCH_SIZE,
+                    seed=batch_seed,
+                    ploidy=ploidy,
+                )
+                batch_index += 1
+            ts = next(tree_sequences_iter, None)
+            if ts is None:
+                tree_sequences_iter = None
+                continue
+            if population_layout is None:
+                population_layout = _population_layout(ts)
+            reads_by_population = next(
+                simulate_poolseq_reads(
+                    [ts],
+                    observed_reads_per_locus[locus_index : locus_index + 1],
+                    seed=seed + attempt + _MRC_REJECTION_SEED_OFFSET,
+                    population_layout=population_layout,
+                )
+            )
+            attempt += 1
+
+            # calcul du mrc observé
+            mrc_observed = observed_mrc(reads_by_population)
+
+            if mrc_observed >= mrc:
+                yield reads_by_population
+                break
 
 
 def prepare_poolseq_observed_reads(

@@ -15,6 +15,7 @@ from bridge.ancestry_simulation import (
     build_male_only_samples_argument,
     build_samples_argument,
     build_sex_stratified_samples_argument,
+    observed_maf,
     simulate_genotypes_for_locus_type,
     simulate_independent_loci,
     simulate_poolseq_reads,
@@ -183,15 +184,6 @@ def test_simulate_genotypes_for_locus_type(header_text_te5):
             }, f"Locus non polymorphe : {locus_genotypes}"
 
 
-def _observed_maf(locus_genotypes: dict[str, list[int]]) -> float:
-    """MAF poolée sur toutes les populations, comme ParticleC::mafreached
-    (min(dérivé, ancestral) / total) -- pas juste la fréquence dérivée."""
-    all_genotypes = [g for genos in locus_genotypes.values() for g in genos]
-    n1 = sum(all_genotypes)
-    n0 = len(all_genotypes) - n1
-    return min(n0, n1) / len(all_genotypes)
-
-
 def test_with_maf_filter_no_filter_matches_direct_call(header_text):
     """maf=0.0 doit produire EXACTEMENT le même résultat qu'un appel
     direct à simulate_independent_loci + simulate_snp_genotypes (même
@@ -208,13 +200,13 @@ def test_with_maf_filter_no_filter_matches_direct_call(header_text):
     direct = list(
         simulate_snp_genotypes(
             simulate_independent_loci(
-                demography, samples, num_loci, seed=123, ploidy=2
+                demography, samples, num_loci, seed=123, ploidy=1
             ),
             seed=123,
         )
     )
     via_filter = list(
-        with_maf_filter(demography, samples, num_loci, maf=0.0, seed=123, ploidy=2)
+        with_maf_filter(demography, samples, num_loci, maf=0.0, seed=123, ploidy=1)
     )
 
     assert via_filter == direct
@@ -241,14 +233,14 @@ def test_with_maf_filter_shared_ancestry_no_filter_matches_direct_call(
     direct = list(
         simulate_snp_genotypes(
             simulate_shared_ancestry_loci(
-                rescaled_demography, samples, num_loci, seed=99, ploidy=1
+                rescaled_demography, samples, num_loci, seed=99, ploidy=2
             ),
             seed=99,
         )
     )
     via_filter = list(
         with_maf_filter_shared_ancestry(
-            rescaled_demography, samples, num_loci, maf=0.0, seed=99, ploidy=1
+            rescaled_demography, samples, num_loci, maf=0.0, seed=99, ploidy=2
         )
     )
 
@@ -280,7 +272,7 @@ def test_with_maf_filter_shared_ancestry_rejects_low_maf_loci(header_text_te5):
 
     assert len(loci) == num_loci
     for locus_genotypes in loci:
-        assert _observed_maf(locus_genotypes) >= maf
+        assert observed_maf(locus_genotypes) >= maf
 
 
 def test_reindex_reads_by_msprime_name():
@@ -313,7 +305,7 @@ def test_with_mrc_filter(header_text_te4):
             mrc,
             observed_reads_per_locus,
             seed=7,
-            ploidy=1,
+            ploidy=2,
         )
     )
     assert len(loci) == num_loci
@@ -345,7 +337,7 @@ def test_simulate_poolseq_reads(header_text_te4):
             build_samples_argument(OBSERVED_SNP_FILE_TE4),
             num_loci=n,
             seed=123,
-            ploidy=1,
+            ploidy=2,
         )
         return list(
             simulate_poolseq_reads(

@@ -33,7 +33,7 @@ from pathlib import Path
 
 
 def _find_header_index(lines: list[str]) -> int:
-    """Repère l'index de la ligne d'en-tête 'IND SEX POP' parmi les deux
+    """Repère l'index de la ligne d'en-tête 'IND SEX POP' ou 'POOL' parmi les deux
     premières lignes du fichier -- factorisé entre count_samples_per_population
     et individual_sexes_per_population, qui en ont toutes deux besoin.
 
@@ -107,9 +107,9 @@ def _parse_pool_header_line(lines: list[str], header_index: int) -> dict[str, in
 
 def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
     """Compte le nombre d'individus par population dans un fichier .snp
-    DIYABC au format 'IND SEX POP <génotypes...>'.
+    DIYABC au format 'IND SEX POP <génotypes...>'n ou 'POOL POP_NAME:HAPLOID_SAMPLE_SIZE'.
 
-    Ex: pour human_snp_all22chr_maf5.snp -> {"ASW": 30, "YRI": 30, ...}
+    Ex: pour human -> {"ASW": 30, "YRI": 30, ...} ou pour toy_example4 -> {"POP1": 200, "POP2": 200, "POP3": 200, "POP4": 200}.
 
     IMPORTANT -- garantie d'ordre : le dict retourné préserve l'ordre de
     première apparition des populations dans le fichier (garanti par
@@ -264,7 +264,7 @@ def population_index_to_name(snp_file_path: str | Path) -> dict[int, str]:
     header.txt (1-indexed : pop1, pop2, ...) et le nom réel de population
     tel qu'il apparaît dans le fichier .snp (ex: "ASW", "YRI"...).
 
-    Ex: {1: "ASW", 2: "YRI", 3: "CHB", 4: "GBR"} pour human.
+    Ex: {1: "ASW", 2: "YRI", 3: "CHB", 4: "GBR"} pour human et {1: "POP1", 2: "POP2", 3: "POP3", 4: "POP4"} pour toy_example4.
 
     Voir la docstring de count_samples_per_population pour la
     justification de ce mapping par ordre d'apparition (header.txt ne
@@ -272,6 +272,20 @@ def population_index_to_name(snp_file_path: str | Path) -> dict[int, str]:
     """
     names_in_order = list(count_samples_per_population(snp_file_path).keys())
     return {i + 1: name for i, name in enumerate(names_in_order)}
+
+
+def observed_mrc(reads_by_population: dict[str, tuple[int, int]]) -> float:
+    """Calcule le MRC observé pour un locus donné, à partir des lectures
+    observées par population (dictionnaire {nom_population: (nreads1,
+    nreads1+nreads2)}).
+
+    Retourne min(somme reads allèle1, somme reads allèle2) TOUTES
+    populations combinées, reproduisant exactement DataC::purgelocMRCPOOLSEQ
+    (data.cpp:1087-1093).
+    """
+    sum_derived = sum(derived for derived, _ in reads_by_population.values())
+    sum_total = sum(total for _, total in reads_by_population.values())
+    return min(sum_derived, sum_total - sum_derived) if sum_total > 0 else 0.0
 
 
 def observed_reads(
@@ -316,10 +330,8 @@ def observed_reads(
 
     # Fonction interne pour vérifier si le locus passe le seuil MRC
     def _passes_mrc(locus_reads: dict[str, tuple[int, int]]) -> bool:
-        sum_derived = sum(derived for derived, _ in locus_reads.values())
-        sum_total = sum(total for _, total in locus_reads.values())
-        minor_allele_count = min(sum_derived, sum_total - sum_derived)
-        return minor_allele_count >= mrc
+        mrc_observed = observed_mrc(locus_reads)
+        return mrc_observed >= mrc
 
     for line in lines[header_index + 1 :]:
         fields = line.split()
