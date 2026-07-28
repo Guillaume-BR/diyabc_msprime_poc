@@ -25,6 +25,15 @@ def test_priors_and_constraints(header_text):
     assert OrderConstraint(param1="t44", operator=">", param2="t22") in constraints
 
 
+def test_parse_priors_no_draw_until(header_text_te1):
+    """Vérifie le parsing de la section 'historical parameters priors' de
+    toy_example1, qui n'a pas de section 'DRAW UNTIL'."""
+    priors, constraints = parse_priors(header_text_te1)
+
+    assert len(priors) == 3
+    assert constraints == []
+
+
 def test_parse_group_priors(header_text_te2):
     group_priors = parse_group_priors(header_text_te2)
     assert len(group_priors) == 3
