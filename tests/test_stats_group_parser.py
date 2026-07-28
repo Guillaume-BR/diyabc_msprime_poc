@@ -4,7 +4,25 @@ vocabulaire ancien (obsolète) et moderne."""
 
 import pytest
 
-from bridge.stats_group_parser import parse_requested_statistic_names
+from bridge.stats_group_parser import (
+    _split_stats_blocks,
+    parse_requested_statistic_names,
+)
+
+
+def test_split_stats_blocks(header_text_te2):
+    """Vérifie que split_stats_blocks() découpe correctement la section
+    'group summary statistics' en blocs de lignes, un bloc par groupe
+    de statistiques (ex: "group G1 (N)"), et que le dernier bloc est
+    bien limité à la fin de la section (avant la ligne vide ou le
+    début d'une autre section)."""
+    blocks = _split_stats_blocks(header_text_te2)
+
+    assert len(blocks) == 3
+
+    # Vérifie que le premier bloc contient bien les lignes du groupe G1
+    assert len(blocks[0].splitlines()) == 12
+    assert blocks[0].startswith("group G1 (16)")
 
 
 def test_parse_requested_statistic_names_human_old_vocabulary(header_text):

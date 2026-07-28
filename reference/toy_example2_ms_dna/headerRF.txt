@@ -1,0 +1,118 @@
+pseudo_observed_DATASET_toy_example2_microsatellites_DNAsequences_ancestral_admixture_unsampled_pops_001.mss
+12 parameters and 58 summary statistics
+
+2 scenarios: 7 4 
+scenario 1 [0.5] (5)
+N1 N1 N1 N1 N1
+0 sample 1
+0 sample 2
+t1 merge 1 2
+ta split 1 3 4 ra
+t2 merge 5 3
+t2 merge 5 4
+scenario 2 [0.5] (2)
+N1 N1 
+0 sample 1
+0 sample 2
+t1 merge 1 2
+
+historical parameters priors (5,2)
+N1 N UN[10.0,10000.0,0.0,0.0]
+t1 T UN[10.0,10000.0,0.0,0.0]
+ta T UN[10.0,10000.0,0.0,0.0]
+ra A UN[0.001,0.999,0.0,0.0]
+t2 T UN[10.0,10000.0,0.0,0.0]
+ta>t1
+t2>ta
+DRAW UNTIL
+
+loci description (20)
+Locus_M_A_1_ <A> [M] G1 2 40
+Locus_M_A_2_ <A> [M] G1 2 40
+Locus_M_A_3_ <A> [M] G1 2 40
+Locus_M_A_4_ <A> [M] G1 2 40
+Locus_M_A_5_ <A> [M] G1 2 40
+Locus_M_A_6_ <A> [M] G1 2 40
+Locus_M_A_7_ <A> [M] G1 2 40
+Locus_M_A_8_ <A> [M] G1 2 40
+Locus_M_A_9_ <A> [M] G1 2 40
+Locus_M_A_10_ <A> [M] G1 2 40
+Locus_S_A_11_ <A> [S] G2 100
+Locus_S_A_12_ <A> [S] G2 100
+Locus_S_A_13_ <A> [S] G2 100
+Locus_S_A_14_ <A> [S] G2 100
+Locus_S_A_15_ <A> [S] G2 100
+Locus_S_M_16_ <M> [S] G3 100
+Locus_S_M_17_ <M> [S] G3 100
+Locus_S_M_18_ <M> [S] G3 100
+Locus_S_M_19_ <M> [S] G3 100
+Locus_S_M_20_ <M> [S] G3 100
+
+group priors (3)
+group G1 [M]
+MEANMU UN[1.00E-004,1.00E-3,0.0005,2]
+GAMMU GA[1.00E-005,1.00E-002,Mean_u,2]
+MEANP UN[1.00E-001,3.00E-001,0.22,2]
+GAMP GA[1.00E-002,9.00E-001,Mean_P,2]
+MEANSNI LU[1.00E-008,1.00E-005,1.00E-007,2]
+GAMSNI GA[1.00E-009,1.00E-004,Mean_u_SNI,2]
+group G2 [S]
+MEANMU UN[1.00E-8,1.00E-6,5E-9,2]
+GAMMU GA[1.00E-9,1.00E-5,Mean_u,2]
+MEANK1 UN[0.050,20,10,2]
+GAMK1 GA[0.050,20,Mean_k1,2]
+MEANK2 UN[0.050,20,10,2]
+GAMK2 GA[0.050,20,Mean_k2,2]
+MODEL K2P 10 2.00
+group G3 [S]
+MEANMU UN[1.00E-7,1.00E-5,5E-9,2]
+GAMMU GA[1.00E-8,1.00E-4,Mean_u,2]
+MEANK1 UN[0.050,20,10,2]
+GAMK1 GA[0.050,20,Mean_k1,2]
+MEANK2 UN[0.050,20,10,2]
+GAMK2 GA[0.050,20,Mean_k2,2]
+MODEL K2P 10 2.00
+
+group summary statistics (58)
+group G1 (16)
+NAL 1 2
+HET 1 2
+VAR 1 2
+MGW 1 2
+N2P 1.2
+H2P 1.2
+V2P 1.2
+FST 1.2
+LIK 1.2 2.1
+DAS 1.2
+DM2 1.2
+group G2 (21)
+NHA 1 2
+NSS 1 2
+MPD 1 2
+VPD 1 2
+DTA 1 2
+PSS 1 2
+MNS 1 2
+VNS 1 2
+NH2 1.2
+NS2 1.2
+MP2 1.2
+MPB 1.2
+HST 1.2
+group G3 (21)
+NHA 1 2
+NSS 1 2
+MPD 1 2
+VPD 1 2
+DTA 1 2
+PSS 1 2
+MNS 1 2
+VNS 1 2
+NH2 1.2
+NS2 1.2
+MP2 1.2
+MPB 1.2
+HST 1.2
+
+scenario N1 t1 ta ra t2 µmic_1 pmic_1 snimic_1 µseq_2 k1seq_2 µseq_3 k1seq_3   NAL_1_1       NAL_1_2       HET_1_1       HET_1_2       VAR_1_1       VAR_1_2       MGW_1_1       MGW_1_2      N2P_1_1.2     H2P_1_1.2     V2P_1_1.2     FST_1_1.2     LIK_1_1.2     LIK_1_2.1     DAS_1_1.2     DM2_1_1.2      NHA_2_1       NHA_2_2       NSS_2_1       NSS_2_2       MPD_2_1       MPD_2_2       VPD_2_1       VPD_2_2       DTA_2_1       DTA_2_2       PSS_2_1       PSS_2_2       MNS_2_1       MNS_2_2       VNS_2_1       VNS_2_2      NH2_2_1.2     NS2_2_1.2     MP2_2_1.2     MPB_2_1.2     HST_2_1.2      NHA_3_1       NHA_3_2       NSS_3_1       NSS_3_2       MPD_3_1       MPD_3_2       VPD_3_1       VPD_3_2       DTA_3_1       DTA_3_2       PSS_3_1       PSS_3_2       MNS_3_1       MNS_3_2       VNS_3_1       VNS_3_2      NH2_3_1.2     NS2_3_1.2     MP2_3_1.2     MPB_3_1.2     HST_3_1.2   

@@ -61,6 +61,42 @@ class Prior:
 
 
 @dataclass
+class GroupPrior:
+    """Une ligne de la section 'group priors' du header.txt.
+    Ex : group G1 [M]
+         MEANMU UN[1e-4,1e-3,5e-4,2]
+    -> GroupPrior(
+        group="G1",
+        ms_or_seq="M",
+        name="MEANMU",
+        law="UN",
+        min=1e-4,
+        max=1e-3,
+        mean=5e-4,
+        sdshape=2,
+        model=False,
+        name_model = None,
+        model_bounds=None)
+    """
+
+    group: str  # "G1"
+    ms_or_seq: str  # "M" ou "S" ou None si pas précisé
+    name: str  # "MEANMU"
+    law: str | None  # "UN", "LU", "GA" ou None si pas précisé ou si c'est un model
+    min: float | None  # 1e-4 ou None si pas précisé ou si c'est un model
+    max: float | None  # 1e-3 ou None si pas précisé
+    mean: float | None  # 5e-4 ou None si pas précisé
+    sdshape: float | None  # 2 ou None si pas précisé
+    model: (
+        bool | None
+    )  # True si c'est un model, False si c'est une loi, None si pas précisé
+    name_model: str | None  # "K2P" ou None si pas précisé ou si c'est une loi
+    model_bounds: (
+        tuple[float, ...] | None
+    )  # (0.0, 0.5, 0.0, 0.0) ou None si c'est une loi
+
+
+@dataclass
 class OrderConstraint:
     """Une ligne du type 't4>t3' ou 't431<t32' dans
     'historical parameters priors' : contrainte que doit respecter un
@@ -97,3 +133,20 @@ class LociDescription:
     total_loci: dict[str, int]  # {"A": 10, "X": 5, "Y": 2, "M": 1}
     group: str  # "G1"
     start_index: int  # 0 (déjà converti en 0-based, comme le C++ : prem = N - 1)
+
+
+@dataclass
+class LociDescriptionDetailed:
+    """Une ligne de la section 'loci description' du header.txt, au format détaillé
+    observé dans sequences-mut ("Locus_M_A_1_ <A> [M] G1 2 40"), pas au format condensé
+    observé dans sequences-mut ("5000 <A> G1 from 1"), qui est un format différent
+    (header.cpp distingue ces deux cas selon dataobs.filetype).
+    """
+
+    locus_name: str  # "Locus_M_A_1_"
+    heritage: str  # "A"
+    ms_or_seq: str  # "M" ou "S"
+    group: str  # "G1"
+    motif_size: int | None  # 2
+    motif_range: int | None  # 40
+    dnalength: int | None  # 100 (pour séquences, sinon None)

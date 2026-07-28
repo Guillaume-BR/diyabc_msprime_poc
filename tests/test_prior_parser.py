@@ -1,7 +1,7 @@
 """Vérifie prior_parser : extraction des priors et contraintes d'ordre
 depuis header.txt, et la règle de filtrage des priors quasi-constants."""
 
-from bridge.prior_parser import is_constant_prior, parse_priors
+from bridge.prior_parser import is_constant_prior, parse_group_priors, parse_priors
 from bridge.scenario_types import OrderConstraint, Prior
 
 
@@ -23,6 +23,15 @@ def test_priors_and_constraints(header_text):
     assert OrderConstraint(param1="t3", operator=">", param2="t2") in constraints
     assert OrderConstraint(param1="t44", operator=">", param2="t33") in constraints
     assert OrderConstraint(param1="t44", operator=">", param2="t22") in constraints
+
+
+def test_parse_group_priors(header_text_te2):
+    group_priors = parse_group_priors(header_text_te2)
+    assert len(group_priors) == 3
+    assert group_priors["G1"][0].name == "MEANMU"
+    assert group_priors["G1"][0].law == "UN"
+    assert len(group_priors["G3"][-1].model_bounds) == 2
+    assert group_priors["G3"][-1].model is True
 
 
 def test_is_constant_prior():

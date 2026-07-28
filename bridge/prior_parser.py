@@ -1,12 +1,17 @@
 import re
 
-from bridge.scenario_types import OrderConstraint, Prior
+from bridge.scenario_types import GroupPrior, OrderConstraint, Prior
 
 _SECTION_START_RE = re.compile(r"^historical parameters priors\s*\(")
 _SECTION_END_RE = re.compile(r"^DRAW UNTIL\s*$")
 
+_SECTION_GROUP_START = re.compile(r"^group priors\s*\(")
+
 # "N1 N UN[1000.0,100000.0,0.0,0.0]" -> name=N1, category=N, law=UN, bounds_str=...
 _PRIOR_LINE_RE = re.compile(r"^(\S+)\s+(\S+)\s+([A-Z]+)\[([^\]]+)\]\s*$")
+
+# MEANMU UN[1e-4,1e-3,5e-4,2]
+_PRIOR_GROUP_LINE_RE = re.compile(r"^(\S+)\s+([A-Z]+)\[([^\]]+)\]\s*$")
 
 # "t4>t3", "t431<t32", "t4>=t3", "t4<=t3" -> param1, operator, param2.
 # L'ordre des alternatives (>=|<=|>|<) importe : il faut tester les
@@ -15,7 +20,7 @@ _PRIOR_LINE_RE = re.compile(r"^(\S+)\s+(\S+)\s+([A-Z]+)\[([^\]]+)\]\s*$")
 _CONSTRAINT_LINE_RE = re.compile(r"^(\S+?)(>=|<=|>|<)(\S+)$")
 
 
-def _extract_priors_section(header_text: str) -> list[str]:
+def _extract_historical_priors_section(header_text: str) -> list[str]:
     """Extrait la section 'historical parameters priors' du texte complet de header.txt,
     et retourne la liste des lignes de cette section (sans les lignes vides)."""
     lines = header_text.splitlines()
@@ -33,7 +38,7 @@ def _extract_priors_section(header_text: str) -> list[str]:
         (
             i
             for i in range(start + 1, len(lines))
-            if _SECTION_END_RE.match(lines[i].strip())
+            if _SECTION_END_RE.match(lines[i].strip()) or lines[i] == ""
         ),
         None,
     )
@@ -55,7 +60,7 @@ def parse_priors(header_text: str) -> tuple[list[Prior], list[OrderConstraint]]:
     priors: list[Prior] = []
     constraints: list[OrderConstraint] = []
 
-    for line in _extract_priors_section(header_text):
+    for line in _extract_historical_priors_section(header_text):
         prior_match = _PRIOR_LINE_RE.match(line)
         if prior_match:
             name, category, law, bounds_str = prior_match.groups()
@@ -74,6 +79,117 @@ def parse_priors(header_text: str) -> tuple[list[Prior], list[OrderConstraint]]:
         raise ValueError(f"Ligne de la section priors non reconnue : {line!r}")
 
     return priors, constraints
+
+
+def _extract_priors_group_section(header_text: str) -> list[str]:
+    """Extrait la section 'group priors' du texte complet de header.txt,
+    et retourne la liste des lignes de cette section (sans les lignes vides)."""
+    lines = header_text.splitlines()
+
+    g_start = (
+        i for i, line in enumerate(lines) if _SECTION_GROUP_START.match(line.strip())
+    )
+    start = next(g_start, None)
+    if start is None:
+        raise ValueError(
+            "Impossible de trouver la section 'group priors' dans le texte fourni"
+        )
+
+    g_end = (i for i in range(start + 1, len(lines)) if lines[i] == "")
+    end = next(g_end, None)
+    if end is None:
+        raise ValueError(
+            "Impossible de trouver la fin de la section 'group priors' dans le texte fourni"
+        )
+    return [line.strip() for line in lines[start + 1 : end] if line.strip()]
+
+
+def parse_group_priors(header_text: str) -> dict[str, list[GroupPrior]]:
+    """Extrait les priors et model des différents group priors de header.txt.
+
+    Retourne un dictionnaire {group_name: [GroupPrior, ...], ...}.
+    Une ligne est soit une loi de prior, soit un model.
+    On pourra envisager de mettre un test plus robuste sur le format de la ligne de model,
+    mais pour l'instant on se contente de supposer que si la ligne n'est pas une loi de prior.
+    Possibilité d'erreur silencieuse !!
+    """
+    group_priors: dict[str, list[GroupPrior]] = {}
+
+    for line in _extract_priors_group_section(header_text):
+        # "group G1 [M]" -> group=G1, ms_or_seq=M
+        if line.startswith("group"):
+            parts = line.split()
+            if (
+                len(parts) != 3
+                or not parts[2].startswith("[")
+                or not parts[2].endswith("]")
+            ):
+                raise ValueError(
+                    f"Ligne de la section group priors non reconnue : {line!r}"
+                )
+            group_name = parts[1]
+            ms_or_seq = parts[2][1:-1]  # remove brackets
+            group_priors[group_name] = []
+            continue
+
+        # "MEANMU UN[1e-4,1e-3,5e-4,2]" -> name=MEANMU, law=UN, bounds_str=...
+        prior_match = _PRIOR_GROUP_LINE_RE.match(line)
+        if prior_match:
+            name, law, bounds_str = prior_match.groups()
+            dict_bounds = {"min": None, "max": None, "mean": None, "sdshape": None}
+            # On va tester chaque float(bounds_str.split(",")) pour voir si c'est un float ou pas,
+            # si c'est pas un float, on renvoie None
+            for i in range(len(bounds_str.split(","))):
+                try:
+                    dict_bounds[list(dict_bounds.keys())[i]] = float(
+                        bounds_str.split(",")[i]
+                    )
+                except ValueError:
+                    dict_bounds[list(dict_bounds.keys())[i]] = None
+            if not group_priors:
+                raise ValueError(
+                    f"Ligne de la section group priors avant tout 'group' : {line!r}"
+                )
+            last_group_name = list(group_priors.keys())[-1]
+            group_priors[last_group_name].append(
+                GroupPrior(
+                    group=last_group_name,
+                    ms_or_seq=ms_or_seq,
+                    name=name,
+                    law=law,
+                    min=dict_bounds["min"],
+                    max=dict_bounds["max"],
+                    mean=dict_bounds["mean"],
+                    sdshape=dict_bounds["sdshape"],
+                    model=False,
+                    name_model=None,
+                    model_bounds=None,
+                )
+            )
+            continue
+        else:
+            _, name_model = line.split()[0:2]
+            model_bounds = tuple(float(b) for b in line.split()[2:])
+            group_priors[last_group_name].append(
+                GroupPrior(
+                    group=last_group_name,
+                    ms_or_seq=ms_or_seq,
+                    name=None,
+                    law=None,
+                    min=None,
+                    max=None,
+                    mean=None,
+                    sdshape=None,
+                    model=True,
+                    name_model=name_model,
+                    model_bounds=model_bounds,
+                )
+            )
+            continue
+
+        raise ValueError(f"Ligne de la section group priors non reconnue : {line!r}")
+
+    return group_priors
 
 
 def is_constant_prior(prior: Prior) -> bool:

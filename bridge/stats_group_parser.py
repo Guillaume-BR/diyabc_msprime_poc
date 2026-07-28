@@ -27,54 +27,85 @@ _SECTION_HEADER_RE = re.compile(r"^group summary statistics\s*\((\d+)\)\s*$")
 _GROUP_LINE_RE = re.compile(r"^group\s+(\S+)\s*\((\d+)\)\s*$")
 
 
-def parse_requested_statistic_names(header_text: str) -> list[str]:
-    """Extrait, dans l'ordre de déclaration, les noms de colonnes de
-    statistiques attendues par header.txt (section 'group summary
-    statistics').
+def _split_stats_blocks(header_text: str) -> list[str]:
+    """Découpe le texte complet de header.txt en blocs bruts, un par
+    groupe, chaque bloc commençant par sa ligne d'en-tête
+    'group G1 (N)' et s'arrêtant juste avant le bloc suivant
+    (ou la fin de la section, ex: 'scenario')."""
 
-    Limité à un seul groupe de statistiques (ex: "group G1 (N)") --
-    lève NotImplementedError si plusieurs groupes sont déclarés (non
-    rencontré sur human/toy_example5).
-    """
     lines = header_text.splitlines()
-
-    section_index = next(
+    # repère la ligne d'index où démarre la section "group summary statistics (N)".
+    section_start_index = next(
         (i for i, line in enumerate(lines) if _SECTION_HEADER_RE.match(line.strip())),
         None,
     )
-    if section_index is None:
+    if section_start_index is None:
         raise ValueError(
             "Section 'group summary statistics' non trouvée dans header.txt"
         )
 
-    group_line = lines[section_index + 1].strip()
-    group_match = _GROUP_LINE_RE.match(group_line)
-    if not group_match:
-        raise ValueError(f"Ligne de groupe inattendue : {group_line!r}")
-    expected_count = int(group_match.group(2))
+    # Repère les lignes d'index où démarre chaque groupe de statistiques (ex: "group G1 (N)").
+    start_indices = [
+        i
+        for i, line in enumerate(lines)
+        if _GROUP_LINE_RE.match(line.strip()) and i > section_start_index
+    ]
+    if not start_indices:
+        raise ValueError("Aucun bloc 'group Gx (N)' trouvé dans le texte fourni")
 
-    content_lines = []
-    for line in lines[section_index + 2 :]:
-        stripped = line.strip()
-        if not stripped:
-            break
-        if stripped.startswith("group "):
-            raise NotImplementedError(
-                "Plusieurs groupes de statistiques déclarés -- non géré par "
-                "ce parser (un seul groupe attendu, ex: 'group G1 (N)')"
+    # Borne de fin pour le tout dernier groupe : la dernière ligne du fichier "scenario N1 N2 ...",
+    # si elle est présente, sinon la fin du fichier.
+    last_line_section = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if line.strip().startswith("scenario") and i > start_indices[-1]
+        ),
+        len(lines),
+    )
+
+    blocks = []
+    for k, start in enumerate(start_indices):
+        end = start_indices[k + 1] if k + 1 < len(start_indices) else last_line_section
+        block = "\n".join(lines[start:end]).strip()
+        blocks.append(block)
+    return blocks
+
+
+def parse_requested_statistic_names(header_text: str) -> list[str]:
+    """Extrait, dans l'ordre de déclaration, les noms de colonnes de
+    statistiques attendues par header.txt (section 'group summary
+    statistics').
+    """
+    blocks = _split_stats_blocks(header_text)
+
+    stats_blocks = {}
+    for block in blocks:
+        group_line = block.splitlines()[0].strip()
+        group_match = _GROUP_LINE_RE.match(group_line)
+        if not group_match:
+            raise ValueError(f"Ligne de groupe inattendue : {group_line!r}")
+        expected_count = int(group_match.group(2))
+
+        content_lines = []
+        for line in block.splitlines()[1:]:
+            stripped = line.strip()
+            if not stripped:
+                break
+            content_lines.append(stripped)
+
+        names = []
+        for stripped in content_lines:
+            tokens = stripped.split()
+            stat_name, indices = tokens[0], tokens[1:]
+            names.extend(f"{stat_name}_{index}" for index in indices)
+
+        if len(names) != expected_count:
+            raise ValueError(
+                f"'{group_line}' annonce {expected_count} statistiques mais "
+                f"{len(names)} ont été trouvées en parsant les lignes suivantes"
             )
-        content_lines.append(stripped)
 
-    names = []
-    for stripped in content_lines:
-        tokens = stripped.split()
-        stat_name, indices = tokens[0], tokens[1:]
-        names.extend(f"{stat_name}_{index}" for index in indices)
+        stats_blocks[group_match.group(1)] = names
 
-    if len(names) != expected_count:
-        raise ValueError(
-            f"'{group_line}' annonce {expected_count} statistiques mais "
-            f"{len(names)} ont été trouvées en parsant les lignes suivantes"
-        )
-
-    return names
+    return [name for group_names in stats_blocks.values() for name in group_names]

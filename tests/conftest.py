@@ -64,3 +64,9 @@ def header_text_te3_scenario1() -> str:
     seul dataset de ce projet avec un vrai filtre MAF actif (<MAF=0.05>,
     contrairement à human/toy_example5 qui sont <MAF=hudson>)."""
     return (OBSERVED_SNP_FILE_TE3_SCENARIO1.parent / "headerRF.txt").read_text()
+
+
+@pytest.fixture
+def header_text_te2() -> str:
+    path_te2 = REFERENCE_DIR.parent / "toy_example2_ms_dna" / "headerRF.txt"
+    return path_te2.read_text()
