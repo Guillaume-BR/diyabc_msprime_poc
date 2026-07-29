@@ -6,6 +6,7 @@ voir notes/exploration.md)."""
 import pytest
 from conftest import (
     OBSERVED_SNP_FILE_HUMAN,
+    OBSERVED_SNP_FILE_TE2,
     OBSERVED_SNP_FILE_TE3,
     OBSERVED_SNP_FILE_TE4,
     OBSERVED_SNP_FILE_TE5,
@@ -13,11 +14,13 @@ from conftest import (
 
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
+    base_frequency_by_locus,
     coalescence_coefficient,
     count_samples_per_population,
     detect_snp_file_type,
     individual_sexes_per_population,
     observed_reads,
+    observed_sequences,
     parse_maf_ratio,
     parse_mrc_ratio,
     parse_sex_ratio,
@@ -149,3 +152,56 @@ def test_coalescence_coefficient():
         match="Type de locus inconnu pour le calcul du coefficient de coalescence : 'Z'",
     ):
         coalescence_coefficient("Z", sexe_ratio_te5)  # type de locus inconnu
+
+
+def test_observed_sequences(header_text_te2):
+    """Vérifie que le parsing du fichier snp renvoie bien les séquences
+    observées par individu, pour le fichier toy_example2 (dataset <A>+<M>
+    avec 3 populations)."""
+    list_loci = parse_loci_description(header_text_te2)
+    nb_seq = len([locus for locus in list_loci if locus.ms_or_seq == "S"])
+    sequences_te2 = observed_sequences(OBSERVED_SNP_FILE_TE2, list_loci)
+    assert len(sequences_te2.keys()) == nb_seq
+    assert len(sequences_te2[list(sequences_te2.keys())[0]]) == 80
+    assert (
+        sequences_te2[list(sequences_te2.keys())[0]][0]
+        == "GGGGAGGATTTGGCCCTTGCAAAAACAAGGGCTCAACTACGTCCCGCGATCTTGCTTACTTCCACAATCGGTAGCTCATCTTTAAGCACAGCAGAGAAAA"
+    )
+
+
+def test_base_frequency_by_locus(header_text_te2):
+    """Vérifie que le calcul des fréquences de bases par locus est correct
+    pour le fichier toy_example2 (dataset <A>+<M> avec 3 populations)."""
+    list_loci = parse_loci_description(header_text_te2)
+    sequences_te2 = observed_sequences(OBSERVED_SNP_FILE_TE2, list_loci)
+    base_freqs = base_frequency_by_locus(sequences_te2)
+    assert len(base_freqs.keys()) == len(sequences_te2.keys())
+    for _, freqs in base_freqs.items():
+        total_freq = sum(freqs.values())
+        assert (
+            abs(total_freq - 1.0) < 1e-6
+        )  # La somme des fréquences doit être proche de 1
+    assert base_freqs[list(base_freqs.keys())[0]]["pi_A"] == 0.29
+
+
+def test_base_frequency_by_locus_limites():
+    """Vérifie le comportement de base_frequency_by_locus dans les cas limites."""
+    # test du cas limite avec que des N ou des - dans les séquences
+    sequence_test = {
+        "locus_test": ["NNNNNNNNNN", "----------", "NNNNNNNNNN", "----------"]
+    }
+    base_freqs_test = base_frequency_by_locus(sequence_test)
+    assert base_freqs_test["locus_test"]["pi_A"] == 0.0
+    assert base_freqs_test["locus_test"]["pi_C"] == 0.0
+    assert base_freqs_test["locus_test"]["pi_G"] == 0.0
+    assert base_freqs_test["locus_test"]["pi_T"] == 0.0
+
+
+def test_base_frequency_by_locus_invalid_base():
+    """Vérifie le comportement de base_frequency_by_locus avec des bases invalides."""
+    # test du cas avec une séquence qui contient un caractère inconnu
+    sequence_test_invalid = {
+        "locus_test_invalid": ["ACGTACGTAC", "ACGTACGTAC", "ACGTACGTAC", "ACGTACGTAX"]
+    }
+    with pytest.raises(ValueError, match="Base inattendue"):
+        base_frequency_by_locus(sequence_test_invalid)

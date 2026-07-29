@@ -14,7 +14,7 @@ def test_parse_loci_description(header_text):
     assert description.start_index == 0  # "from 1" en 1-based -> 0 en 0-based
 
 
-def test_parse_loci_description_detailles(header_text_te2):
+def test_parse_loci_description_detailled(header_text_te2):
     """Vérifie le parsing de la section 'loci description' de toy_example2,
     format détaillé avec une seul type d'héritage avec des microsat et des
     séquences dna."""

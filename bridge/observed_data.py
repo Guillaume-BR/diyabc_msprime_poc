@@ -28,8 +28,11 @@ lectures simulées (voir `simulate_poolseq_reads`,
 simulée, jamais la couverture elle-même.
 """
 
+import re
 from collections import Counter
 from pathlib import Path
+
+from bridge.scenario_types import LociDescriptionDetailed
 
 
 def _find_header_index(lines: list[str]) -> int:
@@ -46,6 +49,7 @@ def _find_header_index(lines: list[str]) -> int:
     Lève ValueError si l'en-tête n'est trouvé dans aucune des deux
     premières lignes.
     """
+
     header_index = next(
         (
             i
@@ -387,3 +391,93 @@ def coalescence_coefficient(locus_type: str, sex_ratio: float) -> float:
             f"Type de locus inconnu pour le calcul du coefficient de "
             f"coalescence : {locus_type!r}"
         )
+
+
+# Parsing des séquences ADN observées
+
+
+def observed_sequences(
+    mss_file_path: str | Path, list_loci: list[LociDescriptionDetailed]
+) -> dict[str, list[str]]:
+    """Lit les séquences ADN observées dans un fichier .mss"""
+    lines = Path(mss_file_path).read_text().splitlines()
+
+    g = (i for i, line in enumerate(lines) if line.startswith("POP"))
+    first_POP_line_index = next(g, None)
+
+    if first_POP_line_index is None:
+        raise ValueError(
+            f"Le fichier {mss_file_path} ne contient aucune ligne 'POP'. "
+            f"Format de fichier .mss invalide."
+        )
+    nb_seq = len([locus for locus in list_loci if locus.ms_or_seq == "S"])
+
+    sequences_by_indiv: dict[str, list[str]] = {}
+    _MATCH_SEQUENCES = re.compile(r"^\<\[(\S+)\]\>$")
+    for line in lines[first_POP_line_index + 1 :]:
+        if not line.strip():
+            continue
+        if line.startswith("POP"):
+            continue
+        fields = line.split()
+
+        match_counter = 0
+        for field, loci in zip(fields[2:], list_loci, strict=True):
+            match = _MATCH_SEQUENCES.match(field)
+            if not match:
+                continue
+            match_counter += 1
+            sequence = match.group(1).split("][")  # quand il s'agit d'un locus diploïde
+            for i in range(len(sequence)):
+                sequences_by_indiv.setdefault(loci.locus_name, []).append(sequence[i])
+
+        if match_counter != nb_seq:
+            raise ValueError(
+                f"Le nombre de séquences observées ({match_counter}) ne correspond pas au nombre de loci séquentiels ({nb_seq})."
+            )
+    return sequences_by_indiv
+
+
+def base_frequency_by_locus(
+    sequences_by_indiv: dict[str, list[str]],
+) -> dict[str, dict[str, float]]:
+    """Calcule la fréquence des séquences observées par locus, à partir du
+    dictionnaire {nom_locus: [séquence1, séquence2, ...]} retourné par
+    observed_sequences. Retourne un dictionnaire {nom_locus: Counter({séquence: fréquence})}.
+    """
+    base_frequencies_by_locus: dict[str, dict[str, float]] = {}
+    for locus_name in sequences_by_indiv:
+        sequences = sequences_by_indiv[locus_name]
+        n = 0
+        n_A, n_C, n_G, n_T = 0, 0, 0, 0
+        for sequence in sequences:
+            for base in sequence:
+                if base not in "ACGTN-":
+                    raise ValueError(
+                        f"Base inattendue dans la séquence observée pour le locus {locus_name}: {base!r}. "
+                        f"Les bases attendues sont A, C, G, T, N ou -."
+                    )
+                if base in "ACGT":
+                    n += 1
+                if base == "A":
+                    n_A += 1
+                elif base == "C":
+                    n_C += 1
+                elif base == "G":
+                    n_G += 1
+                elif base == "T":
+                    n_T += 1
+        if n == 0:
+            base_frequencies_by_locus.setdefault(locus_name, {}).update(
+                {"pi_A": 0.0, "pi_C": 0.0, "pi_G": 0.0, "pi_T": 0.0}
+            )
+        else:
+            base_frequencies_by_locus.setdefault(locus_name, {}).update(
+                {
+                    "pi_A": n_A / n,
+                    "pi_C": n_C / n,
+                    "pi_G": n_G / n,
+                    "pi_T": n_T / n,
+                }
+            )
+    return base_frequencies_by_locus

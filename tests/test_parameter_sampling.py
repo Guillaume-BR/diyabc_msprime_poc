@@ -2,12 +2,15 @@
 d'ordre, arrondi DIYABC (round-half-up pour N/T, continu pour A), et
 tirage pondéré du scénario."""
 
+import dataclasses
+
 from bridge.parameter_sampling import (
     _draw_one_value,
+    draw_group_parameter_values,
     draw_parameter_values,
     draw_scenario,
 )
-from bridge.prior_parser import parse_priors
+from bridge.prior_parser import parse_group_priors, parse_priors
 from bridge.scenario_parser import parse_header_scenarios
 from bridge.scenario_types import Prior, Scenario
 
@@ -128,3 +131,29 @@ def test_draw_scenario_fallback_when_weights_sum_below_one():
     # seed=2 -> rng.random() == 0.956..., largement > 0.2 (somme des poids)
     drawn = draw_scenario(scenarios, seed=2)
     assert drawn.index == 2
+
+
+def test_draw_group_parameter_values(header_text_te2):
+    """Vérifie bien que draw_group_parameter_values tire une valeur pour chaque paramètre du groupe
+    et que le tirage retourné respecte toutes les dépendances entre les paramètres
+    du groupe comme Mean_u pour la loi Gamma"""
+    group_priors = parse_group_priors(header_text_te2)
+    group_priors_values = draw_group_parameter_values(group_priors, seed=42)
+
+    assert len(group_priors_values) == 3
+    assert len(group_priors_values["G2"]) == 6
+
+
+def test_draw_group_parameter_values_hierarchical_mean(header_text_te2):
+    """Vérifie que draw_group_parameter_values tire une valeur pour chaque paramètre du groupe
+    et que le tirage retourné respecte toutes les dépendances entre les paramètres
+    du groupe comme Mean_u pour la loi Gamma"""
+    group_priors = parse_group_priors(header_text_te2)
+    priors_g1 = group_priors["G1"]
+    for i, gp in enumerate(priors_g1):
+        if gp.name == "GAMMU":
+            priors_g1[i] = dataclasses.replace(gp, sdshape=1e-15)
+
+    values = draw_group_parameter_values(group_priors, seed=42)
+
+    assert values["G1"]["GAMMU"] == values["G1"]["MEANMU"]
