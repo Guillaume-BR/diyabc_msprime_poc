@@ -214,3 +214,29 @@ def is_constant_prior(prior: Prior) -> bool:
     if maxi == 0.0:
         return False
     return (maxi - mini) / maxi <= 0.000001
+
+
+def get_parameter_used_by_model(group_prior: GroupPrior) -> tuple[bool, bool]:
+    """Détermine les paramètres actifs dans le modèle mutaionnel dans le cas de séquences d'ADN
+    Retourne un tuple (bool, bool) : (transition/transversion ratio, proportion de sites invariables)
+    Pour JK, les deux paramètres sont inactifs (False, False), pour K2P et HKY, seul k1 est actif (True, False),
+    pour TN, les deux paramètres k1, k2 sont actifs (True, True)
+    """
+    if not group_prior.model:
+        raise NotImplementedError(
+            "Le modèle mutationnel n'est pas défini pour ce locus"
+        )
+    elif group_prior.name_model is None:
+        raise NotImplementedError(
+            "Le nom du modèle mutationnel n'est pas défini pour ce locus"
+        )
+    elif group_prior.name_model == "JK":
+        return (False, False)
+    elif group_prior.name_model == "K2P" or group_prior.name_model == "HKY":
+        return (True, False)
+    elif group_prior.name_model == "TN":
+        return (True, True)
+    else:
+        raise NotImplementedError(
+            f"Le modèle mutaionnel {group_prior.name_model} n'est pas encore implémenté"
+        )

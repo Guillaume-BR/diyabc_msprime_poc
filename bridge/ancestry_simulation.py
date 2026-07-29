@@ -953,3 +953,69 @@ def simulate_poolseq_reads_with_mrc_filter(
     return with_mrc_filter(
         demography, samples, num_loci, mrc, observed_reads_per_locus, seed, ploidy=2
     )
+
+
+def transition_matrix(
+    name_model: str, kappas: tuple[float, float], frequences_by_locus: dict[str, float]
+) -> np.ndarray:
+    """Calcule la matrice de transition pour un modèle donné et des fréquences de bases par locus.
+    Elle renvoie une matrice 4x4 représentant les probabilités de transition entre les bases A, C, G et T.
+    """
+    pi_A, pi_C, pi_G, pi_T = (
+        frequences_by_locus["pi_A"],
+        frequences_by_locus["pi_C"],
+        frequences_by_locus["pi_G"],
+        frequences_by_locus["pi_T"],
+    )
+    k1, k2 = kappas[0], kappas[1]
+    # Initialisation de la matrice de transition
+    transition_matrix = np.zeros((4, 4))
+    for i in range(4):
+        for j in range(4):
+            if i == j:
+                transition_matrix[i, j] = 0
+            else:
+                transition_matrix[i, j] = 1
+    if name_model == "JK":
+        pass
+    elif name_model == "K2P":
+        (
+            transition_matrix[0, 2],
+            transition_matrix[1, 3],
+            transition_matrix[2, 0],
+            transition_matrix[3, 1],
+        ) = k1, k1, k1, k1
+    elif name_model == "HKY":
+        transition_matrix[0, 1] = pi_C
+        transition_matrix[0, 2] = k1 * pi_G
+        transition_matrix[0, 3] = pi_T
+        transition_matrix[1, 0] = pi_A
+        transition_matrix[1, 2] = pi_G
+        transition_matrix[1, 3] = k1 * pi_T
+        transition_matrix[2, 0] = k1 * pi_A
+        transition_matrix[2, 1] = pi_C
+        transition_matrix[2, 3] = pi_T
+        transition_matrix[3, 0] = pi_A
+        transition_matrix[3, 1] = k1 * pi_C
+        transition_matrix[3, 2] = pi_G
+    elif name_model == "TN":
+        transition_matrix[0, 1] = pi_C
+        transition_matrix[0, 2] = k1 * pi_G
+        transition_matrix[0, 3] = pi_T
+        transition_matrix[1, 0] = pi_A
+        transition_matrix[1, 2] = pi_G
+        transition_matrix[1, 3] = k2 * pi_T
+        transition_matrix[2, 0] = k1 * pi_A
+        transition_matrix[2, 1] = pi_C
+        transition_matrix[2, 3] = pi_T
+        transition_matrix[3, 0] = pi_A
+        transition_matrix[3, 1] = k2 * pi_C
+        transition_matrix[3, 2] = pi_G
+    else:
+        raise NotImplementedError(
+            f"Modèle de substitution non supporté: {name_model!r}"
+        )
+
+    # Normalisation de la matrice de transition
+    transition_matrix = transition_matrix / transition_matrix.sum(axis=1, keepdims=True)
+    return transition_matrix

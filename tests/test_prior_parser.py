@@ -1,8 +1,15 @@
 """Vérifie prior_parser : extraction des priors et contraintes d'ordre
 depuis header.txt, et la règle de filtrage des priors quasi-constants."""
 
-from bridge.prior_parser import is_constant_prior, parse_group_priors, parse_priors
-from bridge.scenario_types import OrderConstraint, Prior
+import pytest
+
+from bridge.prior_parser import (
+    get_parameter_used_by_model,
+    is_constant_prior,
+    parse_group_priors,
+    parse_priors,
+)
+from bridge.scenario_types import GroupPrior, OrderConstraint, Prior
 
 
 def test_priors_and_constraints(header_text):
@@ -68,3 +75,31 @@ def test_is_constant_prior():
         name="Z", category="N", law="UN", bounds=(100.0, 100.1, 0.0, 0.0)
     )
     assert is_constant_prior(barely_variable_prior) is False
+
+
+def test_get_parameter_used_by_model(header_text_te2):
+    """Vérifie que la fonction get_parameter_used_by_model retourne bien
+    le bon tuple de booléen pour le nom de modèle donné.
+    """
+    group_priors = parse_group_priors(header_text_te2)
+    last_prior = group_priors["G3"][-1]
+    assert get_parameter_used_by_model(last_prior) == (True, False)
+
+    with pytest.raises(NotImplementedError, match="Le modèle mutationnel"):
+        get_parameter_used_by_model(group_priors["G1"][0])
+
+    prior_without_name_model = GroupPrior(
+        group="G1",
+        ms_or_seq=None,
+        name=None,
+        law=None,
+        min=None,
+        max=None,
+        mean=None,
+        sdshape=None,
+        model=True,
+        name_model=None,
+        model_bounds=(5, 6),
+    )
+    with pytest.raises(NotImplementedError, match="Le nom du modèle"):
+        get_parameter_used_by_model(prior_without_name_model)
