@@ -69,7 +69,9 @@ def _extract_loci_info_condensed(text: str) -> tuple[dict[str, int], str, str]:
     return total_loci, group, start_1based
 
 
-def parse_loci_description(header_text: str) -> LociDescription:
+def parse_loci_description(
+    header_text: str,
+) -> LociDescription | list[LociDescriptionDetailed]:
     """Extrait la description des loci à partir de header.txt, pour le
     format condensé (single-type comme human, ou multi-type comme
     toy_example5) et le format description locus par locus
@@ -96,7 +98,7 @@ def parse_loci_description(header_text: str) -> LociDescription:
                 )
                 list_loci.append(
                     LociDescriptionDetailed(
-                        locus_name=name,
+                        name=name,
                         heritage=heritage,
                         ms_or_seq=ms_or_seq,
                         group=group,
@@ -109,7 +111,7 @@ def parse_loci_description(header_text: str) -> LociDescription:
                 name, heritage, ms_or_seq, group, dnalength, _ = match.groups()
                 list_loci.append(
                     LociDescriptionDetailed(
-                        locus_name=name,
+                        name=name,
                         heritage=heritage,
                         ms_or_seq=ms_or_seq,
                         group=group,

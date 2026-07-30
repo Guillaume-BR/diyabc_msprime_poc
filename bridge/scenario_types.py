@@ -143,7 +143,7 @@ class LociDescriptionDetailed:
     (header.cpp distingue ces deux cas selon dataobs.filetype).
     """
 
-    locus_name: str  # "Locus_M_A_1_"
+    name: str  # "Locus_M_A_1_"
     heritage: str  # "A"
     ms_or_seq: str  # "M" ou "S"
     group: str  # "G1"

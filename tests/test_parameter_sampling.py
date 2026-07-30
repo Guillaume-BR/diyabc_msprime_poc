@@ -3,12 +3,15 @@ d'ordre, arrondi DIYABC (round-half-up pour N/T, continu pour A), et
 tirage pondéré du scénario."""
 
 import dataclasses
+import random
 
+from bridge.loci_parser import parse_loci_description
 from bridge.parameter_sampling import (
     _draw_one_value,
     draw_group_parameter_values,
     draw_parameter_values,
     draw_scenario,
+    sampling_kappa_per_locus,
 )
 from bridge.prior_parser import parse_group_priors, parse_priors
 from bridge.scenario_parser import parse_header_scenarios
@@ -157,3 +160,55 @@ def test_draw_group_parameter_values_hierarchical_mean(header_text_te2):
     values = draw_group_parameter_values(group_priors, seed=42)
 
     assert values["G1"]["GAMMU"] == values["G1"]["MEANMU"]
+
+
+def test_sampling_kappa_per_locus(header_text_te2):
+    """Vérifie que sampling_kappa_per_locus tire une valeur pour chaque locus du groupe
+    et que le tirage retourné respecte toutes les dépendances entre les paramètres
+    du groupe comme Mean_u pour la loi Gamma"""
+    group_priors = parse_group_priors(header_text_te2)
+    priors_g2 = group_priors["G2"]
+    list_loci_g2 = [
+        locus
+        for locus in parse_loci_description(header_text_te2)
+        if locus.group == "G2"
+    ]
+    values = draw_group_parameter_values(group_priors, seed=42)
+
+    # test avec un sdshape > 0.001, donc tirage aléatoire
+    prior_gamma1 = next((gp for gp in priors_g2 if gp.name == "GAMK1"), None)
+    kappa_values = sampling_kappa_per_locus(
+        prior_gamma1,
+        values["G2"]["MEANK1"],
+        len(list_loci_g2),
+        True,
+        list_loci_g2,
+        rng=random.Random(42),
+    )
+    assert len(set(kappa_values.values())) == len(list_loci_g2)
+
+    # test avec un sdshape < 0.001, donc valeur fixe
+    prior_gamma1_modified = dataclasses.replace(prior_gamma1, sdshape=1e-15)
+    kappa_values_modified = sampling_kappa_per_locus(
+        prior_gamma1_modified,
+        values["G2"]["MEANK1"],
+        len(list_loci_g2),
+        True,
+        list_loci_g2,
+        rng=random.Random(42),
+    )
+    assert all(
+        value == values["G2"]["MEANK1"] for value in kappa_values_modified.values()
+    )
+
+    # test pour k2
+    prior_gamma2 = next((gp for gp in priors_g2 if gp.name == "GAMK2"), None)
+    kappa_values2 = sampling_kappa_per_locus(
+        prior_gamma2,
+        values["G2"]["MEANK2"],
+        len(list_loci_g2),
+        False,
+        list_loci_g2,
+        rng=random.Random(42),
+    )
+    assert len(set(kappa_values2.values())) == len(list_loci_g2)

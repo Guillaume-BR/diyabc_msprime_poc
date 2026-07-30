@@ -16,7 +16,13 @@ import dataclasses
 import math
 import random
 
-from bridge.scenario_types import GroupPrior, OrderConstraint, Prior, Scenario
+from bridge.scenario_types import (
+    GroupPrior,
+    LociDescriptionDetailed,
+    OrderConstraint,
+    Prior,
+    Scenario,
+)
 
 # Décalage de graine pour draw_group_parameter_values, distinct de celui utilisé
 # par draw_parameter_values (qui n'en a pas besoin, une seule instance de
@@ -213,3 +219,39 @@ def draw_group_parameter_values(
             last_value = value
         group_priors_values[group_name] = values
     return group_priors_values
+
+
+def sampling_kappa_per_locus(
+    group_prior: GroupPrior,
+    k_moy: float,
+    n_loci: int,
+    check_nloc: bool,
+    list_loci: list[LociDescriptionDetailed],
+    rng: random.Random,
+) -> dict[str, float]:
+    """Échantillonne les valeurs de kappa pour chaque groupe de loci en fonction des priorités définies.
+    Retourne un dictionnaire avec les noms de groupes comme clés et les valeurs de kappa échantillonnées comme valeurs.
+    Pour kappa1, il faut passsé l'argument check_nloc à True pour vérifier le nombre de loci et échantillonner en conséquence.
+    Pour kappa2, il faut passsé l'argumentââ check_nloc à False pour
+    """
+
+    kappa_values = {}
+    if check_nloc:
+        if group_prior.sdshape > 0.001 and n_loci > 1:
+            group_prior = dataclasses.replace(group_prior, mean=k_moy)
+            for locus in list_loci:
+                kappa = _draw_one_group_value(group_prior, rng)
+                kappa_values[locus.name] = kappa
+        else:
+            for locus in list_loci:
+                kappa_values[locus.name] = k_moy
+    else:
+        if group_prior.sdshape > 0.001:
+            group_prior = dataclasses.replace(group_prior, mean=k_moy)
+            for locus in list_loci:
+                kappa = _draw_one_group_value(group_prior, rng)
+                kappa_values[locus.name] = kappa
+        else:
+            for locus in list_loci:
+                kappa_values[locus.name] = k_moy
+    return kappa_values

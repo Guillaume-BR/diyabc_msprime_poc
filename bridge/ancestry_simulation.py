@@ -19,23 +19,33 @@ générations diploïdes -- cohérent avec les bornes des priors de temps
 import itertools
 import random
 from collections.abc import Iterator
+from pathlib import Path
 
 import msprime
 import numpy as np
 import tskit
 
 from bridge.demography_builder import rescale_demography
+from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
+    base_frequency_by_locus,
     coalescence_coefficient,
     count_samples_per_population,
     individual_sexes_per_population,
     observed_mrc,
     observed_reads,
+    observed_sequences,
     parse_maf_ratio,
     parse_mrc_ratio,
     parse_sex_ratio,
     population_index_to_name,
 )
+from bridge.parameter_sampling import (
+    draw_group_parameter_values,
+    sampling_kappa_per_locus,
+)
+from bridge.prior_parser import get_parameter_used_by_model, parse_group_priors
+from bridge.scenario_types import LociDescriptionDetailed
 
 # Offset de graine dédié à la boucle de rejet MAF et du rejet MRC, distinct du +1_000_000
 # déjà utilisé partout ailleurs dans le projet pour séparer la graine de
@@ -77,6 +87,10 @@ _MRC_BATCH_SIZE = 20
 
 # pour séparer le tirage binomial du tirage de mutation
 _BINOMIAL_SEED_OFFSET = 4_000_000
+
+# pour séparer les tirages des kappas (un tirage par locus, donc un tirage par réplicat) du tirage de mutation
+_KAPPA1_SEED_OFFSET = 60_000_000
+_KAPPA2_SEED_OFFSET = 70_000_000
 
 
 # ── Construction de l'argument samples (un builder par type de locus) ──────
@@ -955,7 +969,8 @@ def simulate_poolseq_reads_with_mrc_filter(
     )
 
 
-def transition_matrix(
+# Simulation des mutations pour les séquences ADN
+def build_transition_matrix(
     name_model: str, kappas: tuple[float, float], frequences_by_locus: dict[str, float]
 ) -> np.ndarray:
     """Calcule la matrice de transition pour un modèle donné et des fréquences de bases par locus.
@@ -986,28 +1001,36 @@ def transition_matrix(
             transition_matrix[3, 1],
         ) = k1, k1, k1, k1
     elif name_model == "HKY":
+        # ligne1
         transition_matrix[0, 1] = pi_C
         transition_matrix[0, 2] = k1 * pi_G
         transition_matrix[0, 3] = pi_T
+        # ligne2
         transition_matrix[1, 0] = pi_A
         transition_matrix[1, 2] = pi_G
         transition_matrix[1, 3] = k1 * pi_T
+        # ligne3
         transition_matrix[2, 0] = k1 * pi_A
         transition_matrix[2, 1] = pi_C
         transition_matrix[2, 3] = pi_T
+        # ligne4
         transition_matrix[3, 0] = pi_A
         transition_matrix[3, 1] = k1 * pi_C
         transition_matrix[3, 2] = pi_G
     elif name_model == "TN":
+        # ligne1
         transition_matrix[0, 1] = pi_C
         transition_matrix[0, 2] = k1 * pi_G
         transition_matrix[0, 3] = pi_T
+        # ligne2
         transition_matrix[1, 0] = pi_A
         transition_matrix[1, 2] = pi_G
         transition_matrix[1, 3] = k2 * pi_T
+        # ligne3
         transition_matrix[2, 0] = k1 * pi_A
         transition_matrix[2, 1] = pi_C
         transition_matrix[2, 3] = pi_T
+        # ligne4
         transition_matrix[3, 0] = pi_A
         transition_matrix[3, 1] = k2 * pi_C
         transition_matrix[3, 2] = pi_G
@@ -1019,3 +1042,140 @@ def transition_matrix(
     # Normalisation de la matrice de transition
     transition_matrix = transition_matrix / transition_matrix.sum(axis=1, keepdims=True)
     return transition_matrix
+
+
+def count_loci_per_group(list_loci: list[LociDescriptionDetailed]) -> dict[str, int]:
+    """Compte le nombre de loci par groupe dans une liste de descriptions de loci.
+    Retourne un dictionnaire avec les noms de groupes comme clés et le nombre de loci dans chaque groupe comme valeurs.
+    """
+    loci_count = {}
+    loci_type_per_group = {}
+    for locus in list_loci:
+        group_name = locus.group
+        loci_type = locus.ms_or_seq
+        if group_name not in loci_count:
+            loci_count[group_name] = 0
+            loci_type_per_group[group_name] = set()
+        loci_count[group_name] += 1
+        loci_type_per_group[group_name].add(loci_type)
+
+    if any(len(types) > 1 for types in loci_type_per_group.values()):
+        raise ValueError(
+            "Différents types de loci dans le même groupe, ce qui n'est pas supporté."
+        )
+
+    return loci_count
+
+
+def build_kappas_per_locus(
+    header_text: str, seed: int
+) -> dict[str, tuple[float, float]]:
+    """Construit un dictionnaire des kappas par locus à partir d'une liste de descriptions de loci.
+    Retourne un dictionnaire avec les noms de loci comme clés et les tuples de kappas (k1, k2) comme valeurs.
+    """
+    kappas_per_locus = {}
+    group_priors = parse_group_priors(header_text)
+    list_loci = parse_loci_description(header_text)
+
+    list_loci_seq = [locus for locus in list_loci if locus.ms_or_seq == "S"]
+    nloc_per_group = count_loci_per_group(list_loci_seq)
+
+    # Un seul appel pour tous les groupes -- draw_group_parameter_values gère
+    # déjà en interne son propre décalage de graine (_GROUP_PRIOR_SEED_OFFSET),
+    # distinct de _KAPPA1_SEED_OFFSET/_KAPPA2_SEED_OFFSET utilisés plus bas
+    # pour le tirage par locus -- pas besoin (et pas correct) de la rappeler
+    # une fois par groupe/par kappa avec une graine décalée différente.
+    values = draw_group_parameter_values(group_priors, seed)
+
+    for group in nloc_per_group:
+        list_locus_in_group = [locus for locus in list_loci_seq if locus.group == group]
+        gp_model = next(gp for gp in group_priors[group] if gp.model)
+        verif_kappas = get_parameter_used_by_model(gp_model)
+        if not verif_kappas[0] and not verif_kappas[1]:
+            for locus in list_locus_in_group:
+                # Handle the case where neither k1 nor k2 is used by the model
+                kappas_per_locus[locus.name] = (0.0, 0.0)
+        elif verif_kappas[0] and not verif_kappas[1]:  # Model K2P et HKY
+            gp_gamk1 = next(
+                (gp for gp in group_priors[group] if gp.name == "GAMK1"), None
+            )
+            if gp_gamk1 is None:
+                raise ValueError(
+                    f"Le modèle {gp_model} nécessite kappa1, mais aucun GAMK1 n'a été trouvé pour le groupe {group}."
+                )
+            k1_moy = values[group]["MEANK1"]
+            kappa1_values = sampling_kappa_per_locus(
+                gp_gamk1,
+                k_moy=k1_moy,
+                n_loci=nloc_per_group[group],
+                check_nloc=True,
+                list_loci=list_locus_in_group,
+                rng=random.Random(seed + _KAPPA1_SEED_OFFSET),
+            )
+            for locus in list_locus_in_group:
+                kappas_per_locus[locus.name] = (kappa1_values[locus.name], 0.0)
+        elif verif_kappas[0] and verif_kappas[1]:  # Modèle TN
+            gp_gamk1 = next(
+                (gp for gp in group_priors[group] if gp.name == "GAMK1"), None
+            )
+            if gp_gamk1 is None:
+                raise ValueError(
+                    f"Le modèle {gp_model} nécessite kappa1, mais aucun GAMK1 n'a été trouvé pour le groupe {group}."
+                )
+            k1_moy = values[group]["MEANK1"]
+            gp_gamk2 = next(
+                (gp for gp in group_priors[group] if gp.name == "GAMK2"), None
+            )
+            if gp_gamk2 is None:
+                raise ValueError(
+                    f"Le modèle {gp_model} nécessite kappa2, mais aucun GAMK2 n'a été trouvé pour le groupe {group}."
+                )
+            k2_moy = values[group]["MEANK2"]
+            kappa1_values = sampling_kappa_per_locus(
+                gp_gamk1,
+                k_moy=k1_moy,
+                n_loci=nloc_per_group[group],
+                check_nloc=True,
+                list_loci=list_locus_in_group,
+                rng=random.Random(seed + _KAPPA1_SEED_OFFSET),
+            )
+            kappa2_values = sampling_kappa_per_locus(
+                gp_gamk2,
+                k_moy=k2_moy,
+                n_loci=nloc_per_group[group],
+                check_nloc=False,
+                list_loci=list_locus_in_group,
+                rng=random.Random(seed + _KAPPA2_SEED_OFFSET),
+            )
+            for locus in list_locus_in_group:
+                kappas_per_locus[locus.name] = (
+                    kappa1_values[locus.name],
+                    kappa2_values[locus.name],
+                )
+    return kappas_per_locus
+
+
+def build_matrix_per_locus(
+    header_text: str, mss_file_path: str | Path, seed: int
+) -> dict[str, np.ndarray]:
+    """Construit un dictionnaire des matrices de transition par locus à partir d'une liste de descriptions de loci.
+    Retourne un dictionnaire avec les noms de loci comme clés et les matrices de transition comme valeurs.
+    """
+    list_loci = parse_loci_description(header_text)
+    kappas_per_locus = build_kappas_per_locus(header_text, seed)
+    sequences_by_indiv = observed_sequences(mss_file_path, list_loci)
+    frequencies_by_locus = base_frequency_by_locus(sequences_by_indiv)
+    group_priors = parse_group_priors(header_text)
+
+    matrix_per_locus = {}
+    for locus in list_loci:
+        if locus.ms_or_seq == "S":
+            group_locus = locus.group
+            gp_model = next(gp for gp in group_priors[group_locus] if gp.model)
+            name_model = gp_model.name_model
+            kappas = kappas_per_locus[locus.name]
+            frequencies = frequencies_by_locus[locus.name]
+            matrix_per_locus[locus.name] = build_transition_matrix(
+                name_model, kappas, frequencies
+            )
+    return matrix_per_locus

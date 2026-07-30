@@ -429,7 +429,7 @@ def observed_sequences(
             match_counter += 1
             sequence = match.group(1).split("][")  # quand il s'agit d'un locus diploïde
             for i in range(len(sequence)):
-                sequences_by_indiv.setdefault(loci.locus_name, []).append(sequence[i])
+                sequences_by_indiv.setdefault(loci.name, []).append(sequence[i])
 
         if match_counter != nb_seq:
             raise ValueError(

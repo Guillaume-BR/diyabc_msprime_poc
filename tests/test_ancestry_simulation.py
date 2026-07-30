@@ -3,18 +3,24 @@ msprime.sim_ancestry, simulation de généalogies indépendantes par locus,
 et mutation Hudson (exactement une mutation par locus, toujours
 polymorphe)."""
 
+import numpy as np
 import pytest
 from conftest import (
     OBSERVED_SNP_FILE_HUMAN,
+    OBSERVED_SNP_FILE_TE2,
     OBSERVED_SNP_FILE_TE4,
     OBSERVED_SNP_FILE_TE5,
 )
 
 from bridge.ancestry_simulation import (
     _reindex_reads_by_msprime_name,
+    build_kappas_per_locus,
     build_male_only_samples_argument,
+    build_matrix_per_locus,
     build_samples_argument,
     build_sex_stratified_samples_argument,
+    build_transition_matrix,
+    count_loci_per_group,
     observed_maf,
     simulate_genotypes_for_locus_type,
     simulate_independent_loci,
@@ -35,6 +41,7 @@ from bridge.observed_data import (
     parse_sex_ratio,
 )
 from bridge.pipeline import build_random_demography_for_scenario_index
+from bridge.scenario_types import LociDescriptionDetailed
 
 
 def test_simulate_independent_loci_scenario1(header_text):
@@ -385,3 +392,153 @@ def test_simulate_poolseq_reads_with_mrc_filter(header_text_te4):
             min(sum_derived, sum_total - sum_derived) if sum_total > 0 else 0.0
         )
         assert mrc_observed >= mrc
+
+
+def test_transition_matrix_jk():
+    """Vérifie que la matrice de transition est bien contruite pour les différents
+    modèles de mutation (JK, K2P, HKY, TN) et que les paramètres sont corrects."""
+    kappas = (2, 3)
+    frequences_by_locus = {"pi_A": 0.1, "pi_C": 0.2, "pi_G": 0.3, "pi_T": 0.4}
+    # test pour le modèle JK
+    name_model = "JK"
+    transition_matrix = build_transition_matrix(name_model, kappas, frequences_by_locus)
+    expected_matrix = np.array(
+        [
+            [0, 1 / 3, 1 / 3, 1 / 3],
+            [1 / 3, 0, 1 / 3, 1 / 3],
+            [1 / 3, 1 / 3, 0, 1 / 3],
+            [1 / 3, 1 / 3, 1 / 3, 0],
+        ]
+    )
+    assert np.allclose(transition_matrix, expected_matrix)
+
+
+def test_transition_matrix_k2p():
+    """Vérifie que la matrice de transition est bien construite pour le modèle K2P."""
+    kappas = (2, 3)
+    frequences_by_locus = {"pi_A": 0.1, "pi_C": 0.2, "pi_G": 0.3, "pi_T": 0.4}
+    # test pour le modèle K2P
+    name_model = "K2P"
+    transition_matrix = build_transition_matrix(name_model, kappas, frequences_by_locus)
+    before_normalisation = np.array(
+        [[0, 1, 2, 1], [1, 0, 1, 2], [2, 1, 0, 1], [1, 2, 1, 0]]
+    )
+    expected_matrix = before_normalisation / before_normalisation.sum(
+        axis=1, keepdims=True
+    )
+    assert np.allclose(transition_matrix, expected_matrix)
+
+
+def test_transition_matrix_hky():
+    """Vérifie que la matrice de transition est bien construite pour le modèle HKY."""
+    kappas = (2, 3)
+    frequences_by_locus = {"pi_A": 0.1, "pi_C": 0.2, "pi_G": 0.3, "pi_T": 0.4}
+    # test pour le modèle HKY
+    name_model = "HKY"
+    before_normalisation = np.array(
+        [[0, 0.2, 0.6, 0.4], [0.1, 0, 0.3, 0.8], [0.2, 0.2, 0, 0.4], [0.1, 0.4, 0.3, 0]]
+    )
+    expected_matrix = before_normalisation / before_normalisation.sum(
+        axis=1, keepdims=True
+    )
+    transition_matrix = build_transition_matrix(name_model, kappas, frequences_by_locus)
+    assert np.allclose(transition_matrix, expected_matrix)
+
+
+def test_transition_matrix_tn():
+    """Vérifie que la matrice de transition est bien construite pour le modèle TN."""
+    kappas = (2, 3)
+    frequences_by_locus = {"pi_A": 0.1, "pi_C": 0.2, "pi_G": 0.3, "pi_T": 0.4}
+    # test pour le modèle TN
+    name_model = "TN"
+    before_normalisation = np.array(
+        [[0, 0.2, 0.6, 0.4], [0.1, 0, 0.3, 1.2], [0.2, 0.2, 0, 0.4], [0.1, 0.6, 0.3, 0]]
+    )
+    expected_matrix = before_normalisation / before_normalisation.sum(
+        axis=1, keepdims=True
+    )
+    transition_matrix = build_transition_matrix(name_model, kappas, frequences_by_locus)
+    assert np.allclose(transition_matrix, expected_matrix)
+
+
+def test_transition_matrix_invalid_model():
+    """Vérifie que la fonction build_transition_matrix lève une exception pour un modèle invalide."""
+    kappas = (2, 3)
+    frequences_by_locus = {"pi_A": 0.1, "pi_C": 0.2, "pi_G": 0.3, "pi_T": 0.4}
+    with pytest.raises(NotImplementedError, match="Modèle de"):
+        build_transition_matrix("INVALID_MODEL", kappas, frequences_by_locus)
+
+
+def test_count_loci_per_group(header_text_te2):
+    """Vérifie que la fonction count_loci_per_group retourne le bon nombre de loci par groupe."""
+    list_loci = parse_loci_description(header_text_te2)
+    counts = count_loci_per_group(list_loci)
+    assert counts == {"G1": 10, "G2": 5, "G3": 5}
+
+    # Test avec un autre jeu de loci pour vérifier que l'erreur est bien levée.
+    list_loci_invalid = [
+        LociDescriptionDetailed(
+            name="locus1",
+            heritage="A",
+            ms_or_seq="S",
+            group="G1",
+            motif_size=None,
+            motif_range=None,
+            dnalength=4,
+        ),
+        LociDescriptionDetailed(
+            name="locus2",
+            heritage="A",
+            ms_or_seq="M",
+            group="G1",
+            motif_size=None,
+            motif_range=None,
+            dnalength=4,
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="Différents types de loci"):
+        count_loci_per_group(list_loci_invalid)
+
+
+def test_build_kappas_per_locus(header_text_te2):
+    """Vérifie que la fonction build_kappas_per_locus retourne le bon dictionnaire
+    de kappa1 et kappa2 par locus pour le fichier toy_example2 (dataset <A>+<M>
+    avec 3 populations).
+    Test de reproductibilité avec la même graine.
+    Il manque un test pour vérifier lorsuqe le model est JK ou TN
+    """
+    kappas_per_locus = build_kappas_per_locus(header_text_te2, seed=42)
+
+    assert len(kappas_per_locus) == 10
+    assert kappas_per_locus["Locus_S_A_11_"][1] == 0.0
+    assert kappas_per_locus["Locus_S_A_11_"][0] > 0.0
+    all_k1_values = [k[0] for k in kappas_per_locus.values()]
+    assert len(set(all_k1_values)) == 10  # Tous les kappa1 sont différents
+
+    # test de reproductibilité avec la même graine
+    kappas_per_locus_2 = build_kappas_per_locus(header_text_te2, seed=42)
+    assert kappas_per_locus == kappas_per_locus_2
+
+
+def test_build_matrix_per_locus(header_text_te2):
+    """Vérifie que la fonction build_matrix_per_locus retourne le bon dictionnaire
+    de matrices de transition par locus pour le fichier toy_example2 (dataset <A>+<M>
+    avec 3 populations).
+    Test de reproductibilité avec la même graine.
+    """
+    matrix_per_locus = build_matrix_per_locus(
+        header_text_te2, OBSERVED_SNP_FILE_TE2, seed=42
+    )
+
+    assert len(matrix_per_locus) == 10
+    for matrix in matrix_per_locus.values():
+        assert matrix.shape == (4, 4)
+        assert np.allclose(matrix.sum(axis=1), 1.0)  # Chaque ligne doit sommer à 1
+
+    # test de reproductibilité avec la même graine
+    matrix_per_locus_2 = build_matrix_per_locus(
+        header_text_te2, OBSERVED_SNP_FILE_TE2, seed=42
+    )
+    for locus in matrix_per_locus:
+        assert np.allclose(matrix_per_locus[locus], matrix_per_locus_2[locus])
