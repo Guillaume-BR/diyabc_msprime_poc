@@ -399,7 +399,11 @@ def coalescence_coefficient(locus_type: str, sex_ratio: float) -> float:
 def observed_sequences(
     mss_file_path: str | Path, list_loci: list[LociDescriptionDetailed]
 ) -> dict[str, list[str]]:
-    """Lit les séquences ADN observées dans un fichier .mss"""
+    """Lit les séquences ADN observées dans un fichier .mss
+    Retourne un dictionnaire avec le nom du locus comme clé et une liste de séquences
+    comme valeur. Chaque séquence est une chaîne de caractères représentant
+    les bases nucléotidiques (A, C, G, T, N ou -) pour chaque individu ou pool.
+    """
     lines = Path(mss_file_path).read_text().splitlines()
 
     g = (i for i, line in enumerate(lines) if line.startswith("POP"))
@@ -412,7 +416,7 @@ def observed_sequences(
         )
     nb_seq = len([locus for locus in list_loci if locus.ms_or_seq == "S"])
 
-    sequences_by_indiv: dict[str, list[str]] = {}
+    sequences_by_locus: dict[str, list[str]] = {}
     _MATCH_SEQUENCES = re.compile(r"^\<\[(\S+)\]\>$")
     for line in lines[first_POP_line_index + 1 :]:
         if not line.strip():
@@ -429,25 +433,50 @@ def observed_sequences(
             match_counter += 1
             sequence = match.group(1).split("][")  # quand il s'agit d'un locus diploïde
             for i in range(len(sequence)):
-                sequences_by_indiv.setdefault(loci.name, []).append(sequence[i])
+                sequences_by_locus.setdefault(loci.name, []).append(sequence[i])
 
         if match_counter != nb_seq:
             raise ValueError(
                 f"Le nombre de séquences observées ({match_counter}) ne correspond pas au nombre de loci séquentiels ({nb_seq})."
             )
-    return sequences_by_indiv
+    return sequences_by_locus
+
+
+def observed_count_population(mss_file_path: str | Path) -> dict[str, int]:
+    """Compte le nombre d'individus par population dans un fichier .mss.
+    Retourne un dictionnaire avec les noms des populations comme clés et les nombres d'individus comme valeurs.
+    """
+    lines = Path(mss_file_path).read_text().splitlines()
+
+    population_counts: dict[str, int] = {}
+    POP_indexes = [i for i, line in enumerate(lines) if line.startswith("POP")]
+    if not POP_indexes:
+        raise ValueError(
+            f"Le fichier {mss_file_path} ne contient aucune ligne 'POP'. "
+            f"Format de fichier .mss invalide."
+        )
+    for i, index in enumerate(POP_indexes):
+        population_counts.setdefault(f"pop{i + 1}", 0)
+        next_index = POP_indexes[i + 1] if i + 1 < len(POP_indexes) else len(lines)
+        for line in lines[index + 1 : next_index]:
+            if line.strip():
+                population_counts[f"pop{i + 1}"] += 1
+            else:
+                continue
+
+    return population_counts
 
 
 def base_frequency_by_locus(
-    sequences_by_indiv: dict[str, list[str]],
+    sequences_by_locus: dict[str, list[str]],
 ) -> dict[str, dict[str, float]]:
     """Calcule la fréquence des séquences observées par locus, à partir du
     dictionnaire {nom_locus: [séquence1, séquence2, ...]} retourné par
     observed_sequences. Retourne un dictionnaire {nom_locus: Counter({séquence: fréquence})}.
     """
     base_frequencies_by_locus: dict[str, dict[str, float]] = {}
-    for locus_name in sequences_by_indiv:
-        sequences = sequences_by_indiv[locus_name]
+    for locus_name in sequences_by_locus:
+        sequences = sequences_by_locus[locus_name]
         n = 0
         n_A, n_C, n_G, n_T = 0, 0, 0, 0
         for sequence in sequences:

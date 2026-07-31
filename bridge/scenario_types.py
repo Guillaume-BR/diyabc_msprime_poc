@@ -76,7 +76,8 @@ class GroupPrior:
         sdshape=2,
         model=False,
         name_model = None,
-        model_bounds=None)
+        p_fixe = None,
+        gams = None
     """
 
     group: str  # "G1"
@@ -91,9 +92,8 @@ class GroupPrior:
         bool | None
     )  # True si c'est un model, False si c'est une loi, None si pas précisé
     name_model: str | None  # "K2P" ou None si pas précisé ou si c'est une loi
-    model_bounds: (
-        tuple[float, ...] | None
-    )  # (0.0, 0.5, 0.0, 0.0) ou None si c'est une loi
+    p_fixe: float | None  # 0.0 ou None si pas précisé
+    gams: float | None  # 0.5 ou None si pas précisé
 
 
 @dataclass

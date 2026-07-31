@@ -163,13 +163,14 @@ def parse_group_priors(header_text: str) -> dict[str, list[GroupPrior]]:
                     sdshape=dict_bounds["sdshape"],
                     model=False,
                     name_model=None,
-                    model_bounds=None,
+                    p_fixe=None,
+                    gams=None,
                 )
             )
             continue
         else:
             _, name_model = line.split()[0:2]
-            model_bounds = tuple(float(b) for b in line.split()[2:])
+            p_fixe, gams = float(line.split()[2]), float(line.split()[3])
             group_priors[last_group_name].append(
                 GroupPrior(
                     group=last_group_name,
@@ -182,7 +183,8 @@ def parse_group_priors(header_text: str) -> dict[str, list[GroupPrior]]:
                     sdshape=None,
                     model=True,
                     name_model=name_model,
-                    model_bounds=model_bounds,
+                    p_fixe=p_fixe,
+                    gams=gams,
                 )
             )
             continue

@@ -19,6 +19,7 @@ from bridge.observed_data import (
     count_samples_per_population,
     detect_snp_file_type,
     individual_sexes_per_population,
+    observed_count_population,
     observed_reads,
     observed_sequences,
     parse_maf_ratio,
@@ -167,6 +168,13 @@ def test_observed_sequences(header_text_te2):
         sequences_te2[list(sequences_te2.keys())[0]][0]
         == "GGGGAGGATTTGGCCCTTGCAAAAACAAGGGCTCAACTACGTCCCGCGATCTTGCTTACTTCCACAATCGGTAGCTCATCTTTAAGCACAGCAGAGAAAA"
     )
+
+
+def test_observed_count_population():
+    """Vérifie que le comptage du nombre d'individus par population est correct
+    pour le fichier toy_example2 (dataset <A>+<M> avec 3 populations)."""
+    population_counts = observed_count_population(OBSERVED_SNP_FILE_TE2)
+    assert population_counts == {"pop1": 20, "pop2": 20}
 
 
 def test_base_frequency_by_locus(header_text_te2):

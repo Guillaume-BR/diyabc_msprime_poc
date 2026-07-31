@@ -46,7 +46,8 @@ def test_parse_group_priors(header_text_te2):
     assert len(group_priors) == 3
     assert group_priors["G1"][0].name == "MEANMU"
     assert group_priors["G1"][0].law == "UN"
-    assert len(group_priors["G3"][-1].model_bounds) == 2
+    assert group_priors["G3"][-1].p_fixe == 10
+    assert group_priors["G3"][-1].gams == 2
     assert group_priors["G3"][-1].model is True
 
 
@@ -99,7 +100,8 @@ def test_get_parameter_used_by_model(header_text_te2):
         sdshape=None,
         model=True,
         name_model=None,
-        model_bounds=(5, 6),
+        p_fixe=5,
+        gams=6,
     )
     with pytest.raises(NotImplementedError, match="Le nom du modèle"):
         get_parameter_used_by_model(prior_without_name_model)

@@ -221,7 +221,7 @@ def draw_group_parameter_values(
     return group_priors_values
 
 
-def sampling_kappa_per_locus(
+def sampling_group_local_param(
     group_prior: GroupPrior,
     k_moy: float,
     n_loci: int,
@@ -255,3 +255,48 @@ def sampling_kappa_per_locus(
             for locus in list_loci:
                 kappa_values[locus.name] = k_moy
     return kappa_values
+
+
+def sample_site_rates(
+    p_fixe: float, gams: float, dnalength: int, rng: random.Random
+) -> list[float]:
+    """Tire mutsit : le taux de mutation relatif par site pour un locus séquence.
+    Reproduit header.cpp:707-738 (y compris le "bug" sitefix -- les sites fixes
+    sont toujours les premiers de la séquence, pas un sous-ensemble aléatoire).
+    """
+    nsv = math.floor(dnalength * (1 - 0.01 * p_fixe) + 0.5)
+    nb_sites_fixes = dnalength - nsv
+    if gams < 1e-12:
+        mutsit = [1.0] * dnalength
+    else:
+        mutsit = [rng.gammavariate(gams, 1.0 / gams) for _ in range(dnalength)]
+
+    # header.cpp:727-738 -- "sitefix" tire des indices aléatoires distincts,
+    # MAIS la ligne qui fixe le site utilise l'indice de boucle "i", pas
+    # "sitefix[i]" -- donc en pratique, ce sont TOUJOURS les nb_sites_fixes
+    # PREMIERS sites (0, 1, 2...) qui sont mis à taux nul, jamais un sous-
+    # ensemble aléatoire. On reproduit ce comportement tel quel (fidélité à
+    # DIYABC), pas ce que le code semblait vouloir faire.
+    # On garde en réserve et on l'active si besoin.
+    # sitefix = [0] * (dnalength - nsv)
+    # for i in range(len(sitefix)):
+    #    if i == 0:
+    #        sitefix[i]  = rng.randint(1, dnalength)
+    #    else:
+    #        nouveau = False
+    #        while not nouveau:
+    #            sitefix[i] = rng.randint(1, dnalength)
+    #            nouveau = True
+    #            j = 0
+    #            while j < i and nouveau:
+    #                if sitefix[i] == sitefix[j]:
+    #                    nouveau = False
+    #                j += 1
+    #   mutsit[sitefix[i]] = 0.0
+    for i in range(nb_sites_fixes):
+        mutsit[i] = 0.0
+
+    total = sum(mutsit)
+    mutsit = [x / total for x in mutsit]
+
+    return mutsit

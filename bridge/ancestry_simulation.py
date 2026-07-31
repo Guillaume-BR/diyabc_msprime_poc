@@ -32,6 +32,7 @@ from bridge.observed_data import (
     coalescence_coefficient,
     count_samples_per_population,
     individual_sexes_per_population,
+    observed_count_population,
     observed_mrc,
     observed_reads,
     observed_sequences,
@@ -42,7 +43,8 @@ from bridge.observed_data import (
 )
 from bridge.parameter_sampling import (
     draw_group_parameter_values,
-    sampling_kappa_per_locus,
+    sample_site_rates,
+    sampling_group_local_param,
 )
 from bridge.prior_parser import get_parameter_used_by_model, parse_group_priors
 from bridge.scenario_types import LociDescriptionDetailed
@@ -91,6 +93,10 @@ _BINOMIAL_SEED_OFFSET = 4_000_000
 # pour séparer les tirages des kappas (un tirage par locus, donc un tirage par réplicat) du tirage de mutation
 _KAPPA1_SEED_OFFSET = 60_000_000
 _KAPPA2_SEED_OFFSET = 70_000_000
+_MUS_RATE_SEED_OFFSET = 80_000_000
+_SITE_RATE_SEED_OFFSET = 90_000_000
+_MUTATION_SEED_OFFSET = 100_000_000
+_ANCESTRY_SEED_OFFSET = 110_000_000
 
 
 # ── Construction de l'argument samples (un builder par type de locus) ──────
@@ -1044,6 +1050,22 @@ def build_transition_matrix(
     return transition_matrix
 
 
+def build_rate_map(
+    mutsit: list[float], mus_rate: float, dnalength: int
+) -> msprime.RateMap:
+    """Retourne un objet msprime.RateMap représentant des taux de mutation."""
+    if len(mutsit) != dnalength:
+        raise ValueError(
+            f"Le nombre de sites de mutation ({len(mutsit)}) ne correspond pas à la longueur de la séquence ({dnalength})."
+        )
+    # Crée une carte de taux avec le taux de mutation spécifié pour le site donné
+    rate_map = msprime.RateMap(
+        position=[i for i in range(dnalength + 1)],
+        rate=[mus_rate * dnalength * mutsit[i] for i in range(dnalength)],
+    )
+    return rate_map
+
+
 def count_loci_per_group(list_loci: list[LociDescriptionDetailed]) -> dict[str, int]:
     """Compte le nombre de loci par groupe dans une liste de descriptions de loci.
     Retourne un dictionnaire avec les noms de groupes comme clés et le nombre de loci dans chaque groupe comme valeurs.
@@ -1067,13 +1089,13 @@ def count_loci_per_group(list_loci: list[LociDescriptionDetailed]) -> dict[str, 
     return loci_count
 
 
-def build_kappas_per_locus(
+def build_group_local_param_per_locus(
     header_text: str, seed: int
 ) -> dict[str, tuple[float, float]]:
     """Construit un dictionnaire des kappas par locus à partir d'une liste de descriptions de loci.
     Retourne un dictionnaire avec les noms de loci comme clés et les tuples de kappas (k1, k2) comme valeurs.
     """
-    kappas_per_locus = {}
+    params_per_locus = {}
     group_priors = parse_group_priors(header_text)
     list_loci = parse_loci_description(header_text)
 
@@ -1089,12 +1111,22 @@ def build_kappas_per_locus(
 
     for group in nloc_per_group:
         list_locus_in_group = [locus for locus in list_loci_seq if locus.group == group]
+        # calcul du mus_rate par locus
+        mus_rate = sampling_group_local_param(
+            next(gp for gp in group_priors[group] if gp.name == "GAMMU"),
+            k_moy=values[group]["MEANMU"],
+            n_loci=nloc_per_group[group],
+            check_nloc=True,
+            list_loci=list_locus_in_group,
+            rng=random.Random(seed + _MUS_RATE_SEED_OFFSET),
+        )
+        # calcul des kappas par locus selon le modèle de substitution du groupe
         gp_model = next(gp for gp in group_priors[group] if gp.model)
         verif_kappas = get_parameter_used_by_model(gp_model)
         if not verif_kappas[0] and not verif_kappas[1]:
             for locus in list_locus_in_group:
                 # Handle the case where neither k1 nor k2 is used by the model
-                kappas_per_locus[locus.name] = (0.0, 0.0)
+                params_per_locus[locus.name] = (0.0, 0.0, mus_rate[locus.name])
         elif verif_kappas[0] and not verif_kappas[1]:  # Model K2P et HKY
             gp_gamk1 = next(
                 (gp for gp in group_priors[group] if gp.name == "GAMK1"), None
@@ -1104,7 +1136,7 @@ def build_kappas_per_locus(
                     f"Le modèle {gp_model} nécessite kappa1, mais aucun GAMK1 n'a été trouvé pour le groupe {group}."
                 )
             k1_moy = values[group]["MEANK1"]
-            kappa1_values = sampling_kappa_per_locus(
+            kappa1_values = sampling_group_local_param(
                 gp_gamk1,
                 k_moy=k1_moy,
                 n_loci=nloc_per_group[group],
@@ -1113,7 +1145,11 @@ def build_kappas_per_locus(
                 rng=random.Random(seed + _KAPPA1_SEED_OFFSET),
             )
             for locus in list_locus_in_group:
-                kappas_per_locus[locus.name] = (kappa1_values[locus.name], 0.0)
+                params_per_locus[locus.name] = (
+                    kappa1_values[locus.name],
+                    0.0,
+                    mus_rate[locus.name],
+                )
         elif verif_kappas[0] and verif_kappas[1]:  # Modèle TN
             gp_gamk1 = next(
                 (gp for gp in group_priors[group] if gp.name == "GAMK1"), None
@@ -1131,7 +1167,7 @@ def build_kappas_per_locus(
                     f"Le modèle {gp_model} nécessite kappa2, mais aucun GAMK2 n'a été trouvé pour le groupe {group}."
                 )
             k2_moy = values[group]["MEANK2"]
-            kappa1_values = sampling_kappa_per_locus(
+            kappa1_values = sampling_group_local_param(
                 gp_gamk1,
                 k_moy=k1_moy,
                 n_loci=nloc_per_group[group],
@@ -1139,7 +1175,7 @@ def build_kappas_per_locus(
                 list_loci=list_locus_in_group,
                 rng=random.Random(seed + _KAPPA1_SEED_OFFSET),
             )
-            kappa2_values = sampling_kappa_per_locus(
+            kappa2_values = sampling_group_local_param(
                 gp_gamk2,
                 k_moy=k2_moy,
                 n_loci=nloc_per_group[group],
@@ -1148,11 +1184,12 @@ def build_kappas_per_locus(
                 rng=random.Random(seed + _KAPPA2_SEED_OFFSET),
             )
             for locus in list_locus_in_group:
-                kappas_per_locus[locus.name] = (
+                params_per_locus[locus.name] = (
                     kappa1_values[locus.name],
                     kappa2_values[locus.name],
+                    mus_rate[locus.name],
                 )
-    return kappas_per_locus
+    return params_per_locus
 
 
 def build_matrix_per_locus(
@@ -1162,7 +1199,7 @@ def build_matrix_per_locus(
     Retourne un dictionnaire avec les noms de loci comme clés et les matrices de transition comme valeurs.
     """
     list_loci = parse_loci_description(header_text)
-    kappas_per_locus = build_kappas_per_locus(header_text, seed)
+    params_per_locus = build_group_local_param_per_locus(header_text, seed)
     sequences_by_indiv = observed_sequences(mss_file_path, list_loci)
     frequencies_by_locus = base_frequency_by_locus(sequences_by_indiv)
     group_priors = parse_group_priors(header_text)
@@ -1173,9 +1210,113 @@ def build_matrix_per_locus(
             group_locus = locus.group
             gp_model = next(gp for gp in group_priors[group_locus] if gp.model)
             name_model = gp_model.name_model
-            kappas = kappas_per_locus[locus.name]
+            kappas = params_per_locus[locus.name][0], params_per_locus[locus.name][1]
             frequencies = frequencies_by_locus[locus.name]
             matrix_per_locus[locus.name] = build_transition_matrix(
                 name_model, kappas, frequencies
             )
     return matrix_per_locus
+
+
+def build_rate_map_per_locus(header_text: str, seed: int) -> dict[str, msprime.RateMap]:
+    """Construit un dictionnaire des cartes de taux par locus à partir d'une liste de descriptions de loci.
+    Retourne un dictionnaire avec les noms de loci comme clés et les cartes de taux comme valeurs.
+    """
+    list_loci = parse_loci_description(header_text)
+    params_per_locus = build_group_local_param_per_locus(header_text, seed)
+    mus_rate_per_locus = {
+        locus.name: params_per_locus[locus.name][2]
+        for locus in list_loci
+        if locus.ms_or_seq == "S"
+    }
+    group_priors = parse_group_priors(header_text)
+
+    rate_map_per_locus = {}
+    rng = random.Random(seed + _SITE_RATE_SEED_OFFSET)
+    for locus in list_loci:
+        if locus.ms_or_seq == "S":
+            gp_model = next(gp for gp in group_priors[locus.group] if gp.model)
+            mutsit = sample_site_rates(
+                gp_model.p_fixe, gp_model.gams, locus.dnalength, rng=rng
+            )
+            mus_rate = mus_rate_per_locus[locus.name]
+            rate_map_per_locus[locus.name] = build_rate_map(
+                mus_rate=mus_rate, mutsit=mutsit, dnalength=locus.dnalength
+            )
+    return rate_map_per_locus
+
+
+def simulate_dna_mutations(
+    tree_sequence: tskit.TreeSequence,
+    transition_matrix: np.ndarray,
+    frequencies: dict[str, float],
+    rate_map: msprime.RateMap,
+    seed: int,
+) -> tskit.TreeSequence:
+    """Simule les mutations sur une séquence d'ADN donnée en utilisant un modèle de substitution et une carte de taux.
+    Retourne un TreeSequence avec les mutations simulées.
+    """
+    alleles = ["A", "C", "G", "T"]
+    list_frequencies = [
+        frequencies["pi_A"],
+        frequencies["pi_C"],
+        frequencies["pi_G"],
+        frequencies["pi_T"],
+    ]
+    model = msprime.MatrixMutationModel(
+        alleles=alleles,
+        root_distribution=list_frequencies,
+        transition_matrix=transition_matrix,
+    )
+
+    mutated_ts = msprime.sim_mutations(
+        tree_sequence,
+        rate=rate_map,
+        model=model,
+        random_seed=seed,
+    )
+
+    return mutated_ts
+
+
+def dna_mutation_simulation_per_locus(
+    header_text: str,
+    mss_file_path: str | Path,
+    demography: msprime.Demography,
+    seed: int,
+) -> dict[str, tskit.TreeSequence]:
+    """Simule les mutations pour chaque locus d'ADN en utilisant les matrices de transition et les cartes de taux correspondantes.
+    Retourne un dictionnaire avec les noms de loci comme clés et les TreeSequences mutés comme valeurs.
+    """
+    rate_map_per_locus = build_rate_map_per_locus(header_text, seed)
+    matrix_per_locus = build_matrix_per_locus(header_text, mss_file_path, seed)
+    list_loci = parse_loci_description(header_text)
+    frequencies_by_locus = base_frequency_by_locus(
+        observed_sequences(mss_file_path, list_loci)
+    )
+    samples = observed_count_population(mss_file_path=mss_file_path)
+    mutated_tree_sequences = {}
+
+    for i, locus in enumerate(list_loci):
+        if locus.ms_or_seq != "S":
+            continue
+        else:
+            tree_sequences = msprime.sim_ancestry(
+                samples=samples,
+                demography=demography,
+                sequence_length=locus.dnalength,
+                random_seed=seed + _ANCESTRY_SEED_OFFSET + i,
+                ploidy=2,
+            )
+            transition_matrix = matrix_per_locus[locus.name]
+            rate_map = rate_map_per_locus[locus.name]
+            frequencies = frequencies_by_locus[locus.name]
+            mutated_ts = simulate_dna_mutations(
+                tree_sequences,
+                transition_matrix,
+                frequencies,
+                rate_map,
+                seed + _MUTATION_SEED_OFFSET + i,
+            )
+            mutated_tree_sequences[locus.name] = mutated_ts
+    return mutated_tree_sequences

@@ -16,19 +16,22 @@ on `human`, `toy_example5`, `toy_example3` (split/admixture, scenario
 3), and `toy_example4` (PoolSeq). The *detailed* loci description
 format (one locus named per line, used by MicroSat/sequences-mut
 datasets, as opposed to the condensed format) is now parsed too — see
-"MicroSat / sequences-mut header parsing" below. As of 2026-07-30, the
-DNA-sequence substitution-model side has also been started (see "DNA
-sequence substitution model" below): computing observed base
-frequencies, choosing the substitution model (`JK`/`K2P`/`HKY`/`TN`),
-drawing `k1`/`k2` (hierarchically, per group then per locus), and
-building the 4×4 transition matrix per locus are all implemented and
-tested end-to-end (`bridge.ancestry_simulation.build_matrix_per_locus`).
-**Not done yet**: actually placing substitutions along the simulated
-tree using that matrix (the DNA-sequence equivalent of
-`simulate_snp_genotypes`'s Hudson algorithm) — a separate, not-yet-
-started piece of work. MicroSat itself (stepwise mutation model,
-`NAL`/`HET`-style summary statistics) has no simulation-side code at
-all yet, only header parsing. The goal is to demonstrate that a
+"MicroSat / sequences-mut header parsing" below. As of 2026-07-31, the
+DNA-sequence side is fully wired end-to-end for one locus at a time
+(see "DNA sequence substitution model" and "Mutation placement"
+below): observed base frequencies, substitution model choice (`JK`/
+`K2P`/`HKY`/`TN`), hierarchical `k1`/`k2`/`mus_rate` draws, per-site
+rate heterogeneity (`mutsit`/invariant sites), and mutation placement
+itself (via `msprime.sim_mutations`, not a hand-rolled port of
+`particuleC.cpp`'s tree traversal) are all implemented and tested,
+end-to-end, on `toy_example2_ms_dna`
+(`bridge.ancestry_simulation.dna_mutation_simulation_per_locus`).
+**Not done yet**: wiring any of this into `reftable_loop.py`/the
+summary-statistics side of the pipeline (no DNA-sequence summary
+statistics implemented, no genotype extraction from the resulting
+`TreeSequence`). MicroSat itself (stepwise mutation model, `NAL`/
+`HET`-style summary statistics) has no simulation-side code at all
+yet, only header parsing. The goal is to demonstrate that a
 `header.txt` → `msprime.Demography` → coalescent+mutation → summary
 statistics pipeline built in Python produces a `reftable.bin`
 structurally and statistically equivalent to the real DIYABC's.
@@ -143,10 +146,11 @@ module with no cross-cutting logic:
    2026-07-28, also draws `GroupPrior` values (`_draw_one_group_value`/
    `draw_group_parameter_values`, MicroSat/sequences-mut) — see
    "MicroSat / sequences-mut header parsing" below. Since 2026-07-30,
-   also `sampling_kappa_per_locus` (the second, per-locus tier of the
-   `k1`/`k2` draw hierarchy, on top of the per-group `k1moy`/`k2moy`
-   from `draw_group_parameter_values`) — see "DNA sequence substitution
-   model" below.
+   also `sampling_group_local_param` (the second, per-locus tier of the
+   `k1`/`k2`/`mus_rate` draw hierarchy, on top of the per-group
+   `k1moy`/`k2moy`/`musmoy` from `draw_group_parameter_values`) and
+   `sample_site_rates` (`mutsit`, per-site rate heterogeneity) — see
+   "DNA sequence substitution model" below.
 
 6. **`demography_builder.py`** — `Scenario` + drawn values →
    `msprime.Demography`. Populations are named `"pop1".."popN"` by their
@@ -177,7 +181,10 @@ module with no cross-cutting logic:
    into 1, matching `do_sequence`'s `n=1`/`n=2` split — see "DNA sequence
    substitution model" below) and `base_frequency_by_locus` (`pi_A/C/G/T`
    per locus, pooled across all individuals/populations, matching
-   `DataC::do_sequence`).
+   `DataC::do_sequence`). Since 2026-07-31, also `observed_count_population`
+   (individuals per population from a `.mss` file, `.mss`'s own genepop
+   block-separator format — NOT reusable via `count_samples_per_population`,
+   see "DNA sequence substitution model" below).
 
 8. **`ancestry_simulation.py`** — simulates one independent tree per SNP
    locus (`simulate_independent_loci`, no recombination/linkage between
@@ -192,15 +199,18 @@ module with no cross-cutting logic:
    `with_maf_filter_shared_ancestry`, reject-and-resimulate a locus below
    the threshold, mirroring `ParticleC::mafreached`) — not needed for
    `human` (declares `<MAF=hudson>`, the no-op fast path) but used by
-   some `toy_example3`/`toy_example5` test datasets. Since 2026-07-30,
-   also builds the DNA-sequence substitution matrix per locus:
-   `build_transition_matrix` (the 4×4 row-stochastic matrix, matching
-   `particuleC.cpp::comp_matQ`'s four branches), `count_loci_per_group`,
-   and `build_matrix_per_locus` (the full `header.txt` + `.mss` →
-   `{locus_name: matQ}` pipeline) — see "DNA sequence substitution
-   model" below. Not yet wired into any locus simulation loop — only
-   the matrix itself is built, nothing consumes it yet to place
-   substitutions.
+   some `toy_example3`/`toy_example5` test datasets. Since 2026-07-31,
+   also the full DNA-sequence path: `build_transition_matrix` (`matQ`),
+   `count_loci_per_group`, `build_group_local_param_per_locus`
+   (`k1`/`k2`/`mus_rate` per locus), `build_matrix_per_locus` (`matQ`
+   per locus), `build_rate_map`/`build_rate_map_per_locus` (`mutsit` →
+   `msprime.RateMap`), and `simulate_dna_mutations`/
+   `dna_mutation_simulation_per_locus` (the actual mutation placement,
+   per locus, via `msprime.sim_mutations` — see "DNA sequence
+   substitution model" and "Mutation placement" below). Unlike the SNP
+   path, DNA sequence loci call `msprime.sim_ancestry` directly rather
+   than `simulate_independent_loci` (which hardcodes `sequence_length=1`,
+   wrong once `dnalength` varies per locus).
 
 9. **`snp_writer.py`** — writes simulated genotypes out in DIYABC `.snp`
    format (only used for the deprecated subprocess-based path, see below).
@@ -441,15 +451,23 @@ semantics, stepwise mutation model, MicroSat-specific summary
 statistics catalog e.g. `NAL`/`HET` from `statdefs.cpp`), have not
 started at all.
 
-### DNA sequence substitution model (started 2026-07-29/30 — matrix construction done, mutation placement not started)
+### DNA sequence substitution model (started 2026-07-29, mutation placement done 2026-07-31)
 
 Picked up right after MicroSat/sequences-mut header parsing was declared
 complete (chosen over MicroSat itself as "simpler to tackle first").
-Covers everything needed to build `particuleC.cpp::comp_matQ`'s 4×4
-substitution matrix per locus, in Python, validated end-to-end on
-`toy_example2_ms_dna` (10 DNA sequence loci, model `K2P`). Does **not**
-cover placing substitutions along the simulated tree — that's the next,
-separate piece of work.
+Covers the full path from `header.txt` + `.mss` to an actual mutated
+`tskit.TreeSequence` per DNA sequence locus, validated end-to-end on
+`toy_example2_ms_dna` (10 DNA sequence loci, model `K2P`): substitution
+matrix construction, per-site rate heterogeneity, and — as of
+2026-07-31 — mutation placement itself, achieved by handing the whole
+problem to `msprime.sim_mutations` rather than reimplementing
+`particuleC.cpp`'s tree traversal (see "Mutation placement" below for
+why this is a faithful substitute, not an approximation).
+
+`GroupPrior.model_bounds` (the single tuple field) was later split into
+two separate named fields, `p_fixe: float | None` and `gams: float |
+None` — same values, clearer call sites (`gp.p_fixe`/`gp.gams` instead
+of `model_bounds[0]`/`model_bounds[1]`).
 
 - **Observed base frequencies (`pi_A/C/G/T`) come from the `.mss` file,
   not from `header.txt`.** Verified against `~/Documents/Github/diyabc/
@@ -464,34 +482,36 @@ separate piece of work.
   here. `observed_data.py`'s `observed_sequences`/`base_frequency_by_locus`
   reproduce `do_sequence`'s logic directly on the `.mss` file.
 
-- **`GroupPrior.model_bounds` (the two trailing numbers on `MODEL K2P 10
-  2.00`) is `(p_fixe, gams)` — proportion of invariant sites and gamma
-  shape for per-site rate heterogeneity — completely unrelated to `k1`/
-  `k2`.** Consumed only by `mutsit`/site-rate weighting
-  (`header.cpp:707-730`, `particuleC.cpp:1793`), itself not implemented
-  in this pipeline yet (see below). `k1`/`k2` come from **separate**
-  `GroupPrior` entries, `MEANK1`/`GAMK1`/`MEANK2`/`GAMK2`, present for
-  every `[S]` group regardless of which model is chosen (even `K2P`,
-  which only uses `k1`, still declares `GAMK2` — `header.cpp:640-670`
-  reads a fixed sequence of lines per group, never conditional on the
-  model). A first draft of `build_transition_matrix` mixed these two up
-  (used `model_bounds` as if it were `(k1, k2)`) — caught before commit.
+- **`p_fixe`/`gams` (now direct `GroupPrior` fields, see above) are
+  `(proportion of invariant sites, gamma shape for per-site rate
+  heterogeneity)`** — completely unrelated to `k1`/`k2`. `k1`/`k2` come
+  from **separate** `GroupPrior` entries, `MEANK1`/`GAMK1`/`MEANK2`/
+  `GAMK2`, present for every `[S]` group regardless of which model is
+  chosen (even `K2P`, which only uses `k1`, still declares `GAMK2` —
+  `header.cpp:640-670` reads a fixed sequence of lines per group, never
+  conditional on the model). A first draft of `build_transition_matrix`
+  mixed these two up (used the old `model_bounds` tuple as if it were
+  `(k1, k2)`) — caught before commit.
 
-- **`k1`/`k2` are drawn hierarchically, two tiers, mirroring MicroSat's
-  `mutmoy`/`mutloc`**: `particuleC.cpp:853-867` draws `k1moy` once per
-  particle per group (from `MEANK1`), overwrites `GAMK1`'s declared
-  mean with `k1moy`, then EITHER draws an independent `k1` per locus
-  (if `GAMK1.sdshape > 0.001` AND the group's `nloc > 1`) OR reuses
-  `k1moy` unchanged for every locus in the group. Same for `k2`/`GAMK2`,
-  except the C++ genuinely has no `nloc > 1` check for `k2` (an
+- **`k1`/`k2`/`mus_rate` are all drawn hierarchically, two tiers each,
+  mirroring MicroSat's `mutmoy`/`mutloc`**: `particuleC.cpp:840-867`
+  draws `musmoy`/`k1moy`/`k2moy` once per particle per group (from
+  `MEANMU`/`MEANK1`/`MEANK2`), overwrites `GAMMU`/`GAMK1`/`GAMK2`'s
+  declared mean with that value, then EITHER draws an independent
+  per-locus value (if the `GAMxxx`'s `sdshape > 0.001` AND the group's
+  `nloc > 1`) OR reuses the group mean unchanged for every locus. `mus_rate`
+  and `k1` both have the `nloc > 1` check; `k2` genuinely doesn't (an
   asymmetry in DIYABC's own source, not a bug in this port — replicated
-  as-is via `sampling_kappa_per_locus`'s `check_nloc` flag). The
-  per-group tier (`k1moy`/`k2moy`) reuses `parameter_sampling.
+  as-is via `check_nloc`). The per-group tier reuses `parameter_sampling.
   draw_group_parameter_values` unchanged — its existing positional
   `MEANxxx`→`GAMxxx` mean-substitution mechanism (already built for
-  MicroSat) generalizes for free to `MEANK1`→`GAMK1`→`MEANK2`→`GAMK2` in
-  the same group, no code changes needed. The per-locus tier is new:
-  `sampling_kappa_per_locus` (`parameter_sampling.py`).
+  MicroSat) generalizes for free to any number of `MEANxxx`/`GAMxxx`
+  pairs in the same group, no code changes needed. The per-locus tier
+  is `parameter_sampling.sampling_group_local_param` (renamed from
+  `sampling_kappa_per_locus` once it became clear `mus_rate` needed the
+  exact same mechanism — nothing kappa-specific in its implementation,
+  it just takes a `GroupPrior`/`k_moy`/`n_loci`/`check_nloc`/loci
+  list/`rng`).
 
 - **`get_parameter_used_by_model`** (`prior_parser.py`) maps a group's
   `name_model` to which of `k1`/`k2` are actually active
@@ -512,39 +532,156 @@ separate piece of work.
   broadcasts across columns, not rows) and produces a matrix whose rows
   don't actually sum to 1, without raising any error.
 
-- **`build_kappas_per_locus`** (`ancestry_simulation.py`) orchestrates,
-  for every `[S]` group in a `header.txt`: `draw_group_parameter_values`
-  called ONCE for the whole `group_priors` dict with the plain particle
-  `seed` (it applies its own internal offset,
-  `parameter_sampling._GROUP_PRIOR_SEED_OFFSET`) to get `k1moy`/`k2moy`,
-  then `sampling_kappa_per_locus` per kappa with a `random.Random(seed +
-  _KAPPA1_SEED_OFFSET)` / `+ _KAPPA2_SEED_OFFSET` (offsets defined in
-  `ancestry_simulation.py`, mirroring the ones in `parameter_sampling.py`
-  — kept deliberately separate from `draw_group_parameter_values`'s own
-  seeding so the two draws never correlate). An early draft called
-  `draw_group_parameter_values` per-kappa with an already-offset seed
-  (`seed + _KAPPA1_SEED_OFFSET`) instead of once with the plain seed —
-  wrong both for correctness (wrong argument type/shape entirely) and
-  for the seed-independence intent.
+- **`build_group_local_param_per_locus`** (`ancestry_simulation.py`,
+  renamed from `build_kappas_per_locus` once it grew to also return
+  `mus_rate`) orchestrates, for every `[S]` group in a `header.txt`:
+  `draw_group_parameter_values` called ONCE for the whole `group_priors`
+  dict with the plain particle `seed` (it applies its own internal
+  offset, `parameter_sampling._GROUP_PRIOR_SEED_OFFSET`) to get
+  `k1moy`/`k2moy`/`musmoy`, then `sampling_group_local_param` per
+  parameter with its own `random.Random(seed + _KAPPA1_SEED_OFFSET)` /
+  `_KAPPA2_SEED_OFFSET` / `_MUS_RATE_SEED_OFFSET` (offsets defined in
+  `ancestry_simulation.py`, mirroring `parameter_sampling.py`'s — kept
+  deliberately separate from `draw_group_parameter_values`'s own seeding
+  so none of these draws correlate). Returns `{locus_name: (k1, k2,
+  mus_rate)}` — a fixed-arity triplet for every locus regardless of
+  which kappas the group's model actually uses (`0.0` filled in for the
+  unused ones). Two bugs caught before commit: an early draft called
+  `draw_group_parameter_values` per-parameter with an already-offset
+  seed instead of once with the plain seed (wrong argument shape *and*
+  wrong seed semantics), and `mus_rate` was only included in the
+  triplet inside the `TN` branch — silently absent from the return
+  value for any group using `K2P`/`HKY`/`JK` (i.e. absent for the
+  entire `toy_example2_ms_dna` dataset, since it's `K2P`-only).
 
 - **`build_matrix_per_locus`** (`ancestry_simulation.py`) is the full
   `header.txt` + `.mss` + `seed` → `{locus_name: matQ}` pipeline, tying
-  together `build_kappas_per_locus`, `base_frequency_by_locus`, and
-  `build_transition_matrix`. Validated end-to-end on
+  together `build_group_local_param_per_locus`, `base_frequency_by_locus`,
+  and `build_transition_matrix`. Validated end-to-end on
   `toy_example2_ms_dna` (10/10 sequence loci, every row-stochastic,
   reproducible across repeated calls with the same seed).
 
-**Not yet done**: placing substitutions along the simulated tree using
-`matQ` (the DNA-sequence equivalent of `simulate_snp_genotypes`'s Hudson
-algorithm) — not yet researched beyond confirming `particuleC.cpp:1793`
-consumes `mutsit`/branch-length weighting to choose where a substitution
-lands; `p_fixe`/`gams`/`mutsit` (invariant sites + gamma rate
-heterogeneity across sites) entirely unimplemented, only understood
-conceptually (see `model_bounds` above); no real reference dataset with
-a `JK`- or `TN`-model DNA sequence group to cross-validate against
-(`toy_example2_ms_dna` only exercises `K2P`) — those two branches of
-`build_transition_matrix` are covered by hand-computed synthetic test
-values only, never checked against real DIYABC output.
+- **`parameter_sampling.sample_site_rates`** draws `mutsit` (per-site
+  relative mutation rate, matching `header.cpp:707-738`): a
+  `Gamma(shape=gams, mean=1)` draw per site, then the first `dnalength -
+  nsv` sites forced to `0.0` (invariant), then the whole array normalized
+  to sum to 1. **`gams == 0` is a valid, non-error input**: DIYABC's own
+  `MwcGen::ggamma3` (`randomgenerator.cpp:199-204`) returns `mean` (`1.0`
+  here) directly when `shape == 0.0` rather than dividing by it — an
+  early draft raised `ZeroDivisionError` instead, which is wrong
+  behavior, not just an unhandled edge case.
+
+  **Non-obvious DIYABC bug, reproduced deliberately, not "fixed"**:
+  `header.cpp:727-738` draws `dnalength - nsv` distinct random site
+  indices into a `sitefix` array (with a proper duplicate-rejection
+  loop) specifically to pick which sites are invariant — but the line
+  that actually zeroes out `mutsit` uses the loop counter `i`, never
+  `sitefix[i]`. The carefully-drawn random indices are computed and then
+  never read. In practice, DIYABC's "invariant sites" are always the
+  first `dnalength - nsv` sites in sequence order, not a random subset,
+  despite the code's evident intent. Given this project's goal (bit-for-
+  bit statistical fidelity to real DIYABC output, not an idealized
+  reimplementation), `sample_site_rates` reproduces this exact behavior
+  — the "intended" random-selection version is kept commented out in
+  the function body, with a note that it's reserved in case a future
+  decision (with the user's academic advisor) is to fix rather than
+  replicate this bug.
+
+- **`observed_data.observed_count_population`** counts individuals per
+  population in a `.mss` file — the DNA-sequence/MicroSat equivalent of
+  `count_samples_per_population`, but NOT a variant of it: `.mss` is
+  genepop-format (`POP` as a block *separator* between populations, see
+  `observed_sequences`), structurally different from `.snp`'s "IND SEX
+  POP"/"POOL" column format, and the caller always already knows which
+  file format it has (no need for a `.snp`-vs-`.mss` content-sniffing
+  dispatcher analogous to `detect_snp_file_type`, which exists only
+  because `.snp` itself can be either IND or POOL). Returns `{"pop1":
+  N1, "pop2": N2, ...}`, same population-index-by-first-appearance
+  convention and same msprime-facing naming as `build_samples_argument`.
+
+- **`build_rate_map`/`build_rate_map_per_locus`** (`ancestry_simulation.py`)
+  turn `mutsit` (relative, sums to 1) into an absolute-rate
+  `msprime.RateMap` per locus: `rate[site] = mus_rate × dnalength ×
+  mutsit[site]`, one breakpoint per site (`position=[0..dnalength]`).
+  Validated end-to-end (`build_rate_map_per_locus`) against real
+  `p_fixe`/`gams`/`mus_rate` on `toy_example2_ms_dna`: correct count of
+  zero-rate (invariant) sites, distinct rate patterns across different
+  loci (confirming independent per-locus `mutsit` draws, not the same
+  pattern replayed), reproducible with the same seed.
+
+### Mutation placement (2026-07-31) — via msprime.sim_mutations, not a hand-rolled port of particuleC.cpp
+
+`particuleC.cpp`'s own mechanism (`put_mutations`, `init_dnaseq`,
+`mute`, `draw_nuc` — `particuleC.cpp:1535-1775`) is: for each locus,
+draw a Poisson number of mutations per branch (rate ∝ branch length ×
+`mus_rate × dnalength`), assign each mutation to a site via a cumulative
+walk over `mutsit`, and apply it via a cumulative walk over `matQ`'s row
+for the site's current base — root sequence drawn from `pi_A/C/G/T` via
+`draw_nuc`. This is textbook continuous-time-Markov-chain sequence
+evolution along a tree, nothing DIYABC-specific, and `msprime` already
+implements exactly this via `msprime.MatrixMutationModel(alleles,
+root_distribution, transition_matrix)` + `msprime.sim_mutations(ts,
+rate=..., model=...)` — confirmed by direct exploration (throwaway
+scripts, not committed): observed mutation count matches the Poisson
+expectation, ancestral-state distribution matches `pi`, zero silent
+(self-transition) mutations given `matQ`'s zero diagonal, and the
+observed transition/transversion ratio for a `K2P` matrix with `k1=8`
+matches the theoretical `k1/2` (two transversion targets per row vs.
+one transition target) almost exactly (4.09 observed vs. 4.0
+theoretical). `msprime.RateMap` (passed as `rate=`) correctly implements
+per-site heterogeneity: zero mutations in a zero-rate band, correct
+ratio between two differently-rated bands. **Deliberately did NOT use
+msprime's built-in named models** (`JC69`/`HKY`/`F84`/`GTR`) — their
+internal rate-scaling convention allows/counts silent self-transitions
+(normalizes by `max(row sum)`, non-zero diagonal), different from
+`comp_matQ`'s convention (normalizes each row to sum to 1, zero
+diagonal, every event is a real substitution) — using them would have
+given a different effective substitution rate than DIYABC's for the
+same nominal `mutation_rate`. The generic `MatrixMutationModel` fed our
+own already-built `matQ`/`pi` sidesteps this entirely.
+
+- **`simulate_dna_mutations`** (`ancestry_simulation.py`) is the narrow
+  wrapper: `tree_sequence` + `pi` + `matQ` + `rate_map` + `seed` →
+  mutated `tskit.TreeSequence`. Bugs caught before commit: `root_distribution`
+  omitted entirely from an early draft (raises `TypeError` — msprime
+  requires it), `random_seed` passed to `MatrixMutationModel` (which
+  doesn't accept one at all — it's a static model description, not
+  something that draws anything) instead of to `sim_mutations` (which
+  silently got an auto-generated, non-reproducible seed as a result),
+  and a `route_distribution` typo, plus passing the raw `pi` dict where
+  an ordered `[pi_A, pi_C, pi_G, pi_T]` list matching `alleles` order
+  was required.
+
+- **`dna_mutation_simulation_per_locus`** (`ancestry_simulation.py`) is
+  the full per-locus assembly: for every `[S]` locus, calls
+  `msprime.sim_ancestry` **directly** (NOT `simulate_independent_loci`,
+  which hardcodes `sequence_length=1` for the SNP/Hudson case and can't
+  represent a locus-specific `dnalength`), with `sequence_length=
+  locus.dnalength`, then `simulate_dna_mutations` with that locus's
+  `matQ`/`pi`/`RateMap`. Samples come from `observed_count_population`
+  on the `.mss` file. Needs its own per-locus seed offsets for BOTH the
+  genealogy (`_ANCESTRY_SEED_OFFSET`) and the mutation placement
+  (`_MUTATION_SEED_OFFSET`) — an early draft reused the identical
+  `seed + offset` for every locus in the loop (no `+ i`), which produced
+  byte-identical tree topologies across all loci of a dataset sharing
+  the same `dnalength` (confirmed empirically: `ts1.tables.edges ==
+  ts2.tables.edges` for two different loci) — silently violating the
+  independent-loci-per-particle assumption this whole pipeline relies
+  on for summary statistics. Validated end-to-end on
+  `toy_example2_ms_dna`: 10/10 sequence loci (not the 10 MicroSat loci
+  in the same header), independent topologies and mutation patterns
+  across loci, reproducible with the same particle seed.
+
+**Not yet done**: no real reference dataset with a `JK`- or `TN`-model
+DNA sequence group to cross-validate `build_transition_matrix` against
+real DIYABC output (`toy_example2_ms_dna` only exercises `K2P`) — those
+two branches are covered by hand-computed synthetic test values only.
+Nothing from this whole DNA-sequence path is wired into the actual
+`reftable_loop.py`/summary-statistics side of the pipeline yet (no
+DNA-sequence summary statistics implemented at all, and no genotype/
+sequence extraction from the mutated `TreeSequence` back into a form
+`summary_statistics.py`-equivalent code could consume) — MicroSat
+itself still has no simulation-side code at all, only header parsing.
 
 ### `scripts/` — ad hoc investigation scripts
 

@@ -11,7 +11,8 @@ from bridge.parameter_sampling import (
     draw_group_parameter_values,
     draw_parameter_values,
     draw_scenario,
-    sampling_kappa_per_locus,
+    sample_site_rates,
+    sampling_group_local_param,
 )
 from bridge.prior_parser import parse_group_priors, parse_priors
 from bridge.scenario_parser import parse_header_scenarios
@@ -162,8 +163,8 @@ def test_draw_group_parameter_values_hierarchical_mean(header_text_te2):
     assert values["G1"]["GAMMU"] == values["G1"]["MEANMU"]
 
 
-def test_sampling_kappa_per_locus(header_text_te2):
-    """Vérifie que sampling_kappa_per_locus tire une valeur pour chaque locus du groupe
+def test_sampling_group_local_param(header_text_te2):
+    """Vérifie que sampling_group_local_param tire une valeur pour chaque locus du groupe
     et que le tirage retourné respecte toutes les dépendances entre les paramètres
     du groupe comme Mean_u pour la loi Gamma"""
     group_priors = parse_group_priors(header_text_te2)
@@ -177,7 +178,7 @@ def test_sampling_kappa_per_locus(header_text_te2):
 
     # test avec un sdshape > 0.001, donc tirage aléatoire
     prior_gamma1 = next((gp for gp in priors_g2 if gp.name == "GAMK1"), None)
-    kappa_values = sampling_kappa_per_locus(
+    kappa_values = sampling_group_local_param(
         prior_gamma1,
         values["G2"]["MEANK1"],
         len(list_loci_g2),
@@ -189,7 +190,7 @@ def test_sampling_kappa_per_locus(header_text_te2):
 
     # test avec un sdshape < 0.001, donc valeur fixe
     prior_gamma1_modified = dataclasses.replace(prior_gamma1, sdshape=1e-15)
-    kappa_values_modified = sampling_kappa_per_locus(
+    kappa_values_modified = sampling_group_local_param(
         prior_gamma1_modified,
         values["G2"]["MEANK1"],
         len(list_loci_g2),
@@ -203,7 +204,7 @@ def test_sampling_kappa_per_locus(header_text_te2):
 
     # test pour k2
     prior_gamma2 = next((gp for gp in priors_g2 if gp.name == "GAMK2"), None)
-    kappa_values2 = sampling_kappa_per_locus(
+    kappa_values2 = sampling_group_local_param(
         prior_gamma2,
         values["G2"]["MEANK2"],
         len(list_loci_g2),
@@ -212,3 +213,27 @@ def test_sampling_kappa_per_locus(header_text_te2):
         rng=random.Random(42),
     )
     assert len(set(kappa_values2.values())) == len(list_loci_g2)
+
+
+def test_sample_site_rates():
+    p_fixe = 5
+    dnalength = 10
+    gams = 1.0
+    rng = random.Random(42)
+    result = sample_site_rates(p_fixe, gams, dnalength, rng)
+
+    assert len(result) == dnalength
+    assert abs(sum(result) - 1) < 1e-6  # somme des taux = 1
+
+    # test with gams = 0 et un p_fixe qui donne reellement des sites fixes
+    # (p_fixe=20, dnalength=10 -> nsv=8, donc 2 sites fixes)
+    p_fixe = 20
+    gams = 0.0
+    result = sample_site_rates(p_fixe, gams, dnalength, rng)
+    assert len(result) == dnalength
+    nb_sites_fixes = 2
+    assert all(rate == 0.0 for rate in result[:nb_sites_fixes])
+    assert all(
+        abs(rate - 1 / (dnalength - nb_sites_fixes)) < 1e-6
+        for rate in result[nb_sites_fixes:]
+    )
