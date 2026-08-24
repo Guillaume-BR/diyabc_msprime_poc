@@ -672,16 +672,168 @@ own already-built `matQ`/`pi` sidesteps this entirely.
   in the same header), independent topologies and mutation patterns
   across loci, reproducible with the same particle seed.
 
+  **Ploidy/demography bug fixed 2026-08-24**: until this date,
+  `dna_mutation_simulation_per_locus` called `msprime.sim_ancestry` with
+  the raw `<A>` `demography` and `ploidy=2` for EVERY `[S]` locus,
+  regardless of that locus's own heritage type — so `toy_example2_ms_dna`'s
+  G3 group (`<M>`, mitochondrial, meant to be haploid with a rescaled
+  demography) was actually being simulated as if it were `<A>` (diploid,
+  unrescaled). The SNP path already gets this right, per-locus-type, in
+  `simulate_genotypes_for_locus_type`. New helper
+  `dna_ancestry_parameters_for_heritage` (`ancestry_simulation.py`)
+  replicates that same dispatch for DNA sequences: `"A"` → demography
+  unchanged, `ploidy=2`; `"H"`/`"M"` → `rescale_demography(demography,
+  coalescence_coefficient(heritage, sex_ratio) / 2)`, `ploidy=1`; `"X"`/`"Y"`
+  → `NotImplementedError` (deliberately, not deferred-by-oversight: `.mss`
+  is genepop-format and carries no per-individual sex column the way
+  `.snp` does, so `build_sex_stratified_samples_argument`/
+  `build_male_only_samples_argument` have no equivalent to call here —
+  sex-stratified DNA sequence loci would need a real per-individual sex
+  source that doesn't exist in this file format). `sex_ratio` is read via
+  the existing `parse_sex_ratio(mss_file_path)` — works unchanged on
+  `.mss` because the `<NM=xNF>` token it looks for lives on the file's
+  first line in exactly the same format as `.snp`, confirmed by direct
+  inspection of `toy_example2_ms_dna`'s `.mss` file. `dna_mutation_
+  simulation_per_locus` now calls this dispatch once per locus (a single
+  group can mix heritage types across sequence loci, e.g. G2=`<A>`/
+  G3=`<M>` in the same header, so the dispatch can never be hoisted
+  outside the per-locus loop). Regression tests: `test_dna_ancestry_
+  parameters_for_heritage` (dispatch itself) and `test_dna_mutation_
+  simulation_per_locus_ploidy_matches_heritage` (`ts.num_samples` for an
+  `<A>` locus is exactly 2x an `<M>` locus's, for the same population —
+  this would have passed silently before the fix, since both were
+  ploidy=2, hence checked directly against the post-fix dispatch, not
+  just re-run of the pre-existing test).
+
 **Not yet done**: no real reference dataset with a `JK`- or `TN`-model
 DNA sequence group to cross-validate `build_transition_matrix` against
 real DIYABC output (`toy_example2_ms_dna` only exercises `K2P`) — those
 two branches are covered by hand-computed synthetic test values only.
-Nothing from this whole DNA-sequence path is wired into the actual
-`reftable_loop.py`/summary-statistics side of the pipeline yet (no
-DNA-sequence summary statistics implemented at all, and no genotype/
-sequence extraction from the mutated `TreeSequence` back into a form
-`summary_statistics.py`-equivalent code could consume) — MicroSat
-itself still has no simulation-side code at all, only header parsing.
+MicroSat itself still has no simulation-side code at all, only header
+parsing.
+
+### DNA sequence summary statistics (started 2026-08-24, mentor mode — user-driven, reviewed/debugged with the assistant)
+
+Picked up right after the ploidy/demography fix above. Goal: reproduce
+the 13 DNA-sequence-specific statistics from `sumstat.cpp` (`cal_nha1p`/
+`2p`, `cal_nss1p`/`2p`, `cal_mpd1p`, `cal_vpd1p`, `cal_mpw2p`, `cal_mpb2p`,
+`cal_dta1p`, `cal_pss1p`, `cal_mns1p`, `cal_vns1p`, `cal_fst2p` —
+confirmed against `toy_example2_ms_dna/headerRF.txt`'s `group summary
+statistics` section, which requests exactly these 13 under the names
+`NHA`/`NSS`/`MPD`/`VPD`/`DTA`/`PSS`/`MNS`/`VNS` per-population and
+`NH2`/`NS2`/`MP2`/`MPB`/`HST` per-pair) in `bridge/summary_statistics.py`,
+building on the mutated `TreeSequence`s from `dna_mutation_simulation_
+per_locus`. Distinct from the MicroSat-specific `NAL`/`HET`/`VAR`/`MGW`/
+`FST`/`LIK`/`DAS`/`DM2` stats declared in the same header's `G1` group —
+those need allele-size arithmetic, not tskit genotypes, and are out of
+scope here.
+
+- **`compute_population_layout`** (`ancestry_simulation.py`, renamed
+  from the private `_population_layout` since `summary_statistics.py`
+  now needs it too) hit a real name-shadowing bug when made public: four
+  call sites inside `simulate_snp_genotypes`/`with_maf_filter_shared_
+  ancestry` (which both also have a **parameter** named `population_layout`)
+  did `population_layout = population_layout(ts)` — the local parameter
+  shadowed the module-level function, so this became `None(ts)` whenever
+  the parameter defaulted to `None`, breaking 24 tests across three test
+  files. Fixed by renaming the function only (not the parameter, which is
+  documented at length in multiple docstrings) — see
+  `feedback_name_shadowing_pattern` project memory, same bug class
+  recurring.
+
+- **`_genotype_matrix_by_population`** (`summary_statistics.py`): one
+  `TreeSequence` (one DNA sequence locus) → `{pop_name: matrix}`, matrix
+  shape `(n_sites, n_samples_pop)` — tskit's native `genotype_matrix()`
+  convention, sliced per population via `compute_population_layout`.
+  `genotype_matrix()` called once per `TreeSequence`, not once per
+  sample (an early draft rebuilt the whole matrix per sample). Tested on
+  both an `<A>` and an `<M>` locus of `toy_example2_ms_dna`: correct
+  `n_sites`/`n_samples` shapes, no sample lost/duplicated across
+  populations, and the 2:1 sample-count ratio between `<A>`/`<M>`
+  confirms it composes correctly with the 2026-08-24 ploidy fix above.
+
+- **Two-tier pattern established for the per-population ("1p") stats**,
+  mirroring `sumstat.cpp`'s own per-locus/per-group split (`cal_*pl` +
+  `cal_*1p` with an `nl` denominator): a `_count_*(matrix)` brick
+  (one locus, one population → a scalar) plus a `mean_*_per_group
+  (tree_sequences, population_names)` aggregator (mean over a **single**
+  header `group Gx`'s loci — never loci from two different groups mixed
+  together, since each group computes its own independent stat).
+  Aggregators pre-fill `{pop_name: 0.0 for pop_name in population_names}`
+  before accumulating, matching the C++'s `res = 0.0` declared before its
+  `if (nl > 0)` guard — so every expected population always has a value,
+  even for an empty `tree_sequences` list, rather than a population
+  silently missing from the result dict. Documented, not fixed: this
+  assumes every population in `population_names` is present on every
+  locus of the group (divides by `len(tree_sequences)`, not a real
+  per-population `nl` count) — true on `toy_example2_ms_dna` (checked
+  empirically), not guaranteed in general; violating it raises `KeyError`
+  rather than silently excluding that locus, unlike the C++.
+  - `NSS` (`_count_segregating_sites` + `mean_segregating_sites_per_group`,
+    `cal_nsspl`/`cal_nss1p`): a site is segregating for a population if
+    not all its samples share the same base — vectorized as
+    `np.any(matrix != matrix[:, [0]], axis=1)`, correct for any number of
+    distinct values per site since "differs from sample 0" is equivalent
+    to "not all identical" (not just "exactly 2 alleles").
+  - `NHA` (`_count_distinct_haplotypes` + `mean_distinct_haplotypes_per_group`,
+    `cal_nha1p`): number of distinct haplotypes = distinct **columns** of
+    the matrix (`np.unique(matrix, axis=1)`). Bug caught and fixed: an
+    early draft returned `.shape[0]` (number of *sites*) instead of
+    `.shape[1]` (number of distinct haplotypes) — both happened to be
+    `3` on the first hand-picked test matrix, masking the bug until a
+    second matrix with `n_sites != n_distinct_haplotypes` was tried.
+    `np.unique` on a `(0, n_samples)` matrix (locus with zero variable
+    sites) correctly returns exactly 1 unique column for free, matching
+    `cal_nha1p`'s explicit `dnavar == 0` → 1-haplotype special case
+    without needing an explicit branch.
+  - Both `_count_segregating_sites`/`_count_distinct_haplotypes` raise
+    `ValueError` on `matrix.shape[1] == 0` (population with zero samples
+    on a locus) rather than crashing obscurely or returning a silently
+    wrong count — deliberately checked against `shape[1]` (samples), not
+    `matrix.size` (an earlier draft used `.size`, which also triggers
+    incorrectly on the *valid* `n_sites == 0` case, a locus with no
+    mutations at all — see `feedback_control_flow_chaining_bugs`-style
+    edge-case conflation).
+  - A `ValueError` was independently added and removed **twice** from
+    `mean_segregating_sites_per_group`'s empty-list handling during this
+    session — once genuinely misplaced (inside `if num_loci > 0` instead
+    of `else`, so it fired on the *normal* case), once syntactically
+    correct but reintroduced the very "raise instead of 0.0-default"
+    design this whole two-tier pattern was built to avoid. Kept as
+    `0.0`-default, confirmed explicitly with the user both times — if
+    this `raise` reappears a third time, check for an editor/autosave
+    restoring a stale buffer rather than assuming it's an intentional
+    edit.
+
+- **`_pairwise_hamming_distances`** (`summary_statistics.py`, brick for
+  `MPD`/`VPD`/`cal_mpdpl`/`cal_vpd1p`): one matrix → the 1D vector of
+  Hamming distances for all `C(n_samples, 2)` pairs, via
+  `(matrix[:, :, None] != matrix[:, None, :]).sum(axis=0)` then
+  `np.triu_indices(..., k=1)` to keep `i < j` pairs only (no double-count,
+  no diagonal). Verified against a hand-computed matrix. Same
+  `matrix.shape[1] == 0` → `ValueError` guard added for consistency with
+  `_count_segregating_sites`/`_count_distinct_haplotypes` (an initial
+  draft silently returned `[]` instead, which would have propagated into
+  `nan` + a numpy `RuntimeWarning` from `mean()`/`var()` on an empty
+  array rather than a clear error at the source).
+
+**Not yet done**: `MPD`/`VPD` aggregation (mean/variance of
+`_pairwise_hamming_distances`'s output — `VPD` additionally needs the
+C++'s `nd > 1` per-locus exclusion, not just the `num_loci` denominator
+the other stats use, since a locus contributes to `VPD`'s average only
+if it has at least 2 valid pairs) plus `DTA`/`PSS`/`MNS`/`VNS` (the
+remaining per-population stats) and all 5 pairwise stats (`NH2`/`NS2`/
+`MP2`/`MPB`/`HST`) are unwritten. No test yet for the `MPD`/`VPD`
+aggregation layer (only the `_pairwise_hamming_distances` brick is
+tested). Also unresolved: `toy_example2_ms_dna/headerRF.txt` declares
+`NSS`/`NHA`/etc. under the **same** column names (`NSS_1`, `NSS_2`,
+...) in both `group G2` (`<A>`) and `group G3` (`<M>`) — the exact
+column-name-collision-across-groups scenario `stats_group_parser.py`'s
+docstring already flagged as an open question (dedup deferred, unclear
+if legitimate) — still undecided how the eventual `compute_all_
+statistics`-equivalent entry point for DNA sequences should key/merge
+per-group results into `reftable.bin` columns when this happens. Not
+wired into `reftable_loop.py` at all yet.
 
 ### `scripts/` — ad hoc investigation scripts
 

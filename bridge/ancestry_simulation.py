@@ -341,7 +341,9 @@ def _draw_single_mutation_edge_child(ts: tskit.TreeSequence, rng: random.Random)
     return int(edges.child[idx])
 
 
-def _population_layout(ts: tskit.TreeSequence) -> list[tuple[str | None, np.ndarray]]:
+def compute_population_layout(
+    ts: tskit.TreeSequence,
+) -> list[tuple[str | None, np.ndarray]]:
     """Calcule la liste (nom de population, IDs des noeuds échantillons de
     cette population) pour une TreeSequence donnée.
 
@@ -381,7 +383,7 @@ def simulate_snp_genotypes(
     section 2.4.3 : exactement une mutation par locus, locus toujours
     polymorphe).
 
-    `population_layout` (voir `_population_layout`) : si `None` (cas
+    `population_layout` (voir `compute_population_layout`) : si `None` (cas
     d'un appel unique sur tout un flux de loci, ex: chemin `maf=0.0`),
     calculé UNE SEULE FOIS ici même, au premier locus, et réutilisé pour
     tous les suivants -- valable car tous les `tree_sequences` d'un même
@@ -409,7 +411,7 @@ def simulate_snp_genotypes(
         derived_samples = set(tree.samples(mutated_node))
 
         if population_layout is None:
-            population_layout = _population_layout(ts)
+            population_layout = compute_population_layout(ts)
 
         genotypes_by_population = {
             pop_name: [1 if s in derived_samples else 0 for s in sample_ids]
@@ -472,7 +474,7 @@ def with_maf_filter(
     généalogie à chaque rejet, jamais de recyclage d'un arbre rejeté,
     comme avant). Le lot scale avec `num_loci` plutôt que d'être fixe :
     voir _MAF_BATCH_SIZE pour le détail. La structure population/
-    échantillons (`_population_layout`) ne dépend que de `demography`/
+    échantillons (`population_layout`) ne dépend que de `demography`/
     `samples`, jamais de la graine tirée -- elle est donc calculée une
     seule fois, à la toute première tentative, et réutilisée pour toutes
     les suivantes (voir notes/exploration.md, entrée du 20/07/2026).
@@ -506,7 +508,7 @@ def with_maf_filter(
         )
         for attempt_in_batch, ts in enumerate(tree_sequences):
             if population_layout is None:
-                population_layout = _population_layout(ts)
+                population_layout = compute_population_layout(ts)
             genotypes_by_population = next(
                 simulate_snp_genotypes(
                     [ts],
@@ -569,8 +571,8 @@ def with_maf_filter_shared_ancestry(
     )
     # Calculée une seule fois : même généalogie PARTAGÉE à chaque
     # tentative, donc même structure population/échantillons -- voir
-    # _population_layout.
-    population_layout = _population_layout(shared_tree)
+    # population_layout.
+    population_layout = compute_population_layout(shared_tree)
 
     attempt = 0
     accepted_loci = 0
@@ -708,7 +710,7 @@ def simulate_poolseq_reads(
     `tree_sequences` : un itérateur de TreeSequence simulées pour chaque locus.
     `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
     `seed` : graine aléatoire pour la reproductibilité.
-    `population_layout` (voir `_population_layout`) : si `None` (cas d'un
+    `population_layout` (voir `compute_population_layout`) : si `None` (cas d'un
     appel unique sur tout un flux de loci, ex: chemin `mrc<=0`), calculé
     UNE SEULE FOIS ici même, au premier locus, et réutilisé pour tous les
     suivants -- même principe que `simulate_snp_genotypes`. Si fourni par
@@ -741,7 +743,7 @@ def simulate_poolseq_reads(
         # fait déjà ce set() immédiat, c'est le bon modèle à suivre.
         derived_samples = set(tree.samples(mutated_node))
         if population_layout is None:
-            population_layout = _population_layout(ts)
+            population_layout = compute_population_layout(ts)
 
         reads_by_population = {}
         for pop_name, sample_ids in population_layout:
@@ -833,7 +835,7 @@ def with_mrc_filter(
         return
     # Calculée une seule fois, à la première tentative, et réutilisée pour
     # toutes les suivantes (tous les loci/tentatives partagent la même
-    # demography/samples) -- voir _population_layout et with_maf_filter
+    # demography/samples) -- voir population_layout et with_maf_filter
     # (même principe côté IndSeq).
     population_layout = None
     # tree_sequences_iter : itérateur du lot COURANT de _MRC_BATCH_SIZE
@@ -860,7 +862,7 @@ def with_mrc_filter(
                 tree_sequences_iter = None
                 continue
             if population_layout is None:
-                population_layout = _population_layout(ts)
+                population_layout = compute_population_layout(ts)
             reads_by_population = next(
                 simulate_poolseq_reads(
                     [ts],
@@ -1279,6 +1281,44 @@ def simulate_dna_mutations(
     return mutated_ts
 
 
+def dna_ancestry_parameters_for_heritage(
+    heritage: str, demography: msprime.Demography, sex_ratio: float
+) -> tuple[msprime.Demography, int]:
+    """Détermine la démographie (rescalée ou non) et la ploïdie à utiliser
+    pour un locus ADN selon son type d'héritage, en reproduisant le même
+    dispatch que `simulate_genotypes_for_locus_type` côté SNP : "A" utilise
+    la démographie <A> telle quelle en ploidy=2 ; "H"/"M" la rescalent par
+    `coalescence_coefficient(heritage, sex_ratio) / 2` en ploidy=1 (mêmes
+    coefficients, mêmes formules, aucune raison structurelle qu'ils
+    diffèrent entre SNP et séquences ADN -- comp_matQ/put_mutations opèrent
+    sur le même arbre msprime que le Hudson SNP, seule la mutation diffère).
+
+    "X"/"Y" ne sont PAS supportés ici : contrairement au .snp (colonnes
+    IND/SEX/POP), le format .mss (genepop) ne porte aucun sexe par
+    individu -- `build_sex_stratified_samples_argument`/
+    `build_male_only_samples_argument` n'ont pas d'équivalent exploitable
+    sur ce format, et on ne devine pas un sexe par individu qui n'existe
+    pas dans le fichier observé.
+    """
+    if heritage == "A":
+        return demography, 2
+    elif heritage in ("H", "M"):
+        rescaled_demography = rescale_demography(
+            demography, coalescence_coefficient(heritage, sex_ratio) / 2
+        )
+        return rescaled_demography, 1
+    elif heritage in ("X", "Y"):
+        raise NotImplementedError(
+            f"Locus ADN de type <{heritage}> non supporté : le format .mss "
+            "ne porte pas de sexe par individu, nécessaire pour la "
+            "stratification par sexe qu'exige ce type d'héritage."
+        )
+    else:
+        raise NotImplementedError(
+            f"Type d'héritage de locus non supporté: {heritage!r}"
+        )
+
+
 def dna_mutation_simulation_per_locus(
     header_text: str,
     mss_file_path: str | Path,
@@ -1287,6 +1327,13 @@ def dna_mutation_simulation_per_locus(
 ) -> dict[str, tskit.TreeSequence]:
     """Simule les mutations pour chaque locus d'ADN en utilisant les matrices de transition et les cartes de taux correspondantes.
     Retourne un dictionnaire avec les noms de loci comme clés et les TreeSequences mutés comme valeurs.
+
+    La démographie et la ploïdie utilisées pour l'arbre de coalescence de
+    chaque locus dépendent de son type d'héritage (<A>/<H>/<M>, voir
+    `dna_ancestry_parameters_for_heritage`) -- un groupe peut mélanger des
+    loci de types différents (ex. toy_example2_ms_dna : G2 <A>, G3 <M>),
+    donc ce dispatch se fait par locus, jamais une fois pour tout le
+    dataset.
     """
     rate_map_per_locus = build_rate_map_per_locus(header_text, seed)
     matrix_per_locus = build_matrix_per_locus(header_text, mss_file_path, seed)
@@ -1295,18 +1342,22 @@ def dna_mutation_simulation_per_locus(
         observed_sequences(mss_file_path, list_loci)
     )
     samples = observed_count_population(mss_file_path=mss_file_path)
+    sex_ratio = parse_sex_ratio(mss_file_path)
     mutated_tree_sequences = {}
 
     for i, locus in enumerate(list_loci):
         if locus.ms_or_seq != "S":
             continue
         else:
+            locus_demography, ploidy = dna_ancestry_parameters_for_heritage(
+                locus.heritage, demography, sex_ratio
+            )
             tree_sequences = msprime.sim_ancestry(
                 samples=samples,
-                demography=demography,
+                demography=locus_demography,
                 sequence_length=locus.dnalength,
                 random_seed=seed + _ANCESTRY_SEED_OFFSET + i,
-                ploidy=2,
+                ploidy=ploidy,
             )
             transition_matrix = matrix_per_locus[locus.name]
             rate_map = rate_map_per_locus[locus.name]

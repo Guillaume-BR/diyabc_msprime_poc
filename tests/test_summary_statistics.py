@@ -8,10 +8,20 @@ régression de formule, pas juste un problème de branchement.
 """
 
 import numpy as np
+import pytest
+from conftest import (
+    OBSERVED_SNP_FILE_TE2,
+)
 
+from bridge.ancestry_simulation import dna_mutation_simulation_per_locus
+from bridge.loci_parser import parse_loci_description
+from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.summary_statistics import (
+    _genotype_matrix_by_population,
     _prepare_matrices_poolseq,
     compute_all_statistics_poolseq,
+    mean_distinct_haplotypes_per_group,
+    mean_segregating_sites_per_group,
 )
 
 
@@ -57,3 +67,136 @@ def test_compute_all_statistics_poolseq():
     assert abs(results["FST1m_1"]) <= 1, "FST1m_1 should be between 0 and 1"
     assert abs(results["HWm_1"] - 0.0126) < 1e-4, "HWm_1 should be approximately 0.0126"
     assert abs(results["HWv_1"] - 0.0003) < 1e-4, "HWv_1 should be approximately 0.0003"
+
+
+def test_genotype_matrix_by_population(header_text_te2):
+    """Vérifie _genotype_matrix_by_population sur un locus <A> (diploïde)
+    et un locus <M> (haploïde) du même dataset : la forme retournée doit
+    respecter le nombre de sites/samples réels de la TreeSequence, sans
+    perte ni doublon de sample entre populations, et le nombre de samples
+    par population doit refléter la ploïdie du locus (rapport 2:1 entre
+    <A> et <M> -- couvre le bug de ploïdie corrigé le 2026-08-24 dans
+    dna_ancestry_parameters_for_heritage)."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2, scenario_index=1, seed=42
+    )
+    mutated = dna_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2,
+        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        seed=42,
+    )
+
+    def samples_per_population(ts):
+        return {
+            population.metadata["name"]: ts.samples(population=population.id)
+            for population in ts.populations()
+        }
+
+    for locus_name in ("Locus_S_A_11_", "Locus_S_M_16_"):
+        ts = mutated[locus_name]
+        result = _genotype_matrix_by_population(ts)
+        expected_samples = samples_per_population(ts)
+
+        assert result.keys() == {"pop1", "pop2"}
+        total_samples = 0
+        for pop_name, matrix in result.items():
+            assert matrix.shape[0] == ts.num_sites
+            assert matrix.shape[1] == len(expected_samples[pop_name])
+            total_samples += matrix.shape[1]
+        assert total_samples == ts.num_samples
+
+    samples_a = _genotype_matrix_by_population(mutated["Locus_S_A_11_"])
+    samples_m = _genotype_matrix_by_population(mutated["Locus_S_M_16_"])
+    for pop_name in ("pop1", "pop2"):
+        assert samples_a[pop_name].shape[1] == 2 * samples_m[pop_name].shape[1]
+
+
+def test_mean_segregating_sites_per_group(header_text_te2):
+    """Vérifie mean_segregating_sites_per_group séparément sur G2 (<A>) et
+    G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes mélangés,
+    puisque chaque `group Gx` du header calcule son propre NSS_i à partir
+    de ses seuls loci."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2, scenario_index=1, seed=42
+    )
+    mutated = dna_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2,
+        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        seed=42,
+    )
+
+    loci_description = parse_loci_description(header_text_te2)
+    population_names = ["pop1", "pop2"]
+
+    def tree_sequences_for_group(group_name):
+        names = [locus.name for locus in loci_description if locus.group == group_name]
+        return [mutated[name] for name in names]
+
+    mean_g2 = mean_segregating_sites_per_group(
+        tree_sequences_for_group("G2"), population_names
+    )
+    assert mean_g2 == {"pop1": pytest.approx(5.8), "pop2": pytest.approx(5.6)}
+
+    mean_g3 = mean_segregating_sites_per_group(
+        tree_sequences_for_group("G3"), population_names
+    )
+    assert mean_g3 == {"pop1": pytest.approx(5.6), "pop2": pytest.approx(5.6)}
+
+
+def test_mean_segregating_sites_per_group_empty_defaults_to_zero():
+    """Une liste de loci vide ne doit pas faire disparaître de population
+    du résultat ni lever d'exception -- chaque population attendue garde
+    une valeur (0.0), comme le `res = 0.0` du C++ avant son `if (nl > 0)`."""
+    population_names = ["pop1", "pop2"]
+    assert mean_segregating_sites_per_group([], population_names) == {
+        "pop1": 0.0,
+        "pop2": 0.0,
+    }
+
+
+def test_mean_distinct_haplotypes_per_group(header_text_te2):
+    """Vérifie mean_distinct_haplotypes_per_group séparément sur G2 (<A>) et
+    G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes mélangés,
+    puisque chaque `group Gx` du header calcule son propre NH_i à partir
+    de ses seuls loci."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2, scenario_index=1, seed=42
+    )
+    mutated = dna_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2,
+        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        seed=42,
+    )
+
+    loci_description = parse_loci_description(header_text_te2)
+    population_names = ["pop1", "pop2"]
+
+    def tree_sequences_for_group(group_name):
+        names = [locus.name for locus in loci_description if locus.group == group_name]
+        return [mutated[name] for name in names]
+
+    mean_g2 = mean_distinct_haplotypes_per_group(
+        tree_sequences_for_group("G2"), population_names
+    )
+    assert mean_g2 == {"pop1": pytest.approx(5.2), "pop2": pytest.approx(5.4)}
+
+    mean_g3 = mean_distinct_haplotypes_per_group(
+        tree_sequences_for_group("G3"), population_names
+    )
+    assert mean_g3 == {"pop1": pytest.approx(5.0), "pop2": pytest.approx(3.6)}
+
+
+def test_mean_distinct_haplotypes_per_group_empty_defaults_to_zero():
+    """Une liste de loci vide ne doit pas faire disparaître de population
+    du résultat ni lever d'exception -- chaque population attendue garde
+    une valeur (0.0), comme le `res = 0.0` du C++ avant son `if (nl > 0)`."""
+    population_names = ["pop1", "pop2"]
+    # test si tree_sequence est vide
+    tree_sequences_empty = []
+    mean_empty = mean_distinct_haplotypes_per_group(
+        tree_sequences_empty, population_names
+    )
+    assert mean_empty == {"pop1": 0.0, "pop2": 0.0}

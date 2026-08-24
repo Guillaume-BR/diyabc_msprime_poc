@@ -20,6 +20,9 @@ source C++ de référence.
 from itertools import combinations, permutations
 
 import numpy as np
+import tskit
+
+from bridge.ancestry_simulation import compute_population_layout
 
 # ---------------------------------------------------------------------------
 # Utilitaires scalaires (conservés pour la traçabilité et les tests unitaires)
@@ -869,6 +872,147 @@ def compute_F4(
         results[f"F4v_{key}"] = float(x_vals.var(ddof=1))
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Statistiques pour les séquences ADN
+# ---------------------------------------------------------------------------
+
+
+def _genotype_matrix_by_population(
+    tree_sequence: tskit.TreeSequence,
+) -> dict[str, np.ndarray]:
+    """Crée une sous-matrice de génotypes par population.
+
+    Retourne {nom_pop: matrice (n_sites, n_samples_pop)} -- convention
+    native de tskit (genotype_matrix() est déjà (sites, samples)), pas
+    de transposition. genotype_matrix() n'est appelé qu'UNE FOIS pour
+    toute la TreeSequence, puis tranché par population via fancy
+    indexing (pas de reconstruction par sample).
+    """
+    genotype_matrix = tree_sequence.genotype_matrix()
+    layout = compute_population_layout(tree_sequence)
+    return {pop_name: genotype_matrix[:, sample_ids] for pop_name, sample_ids in layout}
+
+
+# ---------------------------------------------------------------------------
+# NSS : nombre de sites ségrégeants par population
+# ---------------------------------------------------------------------------
+
+
+def _count_segregating_sites(matrix: np.ndarray) -> int:
+    """Compte le nombre de sites polymorphes dans une matrice de génotypes
+    (n_sites, n_samples)."""
+    if matrix.shape[1] == 0:
+        raise ValueError("La matrice de génotypes est vide.")
+    return int(np.sum(np.any(matrix != matrix[:, [0]], axis=1)))
+
+
+def mean_segregating_sites_per_group(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule NSS_i (cal_nss1p) : pour chaque population, la moyenne du
+    nombre de sites ségrégeants sur tous les loci du groupe passé en
+    argument (un groupe = les TreeSequences des loci séquence d'un même
+    `group Gx` du header, ex. les 5 loci <A> de G2).
+
+    `population_names` fixe explicitement les clés du dict retourné (comme
+    compute_ML1/compute_HW_HB) -- chaque population attendue a toujours une
+    valeur (0.0 par défaut, comme le `res = 0.0` du C++), même si
+    `tree_sequences` est vide, plutôt que d'être silencieusement absente du
+    résultat.
+
+    Suppose que toutes les populations de `population_names` sont présentes
+    sur tous les loci du groupe (divise par `len(tree_sequences)`, pas par
+    un décompte par population comme le `nl` du C++ -- lève un KeyError si
+    ce n'est pas le cas plutôt que d'exclure silencieusement ce locus,
+    contrairement au C++) -- vérifié vrai sur toy_example2_ms_dna, pas
+    garanti en général.
+
+    Args:
+        tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
+        population_names (list[str]): Populations attendues.
+
+    Returns:
+        dict: {pop_name: valeur_moyenne}
+    """
+    num_loci = len(tree_sequences)
+    mean_segregating_sites = {pop_name: 0.0 for pop_name in population_names}
+    for ts in tree_sequences:
+        genotype_matrices = _genotype_matrix_by_population(ts)
+        for pop_name in population_names:
+            matrix = genotype_matrices[pop_name]
+            mean_segregating_sites[pop_name] += _count_segregating_sites(matrix)
+
+    if num_loci > 0:
+        for pop_name in population_names:
+            mean_segregating_sites[pop_name] /= num_loci
+
+    return mean_segregating_sites
+
+
+# ---------------------------------------------------------------------------
+# NDH : nombre d'haplotypes distincts par population
+# ---------------------------------------------------------------------------
+
+
+def _count_distinct_haplotypes(matrix: np.ndarray) -> int:
+    """Compte le nombre d'haplotypes distincts dans une matrice de génotypes
+    (n_sites, n_samples)."""
+    if matrix.shape[1] == 0:
+        raise ValueError("La matrice de génotypes est vide.")
+    # np.unique(axis=1) déduplique les colonnes (les haplotypes) --
+    # le résultat a la forme (n_sites, n_haplotypes_distincts).
+    distinct_haplotypes = np.unique(matrix, axis=1)
+    return distinct_haplotypes.shape[1]
+
+
+def mean_distinct_haplotypes_per_group(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule le nombre moyen d'haplotypes distincts par population sur un groupe de loci.
+
+    Args:
+        tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
+        population_names (list[str]): Populations attendues.
+
+    Returns:
+        dict: {pop_name: valeur_moyenne}
+    """
+    num_loci = len(tree_sequences)
+    mean_distinct_haplotypes = {pop_name: 0.0 for pop_name in population_names}
+    for ts in tree_sequences:
+        genotype_matrices = _genotype_matrix_by_population(ts)
+        for pop_name in population_names:
+            matrix = genotype_matrices[pop_name]
+            mean_distinct_haplotypes[pop_name] += _count_distinct_haplotypes(matrix)
+
+    if num_loci > 0:
+        for pop_name in population_names:
+            mean_distinct_haplotypes[pop_name] /= num_loci
+
+    return mean_distinct_haplotypes
+
+
+# ---------------------------------------------------------------------------
+# MDP/VDP : moyenne et variance de différences de paires (pairwise differences) par population
+# ---------------------------------------------------------------------------
+
+
+def _pairwise_hamming_distances(matrix: np.ndarray) -> np.ndarray:
+    """Calcule les distances de Hamming par paire d'échantillons, pour une
+    matrice de génotypes (n_sites, n_samples). Retourne un vecteur 1D de
+    longueur C(n_samples, 2) -- une valeur par paire (i, j) avec i < j,
+    pas la matrice carrée (n_samples, n_samples) complète."""
+
+    if matrix.shape[1] == 0:
+        raise ValueError("La matrice de génotypes est vide.")
+
+    matrix_hammming = (matrix[:, :, None] != matrix[:, None, :]).sum(axis=0)
+    triangle_sup = np.triu_indices(matrix_hammming.shape[0], k=1)
+    return matrix_hammming[triangle_sup]
 
 
 # ---------------------------------------------------------------------------

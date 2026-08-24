@@ -24,6 +24,7 @@ from bridge.ancestry_simulation import (
     build_sex_stratified_samples_argument,
     build_transition_matrix,
     count_loci_per_group,
+    dna_ancestry_parameters_for_heritage,
     dna_mutation_simulation_per_locus,
     observed_maf,
     simulate_genotypes_for_locus_type,
@@ -653,3 +654,57 @@ def test_dna_mutation_simulation_per_locus(header_text_te2):
         assert list(mutated_tree_sequences[locus_name].tables.sites.position) == list(
             mutated_tree_sequences_2[locus_name].tables.sites.position
         )
+
+
+def test_dna_ancestry_parameters_for_heritage(header_text_te2):
+    """Vérifie le dispatch démographie/ploïdie par type d'héritage pour les
+    loci ADN, exactement le même que celui de simulate_genotypes_for_locus_type
+    côté SNP : <A> -- démographie inchangée, ploidy=2 ; <H>/<M> -- démographie
+    rescalée par coalescence_coefficient/2, ploidy=1 ; <X>/<Y> -- pas
+    supportés sur .mss (pas de sexe par individu dans ce format)."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2, scenario_index=1, seed=42
+    )
+    sex_ratio = 0.4
+
+    resolved_demography, ploidy = dna_ancestry_parameters_for_heritage(
+        "A", demography, sex_ratio
+    )
+    assert ploidy == 2
+    assert resolved_demography is demography
+
+    for heritage in ("H", "M"):
+        rescaled_demography, ploidy = dna_ancestry_parameters_for_heritage(
+            heritage, demography, sex_ratio
+        )
+        assert ploidy == 1
+        factor = coalescence_coefficient(heritage, sex_ratio) / 2
+        for pop, rescaled_pop in zip(
+            demography.populations, rescaled_demography.populations, strict=True
+        ):
+            assert rescaled_pop.initial_size == pytest.approx(pop.initial_size * factor)
+
+    for heritage in ("X", "Y"):
+        with pytest.raises(NotImplementedError):
+            dna_ancestry_parameters_for_heritage(heritage, demography, sex_ratio)
+
+
+def test_dna_mutation_simulation_per_locus_ploidy_matches_heritage(header_text_te2):
+    """Vérifie que le nombre de lignées échantillonnées reflète bien la
+    ploïdie attendue par héritage : un locus <A> (G2) doit avoir 2x plus de
+    "samples" msprime qu'un locus <M> (G3) pour la même population -- avant
+    la correction, les deux étaient simulés en ploidy=2 sans distinction."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2, scenario_index=1, seed=42
+    )
+
+    mutated_tree_sequences = dna_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2,
+        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        seed=42,
+    )
+
+    ts_a = mutated_tree_sequences["Locus_S_A_11_"]
+    ts_m = mutated_tree_sequences["Locus_S_M_16_"]
+    assert ts_a.num_samples == 2 * ts_m.num_samples
