@@ -21,8 +21,12 @@ from bridge.summary_statistics import (
     _prepare_matrices_poolseq,
     compute_all_statistics_poolseq,
     mean_distinct_haplotypes_per_group,
+    mean_minor_allele_count_per_group,
     mean_pairwise_differences_per_group,
+    mean_private_segregating_sites_per_group,
     mean_segregating_sites_per_group,
+    mean_tajima_d_per_group,
+    variance_minor_allele_count_per_group,
     variance_pairwise_differences_per_group,
 )
 
@@ -306,3 +310,193 @@ def test_variance_pairwise_differences_per_group_empty_defaults_to_zero():
         tree_sequences_empty, population_names
     )
     assert variance_empty == {"pop1": 0.0, "pop2": 0.0}
+
+
+def test_mean_tajima_d_per_group(header_text_te2):
+    """Vérifie mean_tajima_d_per_group séparément sur G2 (<A>) et G3 (<M>)
+    de toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque
+    chaque `group Gx` du header calcule son propre DTA_i à partir de ses
+    seuls loci."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2, scenario_index=1, seed=42
+    )
+    mutated = dna_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2,
+        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        seed=42,
+    )
+
+    loci_description = parse_loci_description(header_text_te2)
+    population_names = ["pop1", "pop2"]
+
+    def tree_sequences_for_group(group_name):
+        names = [locus.name for locus in loci_description if locus.group == group_name]
+        return [mutated[name] for name in names]
+
+    dta_g2 = mean_tajima_d_per_group(tree_sequences_for_group("G2"), population_names)
+    assert dta_g2 == {
+        "pop1": pytest.approx(-0.11361849459656947),
+        "pop2": pytest.approx(-0.2621067146690289),
+    }
+
+    dta_g3 = mean_tajima_d_per_group(tree_sequences_for_group("G3"), population_names)
+    assert dta_g3 == {
+        "pop1": pytest.approx(-0.453016737083286),
+        "pop2": pytest.approx(-0.10017554623967702),
+    }
+
+
+def test_mean_tajima_d_per_group_empty_defaults_to_zero():
+    """Une liste de loci vide ne doit pas faire disparaître de population
+    du résultat ni lever d'exception -- chaque population attendue garde
+    une valeur (0.0), comme le `res = 0.0` du C++ avant son `if (nl > 0)`."""
+    population_names = ["pop1", "pop2"]
+    assert mean_tajima_d_per_group([], population_names) == {
+        "pop1": 0.0,
+        "pop2": 0.0,
+    }
+
+
+def test_mean_private_segregating_sites_per_group(header_text_te2):
+    """Vérifie mean_private_segregating_sites_per_group séparément sur G2
+    (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
+    mélangés, puisque chaque `group Gx` du header calcule son propre
+    PSS_i à partir de ses seuls loci."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2, scenario_index=1, seed=42
+    )
+    mutated = dna_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2,
+        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        seed=42,
+    )
+
+    loci_description = parse_loci_description(header_text_te2)
+    population_names = ["pop1", "pop2"]
+
+    def tree_sequences_for_group(group_name):
+        names = [locus.name for locus in loci_description if locus.group == group_name]
+        return [mutated[name] for name in names]
+
+    pss_g2 = mean_private_segregating_sites_per_group(
+        tree_sequences_for_group("G2"), population_names
+    )
+    assert pss_g2 == {"pop1": pytest.approx(1.2), "pop2": pytest.approx(1.0)}
+
+    pss_g3 = mean_private_segregating_sites_per_group(
+        tree_sequences_for_group("G3"), population_names
+    )
+    assert pss_g3 == {"pop1": pytest.approx(3.8), "pop2": pytest.approx(3.8)}
+
+
+def test_mean_private_segregating_sites_per_group_empty_defaults_to_zero():
+    """Une liste de loci vide ne doit pas faire disparaître de population
+    du résultat ni lever d'exception -- chaque population attendue garde
+    une valeur (0.0)."""
+    population_names = ["pop1", "pop2"]
+    assert mean_private_segregating_sites_per_group([], population_names) == {
+        "pop1": 0.0,
+        "pop2": 0.0,
+    }
+
+
+def test_mean_minor_allele_count_per_group(header_text_te2):
+    """Vérifie mean_minor_allele_count_per_group séparément sur G2 (<A>)
+    et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
+    mélangés, puisque chaque `group Gx` du header calcule son propre
+    MNS_i à partir de ses seuls loci."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2, scenario_index=1, seed=42
+    )
+    mutated = dna_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2,
+        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        seed=42,
+    )
+
+    loci_description = parse_loci_description(header_text_te2)
+    population_names = ["pop1", "pop2"]
+
+    def tree_sequences_for_group(group_name):
+        names = [locus.name for locus in loci_description if locus.group == group_name]
+        return [mutated[name] for name in names]
+
+    mns_g2 = mean_minor_allele_count_per_group(
+        tree_sequences_for_group("G2"), population_names
+    )
+    assert mns_g2 == {
+        "pop1": pytest.approx(3.486274509803921),
+        "pop2": pytest.approx(4.0),
+    }
+
+    mns_g3 = mean_minor_allele_count_per_group(
+        tree_sequences_for_group("G3"), population_names
+    )
+    assert mns_g3 == {
+        "pop1": pytest.approx(1.575),
+        "pop2": pytest.approx(3.0385964912280703),
+    }
+
+
+def test_mean_minor_allele_count_per_group_empty_defaults_to_zero():
+    """Une liste de loci vide ne doit pas faire disparaître de population
+    du résultat ni lever d'exception -- chaque population attendue garde
+    une valeur (0.0)."""
+    population_names = ["pop1", "pop2"]
+    assert mean_minor_allele_count_per_group([], population_names) == {
+        "pop1": 0.0,
+        "pop2": 0.0,
+    }
+
+
+def test_variance_minor_allele_count_per_group(header_text_te2):
+    """Vérifie variance_minor_allele_count_per_group séparément sur G2
+    (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
+    mélangés, puisque chaque `group Gx` du header calcule son propre
+    VNS_i à partir de ses seuls loci."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2, scenario_index=1, seed=42
+    )
+    mutated = dna_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2,
+        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        seed=42,
+    )
+
+    loci_description = parse_loci_description(header_text_te2)
+    population_names = ["pop1", "pop2"]
+
+    def tree_sequences_for_group(group_name):
+        names = [locus.name for locus in loci_description if locus.group == group_name]
+        return [mutated[name] for name in names]
+
+    vns_g2 = variance_minor_allele_count_per_group(
+        tree_sequences_for_group("G2"), population_names
+    )
+    assert vns_g2 == {
+        "pop1": pytest.approx(8.9039600153787),
+        "pop2": pytest.approx(18.444444444444446),
+    }
+
+    vns_g3 = variance_minor_allele_count_per_group(
+        tree_sequences_for_group("G3"), population_names
+    )
+    assert vns_g3 == {
+        "pop1": pytest.approx(3.121875),
+        "pop2": pytest.approx(5.515358571868267),
+    }
+
+
+def test_variance_minor_allele_count_per_group_empty_defaults_to_zero():
+    """Une liste de loci vide ne doit pas faire disparaître de population
+    du résultat ni lever d'exception -- chaque population attendue garde
+    une valeur (0.0)."""
+    population_names = ["pop1", "pop2"]
+    assert variance_minor_allele_count_per_group([], population_names) == {
+        "pop1": 0.0,
+        "pop2": 0.0,
+    }

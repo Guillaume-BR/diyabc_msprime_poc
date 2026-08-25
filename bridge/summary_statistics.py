@@ -900,12 +900,21 @@ def _genotype_matrix_by_population(
 # ---------------------------------------------------------------------------
 
 
+def _segregating_sites_mask(matrix: np.ndarray) -> np.ndarray:
+    """Masque booléen (longueur n_sites) : True si le site n'est pas
+    identique chez tous les échantillons de la matrice (n_sites,
+    n_samples). Factorisé hors de _count_segregating_sites pour être
+    réutilisé par PSS (_private_segregating_sites_per_locus), qui a
+    besoin du masque par site, pas seulement du compte agrégé."""
+    if matrix.shape[1] == 0:
+        raise ValueError("La matrice de génotypes est vide.")
+    return np.any(matrix != matrix[:, [0]], axis=1)
+
+
 def _count_segregating_sites(matrix: np.ndarray) -> int:
     """Compte le nombre de sites polymorphes dans une matrice de génotypes
     (n_sites, n_samples)."""
-    if matrix.shape[1] == 0:
-        raise ValueError("La matrice de génotypes est vide.")
-    return int(np.sum(np.any(matrix != matrix[:, [0]], axis=1)))
+    return int(np.sum(_segregating_sites_mask(matrix)))
 
 
 def mean_segregating_sites_per_group(
@@ -1119,6 +1128,330 @@ def variance_pairwise_differences_per_group(
             variance_pairwise_differences[pop_name] /= valid_loci_count[pop_name]
 
     return variance_pairwise_differences
+
+
+# ---------------------------------------------------------------------------
+# DTA : distance de Tajima par population
+# ---------------------------------------------------------------------------
+
+
+def _tajima_constants(n_samples: int) -> tuple[float, float, float]:
+    """Calcule les constantes a1, e1, e2 pour le D de Tajima (cal_dta1pl,
+    lignes 1566-1575) à partir du nombre d'échantillons (n_samples) --
+    ne dépend que de n_samples, jamais des données elles-mêmes.
+
+    Args:
+        n_samples (int): Nombre d'échantillons (>= 2).
+
+    Returns:
+        tuple: (a1, e1, e2) -- a1 est aussi réutilisé directement dans la
+        formule finale du D (S / a1), e1/e2 sont les coefficients de la
+        variance sous neutralité. b1, b2, c1, c2, a2 sont des étapes
+        intermédiaires purement internes, jamais réutilisées ailleurs.
+    """
+    a1 = sum(1.0 / i for i in range(1, n_samples))
+    a2 = sum(1.0 / (i * i) for i in range(1, n_samples))
+    b1 = (n_samples + 1) / (n_samples - 1) / 3.0
+    b2 = 2 * ((n_samples**2 + n_samples) + 3.0) / 9.0 / (n_samples**2 - n_samples)
+    c1 = b1 - 1.0 / a1
+    c2 = b2 - ((n_samples + 2) / a1 / n_samples) + (a2 / a1 / a1)
+    e1 = c1 / a1
+    e2 = c2 / (a1 * a1 + a2)
+    return a1, e1, e2
+
+
+def _tajima_d_per_locus(matrix: np.ndarray) -> float | None:
+    """D de Tajima (cal_dta1pl) pour UNE population sur UN locus, à
+    partir de sa matrice de génotypes (n_sites, n_samples).
+
+    D = (pi - S/a1) / sqrt(e1*S + e2*S*(S-1))  -- pi = MPD (moyenne des
+    différences par paire), S = NSS (nombre de sites ségrégeants),
+    a1/e1/e2 = _tajima_constants(n_samples).
+
+    Retourne `None` si `n_samples < 2` (pas assez d'échantillons pour
+    calculer ne serait-ce qu'une paire -- ce locus doit être EXCLU de la
+    moyenne du groupe, `OKK = false` côté C++). Retourne `0.0` si
+    `n_samples >= 2` mais qu'aucun site n'est ségrégeant (S == 0, le
+    dénominateur de la formule est nul) -- ce locus reste INCLUS dans la
+    moyenne du groupe avec une valeur de 0.0, contrairement au cas
+    précédent : le C++ ne repasse jamais `OKK` à false dans ce cas
+    (lignes 1579/1594-1598) -- distinction délibérée, pas une
+    simplification de notre part.
+    """
+    n_samples = matrix.shape[1]
+    if n_samples < 2:
+        return None
+
+    S = _count_segregating_sites(matrix)
+    a1, e1, e2 = _tajima_constants(n_samples)
+    denominator = e1 * S + e2 * S * (S - 1.0)
+    if denominator <= 0:
+        return 0.0
+
+    pi = _pairwise_hamming_distances(matrix).mean()
+    return (pi - S / a1) / np.sqrt(denominator)
+
+
+def mean_tajima_d_per_group(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule DTA_i (cal_dta1p) : pour chaque population, la moyenne du
+    D de Tajima (_tajima_d_per_locus) sur tous les loci du groupe passé
+    en argument (un groupe = les TreeSequences des loci séquence d'un
+    même `group Gx` du header).
+
+    `population_names` fixe explicitement les clés du dict retourné --
+    chaque population attendue a toujours une valeur (0.0 par défaut,
+    comme le `res = 0.0` du C++), même si `tree_sequences` est vide.
+
+    Comme mean_pairwise_differences_per_group/variance_pairwise_
+    differences_per_group, le dénominateur est un compteur PAR
+    POPULATION (le `nl` de cal_dta1p) : un locus où `_tajima_d_per_locus`
+    retourne `None` (moins de 2 échantillons) est exclu -- ni ajouté à la
+    somme, ni compté. Un locus où `_tajima_d_per_locus` retourne `0.0`
+    (0 site ségrégeant) reste, lui, INCLUS dans le compte (voir
+    _tajima_d_per_locus pour la distinction).
+
+    Suppose quand même que toutes les populations de `population_names`
+    sont présentes (au moins 1 échantillon) sur tous les loci du groupe
+    -- lève un KeyError si ce n'est pas le cas, comme les autres
+    fonctions `mean_*_per_group` de ce module.
+
+    Args:
+        tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
+        population_names (list[str]): Populations attendues.
+
+    Returns:
+        dict: {pop_name: valeur_moyenne}
+    """
+    mean_tajima_d = {pop_name: 0.0 for pop_name in population_names}
+    valid_loci_count = {pop_name: 0 for pop_name in population_names}
+    for ts in tree_sequences:
+        genotype_matrices = _genotype_matrix_by_population(ts)
+        for pop_name in population_names:
+            matrix = genotype_matrices[pop_name]
+            tajima_d = _tajima_d_per_locus(matrix)
+            if tajima_d is not None:
+                mean_tajima_d[pop_name] += tajima_d
+                valid_loci_count[pop_name] += 1
+
+    for pop_name in population_names:
+        if valid_loci_count[pop_name] > 0:
+            mean_tajima_d[pop_name] /= valid_loci_count[pop_name]
+
+    return mean_tajima_d
+
+
+# ---------------------------------------------------------------------------
+# PSS : sites ségrégeants "privés" par population (cal_pss1p)
+# ---------------------------------------------------------------------------
+
+
+def _private_segregating_sites_per_locus(
+    genotype_matrices: dict[str, np.ndarray], target_pop: str
+) -> int:
+    """Nombre de sites ségrégeants "privés" de `target_pop` sur UN locus
+    (cal_pss1p) : sites ségrégeants dans `target_pop` mais NULLE PART
+    ailleurs, parmi TOUTES les populations de `genotype_matrices` (pas
+    seulement celles d'un même groupe -- le C++ compare à `this->nsample`,
+    le nombre total de populations du dataset).
+
+    Toutes les matrices de `genotype_matrices` viennent du même
+    `genotype_matrix()` (juste tranchées par colonnes, voir
+    _genotype_matrix_by_population) -- la ligne `i` désigne donc le MÊME
+    site physique pour toutes les populations. Contrairement au C++, qui
+    compare des listes d'indices de sites variables de longueurs
+    différentes par une recherche imbriquée (`ssa[sample][j] ==
+    ssa[sa][k]`), on peut donc comparer les masques booléens position par
+    position directement -- pas de recherche d'égalité nécessaire.
+    """
+    target_mask = _segregating_sites_mask(genotype_matrices[target_pop])
+    other_masks = [
+        _segregating_sites_mask(matrix)
+        for pop_name, matrix in genotype_matrices.items()
+        if pop_name != target_pop
+    ]
+    segregating_elsewhere = (
+        np.logical_or.reduce(other_masks) if other_masks else np.zeros_like(target_mask)
+    )
+    return int(np.sum(target_mask & ~segregating_elsewhere))
+
+
+def mean_private_segregating_sites_per_group(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule PSS_i (cal_pss1p) : pour chaque population, la moyenne du
+    nombre de sites ségrégeants privés (_private_segregating_sites_per_
+    locus) sur tous les loci du groupe passé en argument.
+
+    `population_names` fixe explicitement les clés du dict retourné --
+    chaque population attendue a toujours une valeur (0.0 par défaut),
+    même si `tree_sequences` est vide. `population_names` DOIT couvrir
+    TOUTES les populations du dataset (pas seulement celles d'un groupe),
+    puisque `_private_segregating_sites_per_locus` compare `target_pop` à
+    toutes les autres populations présentes dans `genotype_matrices`.
+
+    Contrairement à mean_segregating_sites_per_group et aux autres
+    fonctions `mean_*_per_group` de ce module, le dénominateur ici est
+    `len(tree_sequences)` SANS AUCUNE exclusion (`nl` s'incrémente sans
+    condition dans cal_pss1p, ligne 1624 -- pas de garde-fou du tout,
+    même pas le `samplesize > 0` de NSS/NHA).
+
+    Suppose que toutes les populations de `population_names` sont
+    présentes sur tous les loci du groupe -- lève un KeyError sinon.
+
+    Args:
+        tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
+        population_names (list[str]): Populations attendues (toutes celles du dataset).
+
+    Returns:
+        dict: {pop_name: valeur_moyenne}
+    """
+    mean_pss = {pop_name: 0.0 for pop_name in population_names}
+    num_loci = len(tree_sequences)
+    for ts in tree_sequences:
+        genotype_matrices = _genotype_matrix_by_population(ts)
+        for pop_name in population_names:
+            mean_pss[pop_name] += _private_segregating_sites_per_locus(
+                genotype_matrices, pop_name
+            )
+
+    if num_loci > 0:
+        for pop_name in population_names:
+            mean_pss[pop_name] /= num_loci
+
+    return mean_pss
+
+
+# ---------------------------------------------------------------------------
+# MNS/VNS : moyenne/variance du compte de l'allèle minoritaire (afs, cal_mns1p/cal_vns1p)
+# ---------------------------------------------------------------------------
+
+
+def _minor_allele_counts_at_segregating_sites(matrix: np.ndarray) -> np.ndarray:
+    """Pour chaque site ségrégeant d'une matrice de génotypes (n_sites,
+    n_samples), calcule le compte du/des allèle(s) le(s) moins
+    fréquent(s) parmi les échantillons (afs, `nf[jj]` après tri croissant
+    et saut des zéros -- équivalent à `min(comptes des valeurs
+    effectivement présentes)`, généralisation multi-allélique du "minor
+    allele count" puisqu'un site ADN peut avoir jusqu'à 4 états A/C/G/T,
+    pas seulement 2 comme un SNP).
+
+    Retourne un vecteur 1D de longueur = nombre de sites SÉGRÉGEANTS
+    (pas n_sites) -- un site fixé (une seule valeur parmi les
+    échantillons) n'est pas inclus, comme `afs` qui ne pousse rien dans
+    `t_afs` quand `jj >= 3` (une seule base présente).
+    """
+    if matrix.shape[1] == 0:
+        raise ValueError("La matrice de génotypes est vide.")
+    minor_counts = []
+    for site in matrix:
+        _, counts = np.unique(site, return_counts=True)
+        if len(counts) > 1:
+            minor_counts.append(counts.min())
+    return np.array(minor_counts, dtype=float)
+
+
+def mean_minor_allele_count_per_group(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule MNS_i (cal_mns1p) : pour chaque population, la moyenne,
+    sur les loci du groupe, de la moyenne (par locus) des comptes
+    d'allèle minoritaire aux sites ségrégeants
+    (_minor_allele_counts_at_segregating_sites).
+
+    Un locus sans site ségrégeant contribue 0.0 (la boucle C++ sur
+    `t_afs` ne s'exécute simplement pas -- même effet qu'un vecteur
+    vide ici). Comme PSS (et contrairement à MPD/VPD/DTA), AUCUNE
+    exclusion de locus : `nl` = `len(tree_sequences)` sans condition
+    (cal_mns1p, `nl++` inconditionnel, ligne 1705) -- pas besoin de
+    compteur par population.
+
+    `population_names` fixe explicitement les clés du dict retourné --
+    chaque population attendue a toujours une valeur (0.0 par défaut),
+    même si `tree_sequences` est vide. Suppose que toutes les
+    populations de `population_names` sont présentes sur tous les loci
+    du groupe -- lève un KeyError sinon.
+
+    Args:
+        tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
+        population_names (list[str]): Populations attendues.
+
+    Returns:
+        dict: {pop_name: valeur_moyenne}
+    """
+    mean_mns = {pop_name: 0.0 for pop_name in population_names}
+    num_loci = len(tree_sequences)
+    for ts in tree_sequences:
+        genotype_matrices = _genotype_matrix_by_population(ts)
+        for pop_name in population_names:
+            minor_counts = _minor_allele_counts_at_segregating_sites(
+                genotype_matrices[pop_name]
+            )
+            if len(minor_counts) > 0:
+                mean_mns[pop_name] += minor_counts.mean()
+
+    if num_loci > 0:
+        for pop_name in population_names:
+            mean_mns[pop_name] /= num_loci
+
+    return mean_mns
+
+
+def variance_minor_allele_count_per_group(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule VNS_i (cal_vns1p) : pour chaque population, la moyenne,
+    sur les loci du groupe, de la variance (par locus) des comptes
+    d'allèle minoritaire aux sites ségrégeants.
+
+    ATTENTION : variance BIAISÉE (ddof=0, division par n, PAS n-1) --
+    contrairement à variance_pairwise_differences_per_group (VPD) qui
+    utilise ddof=1. Vérifié explicitement contre cal_vns1p, ligne 1731 :
+    `v = (sx2 - sx*sx/a) / a`, pas `/ (a-1)`.
+
+    Un locus avec moins de 2 sites ségrégeants contribue 0.0 (`v = 0.0`
+    explicite, ligne 1734 -- pas assez de points pour une variance).
+    Comme MNS/PSS, AUCUNE exclusion de locus au niveau du groupe (`nl`
+    s'incrémente sans condition, ligne 1736) : le `if (v > 0.0) res +=
+    v` du C++ (ligne 1738) n'exclut rien du dénominateur, il évite
+    seulement d'ajouter un `v` négatif -- ce qui ne peut mathématiquement
+    pas arriver pour une vraie variance (`v >= 0` toujours), donc ce
+    garde-fou n'a aucun effet observable et n'est pas reproduit ici.
+
+    `population_names` fixe explicitement les clés du dict retourné --
+    chaque population attendue a toujours une valeur (0.0 par défaut),
+    même si `tree_sequences` est vide. Suppose que toutes les
+    populations de `population_names` sont présentes sur tous les loci
+    du groupe -- lève un KeyError sinon.
+
+    Args:
+        tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
+        population_names (list[str]): Populations attendues.
+
+    Returns:
+        dict: {pop_name: valeur_moyenne}
+    """
+    variance_vns = {pop_name: 0.0 for pop_name in population_names}
+    num_loci = len(tree_sequences)
+    for ts in tree_sequences:
+        genotype_matrices = _genotype_matrix_by_population(ts)
+        for pop_name in population_names:
+            minor_counts = _minor_allele_counts_at_segregating_sites(
+                genotype_matrices[pop_name]
+            )
+            if len(minor_counts) > 1:
+                variance_vns[pop_name] += minor_counts.var()
+
+    if num_loci > 0:
+        for pop_name in population_names:
+            variance_vns[pop_name] /= num_loci
+
+    return variance_vns
 
 
 # ---------------------------------------------------------------------------
