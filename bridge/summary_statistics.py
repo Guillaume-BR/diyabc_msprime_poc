@@ -1563,6 +1563,70 @@ def mean_segregating_sites_per_group_pairwize(
 
 
 # ---------------------------------------------------------------------------
+# MP2 : Moyenne de différences par paire pour un regroupement de deux populations
+# ---------------------------------------------------------------------------
+
+
+def _mean_pairwise_differences_within_per_locus(genotype_matrices, pop_a, pop_b):
+    distances_a = _pairwise_hamming_distances(genotype_matrices[pop_a])
+    distances_b = _pairwise_hamming_distances(genotype_matrices[pop_b])
+    total_pairs = len(distances_a) + len(distances_b)
+    total_differences = distances_a.sum() + distances_b.sum()
+    if total_pairs > 0:
+        return total_differences / total_pairs
+    return float(total_differences)  # 0.0 en pratique, comme le C++
+
+
+def mean_pairwise_differences_per_group_pairwize(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule MP2_ij (cal_mp2p) : pour chaque paire de populations, la
+    moyenne du nombre de différences par paire (distance de Hamming)
+    sur tous les loci du groupe passé en argument (un groupe = les
+    TreeSequences des loci séquence d'un même `group Gx` du header).
+
+    `population_names` fixe explicitement les clés du dict retourné --
+    chaque population attendue a toujours une valeur (0.0 par défaut),
+    même si `tree_sequences` est vide. Suppose que toutes les
+    populations de `population_names` sont présentes sur tous les loci
+    du groupe -- lève un KeyError sinon.
+
+    Args:
+        tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
+        population_names (list[str]): Populations attendues.
+
+    Returns:
+        dict: {pop_pair_key: valeur_moyenne}
+    """
+    num_loci = len(tree_sequences)
+    mean_pairwise_differences = {}
+    for ia in range(len(population_names)):
+        for ib in range(ia + 1, len(population_names)):
+            key = f"{ia + 1}.{ib + 1}"
+            mean_pairwise_differences[key] = 0.0
+
+    for ts in tree_sequences:
+        genotype_matrices = _genotype_matrix_by_population(ts)
+        for ia in range(len(population_names)):
+            for ib in range(ia + 1, len(population_names)):
+                pop_a = population_names[ia]
+                pop_b = population_names[ib]
+                key = f"{ia + 1}.{ib + 1}"
+                mean_pairwise_differences[key] += (
+                    _mean_pairwise_differences_within_per_locus(
+                        genotype_matrices, pop_a, pop_b
+                    )
+                )
+
+    if num_loci > 0:
+        for key in mean_pairwise_differences:
+            mean_pairwise_differences[key] /= num_loci
+
+    return mean_pairwise_differences
+
+
+# ---------------------------------------------------------------------------
 # Point d'entrée principal
 # ---------------------------------------------------------------------------
 
