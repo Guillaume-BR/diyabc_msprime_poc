@@ -23,6 +23,7 @@ import numpy as np
 import tskit
 
 from bridge.ancestry_simulation import compute_population_layout
+from bridge.loci_parser import parse_loci_description
 
 # ---------------------------------------------------------------------------
 # Utilitaires scalaires (conservés pour la traçabilité et les tests unitaires)
@@ -917,7 +918,7 @@ def _count_segregating_sites(matrix: np.ndarray) -> int:
     return int(np.sum(_segregating_sites_mask(matrix)))
 
 
-def mean_segregating_sites_per_group(
+def compute_NSS(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
 ) -> dict[str, float]:
@@ -977,7 +978,7 @@ def _count_distinct_haplotypes(matrix: np.ndarray) -> int:
     return distinct_haplotypes.shape[1]
 
 
-def mean_distinct_haplotypes_per_group(
+def compute_NHA(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
 ) -> dict[str, float]:
@@ -1024,7 +1025,7 @@ def _pairwise_hamming_distances(matrix: np.ndarray) -> np.ndarray:
     return matrix_hammming[triangle_sup]
 
 
-def mean_pairwise_differences_per_group(
+def compute_MPD(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
 ) -> dict[str, float]:
@@ -1037,8 +1038,8 @@ def mean_pairwise_differences_per_group(
     chaque population attendue a toujours une valeur (0.0 par défaut,
     comme le `res = 0.0` du C++), même si `tree_sequences` est vide.
 
-    Contrairement à mean_segregating_sites_per_group/mean_distinct_
-    haplotypes_per_group (qui divisent par `len(tree_sequences)`), le
+    Contrairement à compute_NSS/compute_NHA
+    (qui divisent par `len(tree_sequences)`), le
     dénominateur ici est un compteur PAR POPULATION (comme le `nl` de
     cal_mpd1p) : un locus où une population a moins de 2 échantillons
     donne 0 paire (`_pairwise_hamming_distances` retourne un vecteur
@@ -1049,7 +1050,7 @@ def mean_pairwise_differences_per_group(
     Suppose quand même que toutes les populations de `population_names`
     sont présentes (au moins 1 échantillon) sur tous les loci du groupe
     -- lève un KeyError si ce n'est pas le cas, comme les autres
-    fonctions `mean_*_per_group` de ce module.
+    fonctions `compute_*` de ce module.
 
     Args:
         tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
@@ -1076,7 +1077,7 @@ def mean_pairwise_differences_per_group(
     return mean_pairwise_differences
 
 
-def variance_pairwise_differences_per_group(
+def compute_VPD(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
 ) -> dict[str, float]:
@@ -1089,8 +1090,8 @@ def variance_pairwise_differences_per_group(
     chaque population attendue a toujours une valeur (0.0 par défaut,
     comme le `res = 0.0` du C++), même si `tree_sequences` est vide.
 
-    Contrairement à mean_segregating_sites_per_group/mean_distinct_
-    haplotypes_per_group (qui divisent par `len(tree_sequences)`), le
+    Contrairement à compute_NSS/compute_NHA
+    (qui divisent par `len(tree_sequences)`), le
     dénominateur ici est un compteur PAR POPULATION (comme le `nl` de
     cal_vpd1p) : un locus où une population a moins de 2 échantillons
     donne 0 paire (`_pairwise_hamming_distances` retourne un vecteur
@@ -1101,7 +1102,7 @@ def variance_pairwise_differences_per_group(
     Suppose quand même que toutes les populations de `population_names`
     sont présentes (au moins 1 échantillon) sur tous les loci du groupe
     -- lève un KeyError si ce n'est pas le cas, comme les autres
-    fonctions `mean_*_per_group` de ce module.
+    fonctions `compute_*` de ce module.
 
     Args:
         tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
@@ -1192,7 +1193,7 @@ def _tajima_d_per_locus(matrix: np.ndarray) -> float | None:
     return (pi - S / a1) / np.sqrt(denominator)
 
 
-def mean_tajima_d_per_group(
+def compute_DTA(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
 ) -> dict[str, float]:
@@ -1205,7 +1206,7 @@ def mean_tajima_d_per_group(
     chaque population attendue a toujours une valeur (0.0 par défaut,
     comme le `res = 0.0` du C++), même si `tree_sequences` est vide.
 
-    Comme mean_pairwise_differences_per_group/variance_pairwise_
+    Comme compute_MPD/variance_pairwise_
     differences_per_group, le dénominateur est un compteur PAR
     POPULATION (le `nl` de cal_dta1p) : un locus où `_tajima_d_per_locus`
     retourne `None` (moins de 2 échantillons) est exclu -- ni ajouté à la
@@ -1216,7 +1217,7 @@ def mean_tajima_d_per_group(
     Suppose quand même que toutes les populations de `population_names`
     sont présentes (au moins 1 échantillon) sur tous les loci du groupe
     -- lève un KeyError si ce n'est pas le cas, comme les autres
-    fonctions `mean_*_per_group` de ce module.
+    fonctions `compute_*` de ce module.
 
     Args:
         tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
@@ -1278,7 +1279,7 @@ def _private_segregating_sites_per_locus(
     return int(np.sum(target_mask & ~segregating_elsewhere))
 
 
-def mean_private_segregating_sites_per_group(
+def compute_PSS(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
 ) -> dict[str, float]:
@@ -1293,8 +1294,8 @@ def mean_private_segregating_sites_per_group(
     puisque `_private_segregating_sites_per_locus` compare `target_pop` à
     toutes les autres populations présentes dans `genotype_matrices`.
 
-    Contrairement à mean_segregating_sites_per_group et aux autres
-    fonctions `mean_*_per_group` de ce module, le dénominateur ici est
+    Contrairement à compute_NSS et aux autres
+    fonctions `compute_*` de ce module, le dénominateur ici est
     `len(tree_sequences)` SANS AUCUNE exclusion (`nl` s'incrémente sans
     condition dans cal_pss1p, ligne 1624 -- pas de garde-fou du tout,
     même pas le `samplesize > 0` de NSS/NHA).
@@ -1354,7 +1355,7 @@ def _minor_allele_counts_at_segregating_sites(matrix: np.ndarray) -> np.ndarray:
     return np.array(minor_counts, dtype=float)
 
 
-def mean_minor_allele_count_per_group(
+def compute_MNS(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
 ) -> dict[str, float]:
@@ -1401,7 +1402,7 @@ def mean_minor_allele_count_per_group(
     return mean_mns
 
 
-def variance_minor_allele_count_per_group(
+def compute_VNS(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
 ) -> dict[str, float]:
@@ -1410,7 +1411,7 @@ def variance_minor_allele_count_per_group(
     d'allèle minoritaire aux sites ségrégeants.
 
     ATTENTION : variance BIAISÉE (ddof=0, division par n, PAS n-1) --
-    contrairement à variance_pairwise_differences_per_group (VPD) qui
+    contrairement à compute_VPD (VPD) qui
     utilise ddof=1. Vérifié explicitement contre cal_vns1p, ligne 1731 :
     `v = (sx2 - sx*sx/a) / a`, pas `/ (a-1)`.
 
@@ -1459,7 +1460,7 @@ def variance_minor_allele_count_per_group(
 # --------------------------------------------------------------------------
 
 
-def mean_distinct_haplotypes_per_group_pairwize(
+def compute_NH2(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
 ) -> dict[str, float]:
@@ -1514,7 +1515,7 @@ def mean_distinct_haplotypes_per_group_pairwize(
 # ---------------------------------------------------------------------------
 
 
-def mean_segregating_sites_per_group_pairwize(
+def compute_NS2(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
 ) -> dict[str, float]:
@@ -1579,7 +1580,7 @@ def _mean_pairwise_differences_within_per_locus(
     return float(total_differences)  # 0.0 en pratique, comme le C++
 
 
-def mean_pairwise_differences_per_group_pairwize(
+def compute_MP2(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
 ) -> dict[str, float]:
@@ -1663,7 +1664,7 @@ def _pairwise_hamming_distances_between(
     return distances
 
 
-def mean_pairwise_differences_between_per_group_pairwize(
+def compute_MPB(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
 ) -> dict[str, float]:
@@ -1718,7 +1719,7 @@ def mean_pairwise_differences_between_per_group_pairwize(
 # ---------------------------------------------------------------------------
 
 
-def mean_hst_per_group_pairwize(
+def compute_HST(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
 ) -> dict[str, float]:
@@ -1731,9 +1732,8 @@ def mean_hst_per_group_pairwize(
     et den = somme sur les loci de Hb_locus (Hb = MPB par-locus, Hw =
     MPW par-locus) -- un RATIO DE SOMMES accumulées sur tout le groupe,
     PAS une moyenne de valeurs par-locus divisée par num_loci (contraire
-    à mean_pairwise_differences_per_group_pairwize/mean_pairwise_
-    differences_between_per_group_pairwize) -- même schéma d'agrégation
-    que _fst_wc (FST2/FST3/FST4, côté SNP).
+    à compute_MP2/compute_MPB) -- même schéma d'agrégation que _fst_wc
+    (FST2/FST3/FST4, côté SNP).
 
     `population_names` fixe explicitement les clés du dict retourné --
     chaque paire attendue a toujours une valeur (0.0 par défaut, y
@@ -1855,4 +1855,89 @@ def compute_all_statistics_poolseq(
         compute_FST1_poolseq(reads_per_locus, population_names, pool_sizes, _mats=mats)
     )
     results.update(compute_AML(reads_per_locus, population_names, _mats=mats))
+    return results
+
+
+_DNA_PER_POPULATION_STATS = {
+    "NHA": compute_NHA,
+    "NSS": compute_NSS,
+    "MPD": compute_MPD,
+    "VPD": compute_VPD,
+    "DTA": compute_DTA,
+    "PSS": compute_PSS,
+    "MNS": compute_MNS,
+    "VNS": compute_VNS,
+}
+
+_DNA_PAIRWISE_STATS = {
+    "NH2": compute_NH2,
+    "NS2": compute_NS2,
+    "MP2": compute_MP2,
+    "MPB": compute_MPB,
+    "HST": compute_HST,
+}
+
+
+def compute_all_statistics_dna(
+    header_text: str,
+    tree_sequences_by_locus: dict[str, tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule les 13 statistiques résumées ADN pour chaque `group Gx`
+    séquence (`[S]`) du header, et retourne un dict {nom_colonne: valeur}
+    utilisant les VRAIS noms de colonnes DIYABC (`STAT_<groupe>_<pop-ou-
+    paire>`, ex. `NSS_2_1`, `NH2_3_1.2`) -- vérifié caractère pour
+    caractère contre la sortie réelle de `diyabc` sur
+    `toy_example2_ms_dna` (`STAT_<groupe>_<suffixe>` quand il y a
+    plusieurs groupes, `STAT_<suffixe>` seul sinon -- même convention
+    que `stats_group_parser.parse_requested_statistic_names`).
+
+    Args:
+        header_text: contenu de header.txt/headerRF.txt (pour
+            `parse_loci_description`, qui donne le groupe de chaque
+            locus).
+        tree_sequences_by_locus: {nom_locus: TreeSequence mutée} --
+            la sortie de `dna_mutation_simulation_per_locus`. Les loci
+            microsat (`ms_or_seq == "M"`) présents dans le header sont
+            ignorés ici (pas de code de simulation microsat).
+        population_names: toutes les populations du dataset, dans
+            l'ordre "pop1".."popN" (leur position dans cette liste,
+            pas leur nom, détermine l'indice numérique utilisé dans
+            les noms de colonnes).
+
+    Returns:
+        dict: {nom_colonne_diyabc: valeur}
+    """
+    loci_by_group: dict[str, list[str]] = {}
+    for locus in parse_loci_description(header_text):
+        if locus.ms_or_seq != "S":
+            continue
+        loci_by_group.setdefault(locus.group, []).append(locus.name)
+
+    multi_group = len(loci_by_group) > 1
+
+    results = {}
+    for group_label, locus_names in loci_by_group.items():
+        group_number = group_label[1:]  # "G2" -> "2", comme stats_group_parser.py
+        tree_sequences = [tree_sequences_by_locus[name] for name in locus_names]
+
+        for stat_name, stat_fn in _DNA_PER_POPULATION_STATS.items():
+            for pop_name, value in stat_fn(tree_sequences, population_names).items():
+                pop_index = population_names.index(pop_name) + 1
+                key = (
+                    f"{stat_name}_{group_number}_{pop_index}"
+                    if multi_group
+                    else f"{stat_name}_{pop_index}"
+                )
+                results[key] = value
+
+        for stat_name, stat_fn in _DNA_PAIRWISE_STATS.items():
+            for pair_key, value in stat_fn(tree_sequences, population_names).items():
+                key = (
+                    f"{stat_name}_{group_number}_{pair_key}"
+                    if multi_group
+                    else f"{stat_name}_{pair_key}"
+                )
+                results[key] = value
+
     return results

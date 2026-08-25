@@ -38,9 +38,9 @@ def test_parse_requested_statistic_names_human_old_vocabulary(header_text):
     assert names[-1] == "AMO_4.1.2"
 
 
-def test_parse_requested_statistic_names_modern_vocabulary():
-    """Format condensé moderne (ex: toy_example5_modif) : noms de
-    colonnes 'STAT_index', même convention que summary_statistics.py."""
+def test_parse_requested_statistic_names_modern_vocabulary(header_text_te2):
+    """Format condensé moderne (ex: toy_example5_modif ou toy_example2) : noms de
+    colonnes 'STAT_index' ou 'STAT_group_index' selon le nombre de groupes, même convention que summary_statistics.py."""
     header_text = (
         "group summary statistics (9)\n"
         "group G1 (9)\n"
@@ -62,6 +62,10 @@ def test_parse_requested_statistic_names_modern_vocabulary():
         "HWm_2",
         "HWm_3",
     ]
+
+    # On test si il y a plusieurs groupes, les noms de colonnes sont "STAT_group_index"
+    names_te2 = parse_requested_statistic_names(header_text_te2)
+    assert names_te2[:2] == ["NAL_1_1", "NAL_1_2"]
 
 
 def test_parse_requested_statistic_names_missing_section():

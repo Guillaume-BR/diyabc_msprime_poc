@@ -42,7 +42,12 @@ from bridge.pipeline import (
     compute_summary_statistics_from_values,
     read_header_text,
 )
-from bridge.prior_parser import is_constant_prior, parse_priors
+from bridge.prior_parser import (
+    get_parameter_used_by_model,
+    is_constant_prior,
+    parse_group_priors,
+    parse_priors,
+)
 from bridge.scenario_parser import parse_header_scenarios
 from bridge.scenario_types import Scenario
 
@@ -203,6 +208,54 @@ def _kept_param_names_by_scenario(
 
 
 # ── Rejeu des tirages RÉELS de DIYABC (comparaison appariée) ──────────────
+
+
+def group_prior_column_names(header_text: str) -> list[str]:
+    """Liste ordonnée des noms de colonnes "priors de groupe" réellement
+    présentes dans un vrai reftable DIYABC (ex: `µseq_2`, `k1seq_2`),
+    juste après les paramètres historiques et avant les colonnes de
+    statistiques sur chaque ligne -- vérifiée caractère pour caractère
+    contre la vraie sortie DIYABC de `toy_example2_ms_dna` (`µmic_1
+    pmic_1 snimic_1 µseq_2 k1seq_2 µseq_3 k1seq_3`, `nparamut=7`).
+
+    Contrairement aux paramètres historiques (`_kept_param_names_by_
+    scenario`), ces colonnes NE DÉPENDENT PAS du scénario tiré par la
+    particule -- toujours les mêmes colonnes, dans l'ordre de
+    déclaration des groupes (`G1`, `G2`, `G3`...) du header, un `mus_rate`
+    toujours en premier dans chaque groupe.
+
+    Pour un groupe `[S]` (séquence ADN) : `mus_rate` puis `k1`/`k2` SI ET
+    SEULEMENT SI utilisés par le modèle du groupe (`get_parameter_used_
+    by_model` -- ex: K2P/HKY n'ont que `k1`, pas de colonne `k2seq_N`).
+    Pour un groupe `[M]` (microsat) : `mus_rate` puis `P` puis `SNI`,
+    TOUJOURS les trois -- hypothèse basée sur ce qui est observé dans la
+    vraie sortie de ce dataset précis, pas sur une règle générale
+    vérifiée dans le C++ (MicroSat n'a pas de simulation-side code dans
+    ce projet, seulement besoin de savoir COMBIEN de colonnes sauter
+    pour atteindre celles des groupes ADN qui suivent).
+    """
+    group_priors = parse_group_priors(header_text)
+
+    names = []
+    for group_name, entries in group_priors.items():
+        ms_or_seq = entries[0].ms_or_seq
+        type_suffix = "seq" if ms_or_seq == "S" else "mic"
+        group_number = group_name[1:]  # "G2" -> "2"
+
+        names.append(f"µ{type_suffix}_{group_number}")  # mus_rate, toujours présent
+
+        if ms_or_seq == "S":
+            model_entry = next(e for e in entries if e.model)
+            k1_used, k2_used = get_parameter_used_by_model(model_entry)
+            if k1_used:
+                names.append(f"k1{type_suffix}_{group_number}")
+            if k2_used:
+                names.append(f"k2{type_suffix}_{group_number}")
+        else:
+            names.append(f"p{type_suffix}_{group_number}")
+            names.append(f"sni{type_suffix}_{group_number}")
+
+    return names
 
 
 def parse_real_reftable_params(

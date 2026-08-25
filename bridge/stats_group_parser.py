@@ -11,7 +11,8 @@ DIYABC, ce qui fausse toute comparaison colonne-par-nom entre les deux
 pipelines (découvert empiriquement sur toy_example5_modif : 'ML3p_1.2.3'
 présent côté msprime, absent côté DIYABC).
 
-Format géré, un seul groupe (suffisant pour human/toy_example5) :
+Formats gérés :
+    - un seul groupe (suffisant pour human/toy_example5) :
     group summary statistics (N)
     group G1 (N)
     ML1p 1 2 3
@@ -19,6 +20,20 @@ Format géré, un seul groupe (suffisant pour human/toy_example5) :
     ...
 -> noms de colonnes "STAT_index" (ex: "ML1p_1", "ML2p_1.2"), même
 convention que summary_statistics.py.
+
+    - ou plusieurs groupes (ex: toy_example2) :
+    group summary statistics (N)
+    group G1 (N1)
+    ML1p 1 2 3
+    ML2p 1.2 1.3 2.3
+    ...
+    group G2 (N2)
+    ML1p 1 2 3
+    ML2p 1.2 1.3 2.3
+    ...
+-> noms de colonnes "STAT_group_index" (ex: "ML1p_1_1", "ML2p_1_1.2"), même
+convention que summary_statistics.py.
+
 """
 
 import re
@@ -78,6 +93,7 @@ def parse_requested_statistic_names(header_text: str) -> list[str]:
     statistics').
     """
     blocks = _split_stats_blocks(header_text)
+    nb_blocks = len(blocks)
 
     stats_blocks = {}
     for block in blocks:
@@ -85,6 +101,8 @@ def parse_requested_statistic_names(header_text: str) -> list[str]:
         group_match = _GROUP_LINE_RE.match(group_line)
         if not group_match:
             raise ValueError(f"Ligne de groupe inattendue : {group_line!r}")
+        numero_group = group_match.group(1)[1:]  # ex: "G1" -> "1"
+
         expected_count = int(group_match.group(2))
 
         content_lines = []
@@ -95,10 +113,16 @@ def parse_requested_statistic_names(header_text: str) -> list[str]:
             content_lines.append(stripped)
 
         names = []
-        for stripped in content_lines:
-            tokens = stripped.split()
-            stat_name, indices = tokens[0], tokens[1:]
-            names.extend(f"{stat_name}_{index}" for index in indices)
+        if nb_blocks == 1:
+            for stripped in content_lines:
+                tokens = stripped.split()
+                stat_name, indices = tokens[0], tokens[1:]
+                names.extend(f"{stat_name}_{index}" for index in indices)
+        elif nb_blocks > 1:
+            for stripped in content_lines:
+                tokens = stripped.split()
+                stat_name, indices = tokens[0], tokens[1:]
+                names.extend(f"{stat_name}_{numero_group}_{index}" for index in indices)
 
         if len(names) != expected_count:
             raise ValueError(
