@@ -1567,7 +1567,9 @@ def mean_segregating_sites_per_group_pairwize(
 # ---------------------------------------------------------------------------
 
 
-def _mean_pairwise_differences_within_per_locus(genotype_matrices, pop_a, pop_b):
+def _mean_pairwise_differences_within_per_locus(
+    genotype_matrices: dict[str, np.ndarray], pop_a: str, pop_b: str
+) -> float:
     distances_a = _pairwise_hamming_distances(genotype_matrices[pop_a])
     distances_b = _pairwise_hamming_distances(genotype_matrices[pop_b])
     total_pairs = len(distances_a) + len(distances_b)
@@ -1624,6 +1626,159 @@ def mean_pairwise_differences_per_group_pairwize(
             mean_pairwise_differences[key] /= num_loci
 
     return mean_pairwise_differences
+
+
+# ---------------------------------------------------------------------------
+# MPB : Moyenne de différences par paire entre deux populations
+# ---------------------------------------------------------------------------
+
+
+def _mean_pairwise_differences_between_per_locus(
+    genotype_matrices: dict[str, np.ndarray], pop_a: str, pop_b: str
+) -> float:
+    """Calcule la moyenne des différences par paire entre deux populations pour un locus donné."""
+    if pop_a not in genotype_matrices or pop_b not in genotype_matrices:
+        raise KeyError(
+            "L'une des populations n'est pas présente dans les matrices de génotypes."
+        )
+    return _pairwise_hamming_distances_between(
+        genotype_matrices[pop_a], genotype_matrices[pop_b]
+    ).mean()
+
+
+def _pairwise_hamming_distances_between(
+    matrix_a: np.ndarray, matrix_b: np.ndarray
+) -> np.ndarray:
+    """Calcule les distances de Hamming par paire entre deux matrices de
+    génotypes (n_sites, n_samples_a) et (n_sites, n_samples_b). Retourne
+    une matrice 2D de taille n_samples_a * n_samples_b
+    """
+    if matrix_a.shape[0] != matrix_b.shape[0]:
+        raise ValueError("Les matrices doivent avoir le même nombre de sites.")
+    if matrix_a.shape[1] == 0 or matrix_b.shape[1] == 0:
+        raise ValueError("Une des matrices de génotypes est vide.")
+
+    # Calculer les distances de Hamming entre toutes les paires d'échantillons
+    distances = (matrix_a[:, :, None] != matrix_b[:, None, :]).sum(axis=0)
+    return distances
+
+
+def mean_pairwise_differences_between_per_group_pairwize(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule MPB_ij (cal_mpb2p) : pour chaque paire de populations, la
+    moyenne du nombre de différences par paire (distance de Hamming)
+    entre les deux populations sur tous les loci du groupe passé en
+    argument (un groupe = les TreeSequences des loci séquence d'un même
+    `group Gx` du header).
+
+    `population_names` fixe explicitement les clés du dict retourné --
+    chaque population attendue a toujours une valeur (0.0 par défaut),
+    même si `tree_sequences` est vide. Suppose que toutes les
+    populations de `population_names` sont présentes sur tous les loci
+    du groupe -- lève un KeyError sinon.
+
+    Args:
+        tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
+        population_names (list[str]): Populations attendues.
+
+    Returns:
+        dict: {pop_pair_key: valeur_moyenne}
+    """
+    num_loci = len(tree_sequences)
+    mean_pairwise_differences_between = {}
+    for ia in range(len(population_names)):
+        for ib in range(ia + 1, len(population_names)):
+            key = f"{ia + 1}.{ib + 1}"
+            mean_pairwise_differences_between[key] = 0.0
+
+    for ts in tree_sequences:
+        genotype_matrices = _genotype_matrix_by_population(ts)
+        for ia in range(len(population_names)):
+            for ib in range(ia + 1, len(population_names)):
+                pop_a = population_names[ia]
+                pop_b = population_names[ib]
+                key = f"{ia + 1}.{ib + 1}"
+                distances_between = _pairwise_hamming_distances_between(
+                    genotype_matrices[pop_a], genotype_matrices[pop_b]
+                )
+                mean_pairwise_differences_between[key] += distances_between.mean()
+
+    if num_loci > 0:
+        for key in mean_pairwise_differences_between:
+            mean_pairwise_differences_between[key] /= num_loci
+
+    return mean_pairwise_differences_between
+
+
+# ---------------------------------------------------------------------------
+# HST : Comparaison de la diversité entre deux populations à la diversité au
+# sein de ces populations
+# ---------------------------------------------------------------------------
+
+
+def mean_hst_per_group_pairwize(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule HST_ij (cal_fst2p) : pour chaque paire de populations,
+    une mesure de différenciation type FST à partir des loci du groupe
+    passé en argument (un groupe = les TreeSequences des loci séquence
+    d'un même `group Gx` du header).
+
+    HST = num/den, où num = somme sur les loci de (Hb_locus - Hw_locus)
+    et den = somme sur les loci de Hb_locus (Hb = MPB par-locus, Hw =
+    MPW par-locus) -- un RATIO DE SOMMES accumulées sur tout le groupe,
+    PAS une moyenne de valeurs par-locus divisée par num_loci (contraire
+    à mean_pairwise_differences_per_group_pairwize/mean_pairwise_
+    differences_between_per_group_pairwize) -- même schéma d'agrégation
+    que _fst_wc (FST2/FST3/FST4, côté SNP).
+
+    `population_names` fixe explicitement les clés du dict retourné --
+    chaque paire attendue a toujours une valeur (0.0 par défaut, y
+    compris si `den == 0` pour cette paire), même si `tree_sequences`
+    est vide. Suppose que toutes les populations de `population_names`
+    sont présentes sur tous les loci du groupe -- lève un KeyError sinon.
+
+    Args:
+        tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
+        population_names (list[str]): Populations attendues.
+
+    Returns:
+        dict: {pop_pair_key: valeur_moyenne}
+    """
+    mean_hst = {}
+    num = {}
+    den = {}
+    for ia in range(len(population_names)):
+        for ib in range(ia + 1, len(population_names)):
+            key = f"{ia + 1}.{ib + 1}"
+            mean_hst[key] = 0.0
+            num[key] = 0.0
+            den[key] = 0.0
+
+    for ts in tree_sequences:
+        genotype_matrices = _genotype_matrix_by_population(ts)
+        for ia in range(len(population_names)):
+            for ib in range(ia + 1, len(population_names)):
+                pop_a = population_names[ia]
+                pop_b = population_names[ib]
+                key = f"{ia + 1}.{ib + 1}"
+                mpb = _mean_pairwise_differences_between_per_locus(
+                    genotype_matrices, pop_a, pop_b
+                )
+                mpw = _mean_pairwise_differences_within_per_locus(
+                    genotype_matrices, pop_a, pop_b
+                )
+                num[key] += mpb - mpw
+                den[key] += mpb
+
+    for key in mean_hst:
+        if den[key] > 0:
+            mean_hst[key] = num[key] / den[key]
+
+    return mean_hst
 
 
 # ---------------------------------------------------------------------------
