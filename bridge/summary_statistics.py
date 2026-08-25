@@ -1429,7 +1429,7 @@ def variance_minor_allele_count_per_group(
     populations de `population_names` sont présentes sur tous les loci
     du groupe -- lève un KeyError sinon.
 
-    Args:
+    Args:r
         tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
         population_names (list[str]): Populations attendues.
 
@@ -1452,6 +1452,61 @@ def variance_minor_allele_count_per_group(
             variance_vns[pop_name] /= num_loci
 
     return variance_vns
+
+
+# --------------------------------------------------------------------------
+# NH2 : Nombre d'ahplotypes distincts pour un regroupement de deux populations
+# --------------------------------------------------------------------------
+
+
+def mean_distinct_haplotypes_per_group_pairwize(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule NH2_ij (cal_nh2p) : pour chaque paire de populations, la
+    moyenne du nombre d'haplotypes distincts sur tous les loci du groupe
+    passé en argument (un groupe = les TreeSequences des loci séquence
+    d'un même `group Gx` du header).
+
+    `population_names` fixe explicitement les clés du dict retourné --
+    chaque population attendue a toujours une valeur (0.0 par défaut),
+    même si `tree_sequences` est vide. Suppose que toutes les
+    populations de `population_names` sont présentes sur tous les loci
+    du groupe -- lève un KeyError sinon.
+
+    Args:
+        tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
+        population_names (list[str]): Populations attendues.
+
+    Returns:
+        dict: {pop_pair_key: valeur_moyenne}
+    """
+    num_loci = len(tree_sequences)
+    mean_distinct_haplotypes = {}
+    for ia in range(len(population_names)):
+        for ib in range(ia + 1, len(population_names)):
+            key = f"{ia + 1}.{ib + 1}"
+            mean_distinct_haplotypes[key] = 0.0
+
+    for ts in tree_sequences:
+        genotype_matrices = _genotype_matrix_by_population(ts)
+        for ia in range(len(population_names)):
+            for ib in range(ia + 1, len(population_names)):
+                pop_a = population_names[ia]
+                pop_b = population_names[ib]
+                combined_matrix = np.hstack(
+                    (genotype_matrices[pop_a], genotype_matrices[pop_b])
+                )
+                key = f"{ia + 1}.{ib + 1}"
+                mean_distinct_haplotypes[key] += _count_distinct_haplotypes(
+                    combined_matrix
+                )
+
+    if num_loci > 0:
+        for key in mean_distinct_haplotypes:
+            mean_distinct_haplotypes[key] /= num_loci
+
+    return mean_distinct_haplotypes
 
 
 # ---------------------------------------------------------------------------
