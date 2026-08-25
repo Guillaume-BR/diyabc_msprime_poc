@@ -26,6 +26,7 @@ from bridge.summary_statistics import (
     mean_pairwise_differences_per_group,
     mean_private_segregating_sites_per_group,
     mean_segregating_sites_per_group,
+    mean_segregating_sites_per_group_pairwize,
     mean_tajima_d_per_group,
     variance_minor_allele_count_per_group,
     variance_pairwise_differences_per_group,
@@ -542,5 +543,48 @@ def test_mean_distinct_haplotypes_per_group_pairwize_empty_defaults_to_zero():
     une valeur (0.0)."""
     population_names = ["pop1", "pop2"]
     assert mean_distinct_haplotypes_per_group_pairwize([], population_names) == {
+        "1.2": 0.0,
+    }
+
+
+def test_mean_segregating_sites_per_group_pairwize(header_text_te2):
+    """Vérifie mean_segregating_sites_per_group_pairwize séparément sur G2
+    (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
+    mélangés, puisque chaque `group Gx` du header calcule son propre
+    NSS_i à partir de ses seuls loci."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2, scenario_index=1, seed=42
+    )
+    mutated = dna_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2,
+        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        seed=42,
+    )
+
+    loci_description = parse_loci_description(header_text_te2)
+    population_names = ["pop1", "pop2"]
+
+    def tree_sequences_for_group(group_name):
+        names = [locus.name for locus in loci_description if locus.group == group_name]
+        return [mutated[name] for name in names]
+
+    mean_g2 = mean_segregating_sites_per_group_pairwize(
+        tree_sequences_for_group("G2"), population_names
+    )
+    assert mean_g2 == {"1.2": pytest.approx(6.8)}
+
+    mean_g3 = mean_segregating_sites_per_group_pairwize(
+        tree_sequences_for_group("G3"), population_names
+    )
+    assert mean_g3 == {"1.2": pytest.approx(9.4)}
+
+
+def test_mean_segregating_sites_per_group_pairwize_empty_defaults_to_zero():
+    """Une liste de loci vide ne doit pas faire disparaître de population
+    du résultat ni lever d'exception -- chaque population attendue garde
+    une valeur (0.0)."""
+    population_names = ["pop1", "pop2"]
+    assert mean_segregating_sites_per_group_pairwize([], population_names) == {
         "1.2": 0.0,
     }
