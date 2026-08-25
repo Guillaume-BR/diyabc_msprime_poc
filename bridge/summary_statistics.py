@@ -1015,6 +1015,112 @@ def _pairwise_hamming_distances(matrix: np.ndarray) -> np.ndarray:
     return matrix_hammming[triangle_sup]
 
 
+def mean_pairwise_differences_per_group(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule MPD_i (cal_mpd1p) : pour chaque population, la moyenne du
+    nombre de différences par paire (distance de Hamming) sur tous les
+    loci du groupe passé en argument (un groupe = les TreeSequences des
+    loci séquence d'un même `group Gx` du header).
+
+    `population_names` fixe explicitement les clés du dict retourné --
+    chaque population attendue a toujours une valeur (0.0 par défaut,
+    comme le `res = 0.0` du C++), même si `tree_sequences` est vide.
+
+    Contrairement à mean_segregating_sites_per_group/mean_distinct_
+    haplotypes_per_group (qui divisent par `len(tree_sequences)`), le
+    dénominateur ici est un compteur PAR POPULATION (comme le `nl` de
+    cal_mpd1p) : un locus où une population a moins de 2 échantillons
+    donne 0 paire (`_pairwise_hamming_distances` retourne un vecteur
+    vide), auquel cas ce locus est exclu du calcul pour cette population
+    -- ni ajouté à la somme, ni compté au dénominateur -- plutôt que de
+    laisser un `nan` (moyenne d'un vecteur vide) empoisonner le résultat.
+
+    Suppose quand même que toutes les populations de `population_names`
+    sont présentes (au moins 1 échantillon) sur tous les loci du groupe
+    -- lève un KeyError si ce n'est pas le cas, comme les autres
+    fonctions `mean_*_per_group` de ce module.
+
+    Args:
+        tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
+        population_names (list[str]): Populations attendues.
+
+    Returns:
+        dict: {pop_name: valeur_moyenne}
+    """
+    mean_pairwise_differences = {pop_name: 0.0 for pop_name in population_names}
+    valid_loci_count = {pop_name: 0 for pop_name in population_names}
+    for ts in tree_sequences:
+        genotype_matrices = _genotype_matrix_by_population(ts)
+        for pop_name in population_names:
+            matrix = genotype_matrices[pop_name]
+            pairwise_distances = _pairwise_hamming_distances(matrix)
+            if len(pairwise_distances) > 0:
+                mean_pairwise_differences[pop_name] += pairwise_distances.mean()
+                valid_loci_count[pop_name] += 1
+
+    for pop_name in population_names:
+        if valid_loci_count[pop_name] > 0:
+            mean_pairwise_differences[pop_name] /= valid_loci_count[pop_name]
+
+    return mean_pairwise_differences
+
+
+def variance_pairwise_differences_per_group(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule VPD_i (cal_vpd1p) : pour chaque population, la variance du
+    nombre de différences par paire (distance de Hamming) sur tous les
+    loci du groupe passé en argument (un groupe = les TreeSequences des
+    loci séquence d'un même `group Gx` du header).
+
+    `population_names` fixe explicitement les clés du dict retourné --
+    chaque population attendue a toujours une valeur (0.0 par défaut,
+    comme le `res = 0.0` du C++), même si `tree_sequences` est vide.
+
+    Contrairement à mean_segregating_sites_per_group/mean_distinct_
+    haplotypes_per_group (qui divisent par `len(tree_sequences)`), le
+    dénominateur ici est un compteur PAR POPULATION (comme le `nl` de
+    cal_vpd1p) : un locus où une population a moins de 2 échantillons
+    donne 0 paire (`_pairwise_hamming_distances` retourne un vecteur
+    vide), auquel cas ce locus est exclu du calcul pour cette population
+    -- ni ajouté à la somme, ni compté au dénominateur -- plutôt que de
+    laisser un `nan` (variance d'un vecteur vide) empoisonner le résultat.
+
+    Suppose quand même que toutes les populations de `population_names`
+    sont présentes (au moins 1 échantillon) sur tous les loci du groupe
+    -- lève un KeyError si ce n'est pas le cas, comme les autres
+    fonctions `mean_*_per_group` de ce module.
+
+    Args:
+        tree_sequences (list[tskit.TreeSequence]): Liste des TreeSequences à analyser.
+        population_names (list[str]): Populations attendues.
+
+    Returns:
+        dict: {pop_name: valeur_variance}
+    """
+    variance_pairwise_differences = {pop_name: 0.0 for pop_name in population_names}
+    valid_loci_count = {pop_name: 0 for pop_name in population_names}
+    for ts in tree_sequences:
+        genotype_matrices = _genotype_matrix_by_population(ts)
+        for pop_name in population_names:
+            matrix = genotype_matrices[pop_name]
+            pairwise_distances = _pairwise_hamming_distances(matrix)
+            if len(pairwise_distances) > 1:
+                variance_pairwise_differences[pop_name] += pairwise_distances.var(
+                    ddof=1
+                )
+                valid_loci_count[pop_name] += 1
+
+    for pop_name in population_names:
+        if valid_loci_count[pop_name] > 0:
+            variance_pairwise_differences[pop_name] /= valid_loci_count[pop_name]
+
+    return variance_pairwise_differences
+
+
 # ---------------------------------------------------------------------------
 # Point d'entrée principal
 # ---------------------------------------------------------------------------
