@@ -26,12 +26,16 @@ itself (via `msprime.sim_mutations`, not a hand-rolled port of
 `particuleC.cpp`'s tree traversal) are all implemented and tested,
 end-to-end, on `toy_example2_ms_dna`
 (`bridge.ancestry_simulation.dna_mutation_simulation_per_locus`).
-**Not done yet**: wiring any of this into `reftable_loop.py`/the
-summary-statistics side of the pipeline (no DNA-sequence summary
-statistics implemented, no genotype extraction from the resulting
-`TreeSequence`). MicroSat itself (stepwise mutation model, `NAL`/
-`HET`-style summary statistics) has no simulation-side code at all
-yet, only header parsing. The goal is to demonstrate that a
+As of 2026-08-25, all 13 DNA-sequence-specific summary statistics
+(`NHA`/`NSS`/`MPD`/`VPD`/`DTA`/`PSS`/`MNS`/`VNS` per-population,
+`NH2`/`NS2`/`MP2`/`MPB`/`HST` per-pair) are implemented and tested too
+— see "DNA sequence summary statistics" below.
+**Not done yet**: wiring any of this into `reftable_loop.py`/the main
+`compute_all_statistics`-equivalent entry point (no cross-validation
+against a real DIYABC reftable for this data type yet either).
+MicroSat itself (stepwise mutation model, `NAL`/`HET`-style summary
+statistics) has no simulation-side code at all yet, only header
+parsing. The goal is to demonstrate that a
 `header.txt` → `msprime.Demography` → coalescent+mutation → summary
 statistics pipeline built in Python produces a `reftable.bin`
 structurally and statistically equivalent to the real DIYABC's.
@@ -817,23 +821,154 @@ scope here.
   `nan` + a numpy `RuntimeWarning` from `mean()`/`var()` on an empty
   array rather than a clear error at the source).
 
-**Not yet done**: `MPD`/`VPD` aggregation (mean/variance of
-`_pairwise_hamming_distances`'s output — `VPD` additionally needs the
-C++'s `nd > 1` per-locus exclusion, not just the `num_loci` denominator
-the other stats use, since a locus contributes to `VPD`'s average only
-if it has at least 2 valid pairs) plus `DTA`/`PSS`/`MNS`/`VNS` (the
-remaining per-population stats) and all 5 pairwise stats (`NH2`/`NS2`/
-`MP2`/`MPB`/`HST`) are unwritten. No test yet for the `MPD`/`VPD`
-aggregation layer (only the `_pairwise_hamming_distances` brick is
-tested). Also unresolved: `toy_example2_ms_dna/headerRF.txt` declares
-`NSS`/`NHA`/etc. under the **same** column names (`NSS_1`, `NSS_2`,
-...) in both `group G2` (`<A>`) and `group G3` (`<M>`) — the exact
-column-name-collision-across-groups scenario `stats_group_parser.py`'s
-docstring already flagged as an open question (dedup deferred, unclear
-if legitimate) — still undecided how the eventual `compute_all_
-statistics`-equivalent entry point for DNA sequences should key/merge
-per-group results into `reftable.bin` columns when this happens. Not
-wired into `reftable_loop.py` at all yet.
+- **`MPD`/`VPD`** (`mean_pairwise_differences_per_group`/`variance_
+  pairwise_differences_per_group`, `cal_mpd1p`/`cal_vpd1p`) needed a
+  different exclusion regime than `NSS`/`NHA`: instead of a flat
+  `num_loci` denominator, a **per-population** `valid_loci_count` dict,
+  because a locus only contributes if it has at least 1 pair (`MPD`,
+  `nd > 0`) or at least 2 pairs (`VPD`, `nd > 1`) — `_pairwise_hamming_
+  distances` on a 1-sample matrix returns an empty vector, and
+  `.mean()`/`.var()` on that gives `nan`, which would otherwise silently
+  poison the whole group's sum. Not a bug in practice on this project's
+  datasets (20-40 samples/population always) but the C++'s own guard
+  reproduced for fidelity. A `> 1` vs `> 0` threshold confusion on
+  `VPD`'s **final division** guard was flagged as a possible bug and
+  turned out to be a false alarm — dividing by 1 is a no-op, so the two
+  thresholds are numerically indistinguishable in every case; still
+  switched to `> 0` for readability/consistency with the rest of the
+  file, not because the `> 1` version was wrong.
+
+- **`DTA`** (`_tajima_d_per_locus` + `mean_tajima_d_per_group`,
+  `cal_dta1pl`/`cal_dta1p`) is the classic Tajima's D neutrality
+  statistic, built directly on top of `MPD` (π) and `NSS` (S) — no new
+  per-site logic needed beyond `_tajima_constants(n_samples)` (the
+  `a1`/`e1`/`e2` coefficients, pure functions of sample size). Caught
+  before commit: a parenthesization bug, `(n+1) / ((n-1)/3.0)` instead
+  of `(n+1)/(n-1)/3.0`, made `b1` exactly 9× too large (verified
+  numerically). **Two distinct, easy-to-conflate exclusion cases**:
+  `n_samples < 2` excludes the locus entirely (`_tajima_d_per_locus`
+  returns `None`, matching `OKK = false`); `n_samples >= 2` but `S == 0`
+  (no segregating sites → the formula's denominator is 0) still
+  **includes** the locus in the group average with a contributed value
+  of `0.0` — the C++ never resets `OKK` in that second case (`cal_
+  dta1pl` lines 1579/1594-1598). An initial draft used the wrong input
+  shape entirely (SNP-style `genotypes_per_locus: list[dict]`, treating
+  "number of loci" as "number of samples") before being rewritten to
+  match the `tree_sequences`-based two-tier pattern of every other stat
+  here.
+
+- **`PSS`** (`_private_segregating_sites_per_locus` + `mean_private_
+  segregating_sites_per_group`, `cal_pss1p`) is the one per-population
+  stat that needs **every** population's matrix at once, not just the
+  target's — a site counts as "private" to population `i` only if it's
+  segregating in `i` and fixed in **every other population of the whole
+  dataset** (not just the target's group). Required factoring a reusable
+  `_segregating_sites_mask(matrix)` boolean helper out of `_count_
+  segregating_sites` (previously computed the count directly). Since all
+  populations' matrices for one locus come from the same underlying
+  `genotype_matrix()` (just column-sliced), row `i` means the same
+  physical site for every population — booleans compare directly by
+  position, no index-matching search needed (the C++ does need one,
+  `ssa[sample][j] == ssa[sa][k]`, because its per-population variable-
+  site index lists are separate dynamic arrays). `nl` increments
+  unconditionally every locus in `cal_pss1p` (no `samplesize > 0` guard
+  at all, unlike `NSS`/`NHA`) — simple `num_loci` denominator.
+
+- **`MNS`/`VNS`** (`_minor_allele_counts_at_segregating_sites` +
+  `mean_minor_allele_count_per_group`/`variance_minor_allele_count_per_
+  group`, `afs`/`cal_mns1p`/`cal_vns1p`): at each segregating site,
+  `min(counts of each distinct base actually present)` — reproduces the
+  C++'s "sort 4 slots ascending, skip zeros" (`afs`) via `np.unique(site,
+  return_counts=True).min()` when `len(values) > 1`, simpler because
+  `np.unique` only ever returns actually-present values (no need to
+  handle the zero-slots explicitly). **`VNS` is a BIASED variance
+  (`ddof=0`, division by `n` not `n-1`)** — confirmed against `cal_
+  vns1p`'s `v = (sx2 - sx*sx/a) / a`, deliberately different from `VPD`'s
+  `ddof=1`, easy to get wrong by pattern-matching against `VPD`. Both
+  stats use the flat `num_loci` denominator (`nl` increments
+  unconditionally in both `cal_mns1p`/`cal_vns1p`, like `PSS`) — no
+  per-population exclusion needed.
+
+- **Pairwise ("2p") stats reuse the 1p bricks on pooled/cross
+  matrices**, all following the same aggregator skeleton (`{pair_key:
+  0.0}` pre-filled, `num_loci` denominator, `"{i+1}.{j+1}"` keys via a
+  plain double loop — not `_half_arrangements`, see below):
+  - **`NH2`** (`mean_distinct_haplotypes_per_group_pairwize`, `cal_
+    nha2p`): `_count_distinct_haplotypes` on `np.hstack(matrix_a,
+    matrix_b)` — the two populations' matrices are column-slices of the
+    same `genotype_matrix()`, so concatenation along the sample axis
+    needs no realignment.
+  - **`NS2`** (`mean_segregating_sites_per_group_pairwize`, `cal_
+    nss2p`): identical trick with `_count_segregating_sites` instead.
+  - **`MP2`** ("mean pairwise **within**",
+    `mean_pairwise_differences_per_group_pairwize`, `cal_mpw2p`):
+    `_pairwise_hamming_distances` computed **separately** on each
+    population's own matrix (never concatenated), then pooled as a
+    ratio of sums (`(sum_di_a + sum_di_b) / (nd_a + nd_b)`) — NOT a
+    simple average of the two populations' own `MPD` values; only
+    equal to that average when both populations have the same sample
+    size (as they happen to in `toy_example2_ms_dna`).
+  - **`MPB`** ("mean pairwise **between**",
+    `mean_pairwise_differences_between_per_group_pairwize`, `cal_
+    mpb2p`): new brick `_pairwise_hamming_distances_between(matrix_a,
+    matrix_b)` — full cross-product `(matrix_a[:,:,None] !=
+    matrix_b[:,None,:]).sum(axis=0)`, shape `(n_a, n_b)`, **no
+    triangle extraction needed** (unlike the "within" case) since every
+    `(p in a, q in b)` pair is valid, never a self-comparison. An early
+    draft's docstring claimed this returned a flattened 1D vector of
+    length `n_a*n_b`; it actually returns the 2D `(n_a, n_b)` matrix —
+    `.mean()` on it is still numerically correct either way (numpy
+    averages all elements regardless of shape), but a downstream `len(...)
+    > 0` guard was checking the wrong thing (`n_a`, not `n_a*n_b`) —
+    harmless in practice only because the brick's own guard already
+    rejects 0-sample inputs before that check is ever reached.
+  - **`HST`** (`mean_hst_per_group_pairwize`, `cal_fst2p` — note the
+    lowercase C++ name, easy to confuse with MicroSat's unrelated
+    `cal_Fst2p`): `(Hb - Hw) / Hb` where `Hb` = `MPB`-per-locus, `Hw` =
+    `MP2`-per-locus. **Breaks the "mean over loci" pattern used by every
+    other DNA stat** — it's a *ratio of sums* accumulated separately per
+    pair across the whole group (`num[pair]`, `den[pair]`, divided once
+    at the very end), the same style as `_fst_wc` (SNP side, already in
+    this file), not `sum_of_per_locus_values / num_loci`. Took two
+    attempts to get right: a per-pair aggregator needs `num`/`den` as
+    **dicts keyed by pair**, not shared scalars reset once per locus —
+    with a shared scalar, N>2 populations silently mix different pairs'
+    contributions and only the last pair visited by the inner loop ever
+    gets its dict entry updated (every other pair stays stuck at its
+    `0.0` default). Completely invisible on this project's only real
+    DNA-sequence dataset (2 populations = 1 pair, so "the shared scalar"
+    and "the only pair" are the same thing by coincidence) — caught only
+    via a synthetic 3-population mock test
+    (`unittest.mock.patch` on `_genotype_matrix_by_population`). See
+    `feedback_pairwise_accumulator_bug` project memory; the same bug
+    class could in principle recur in `NH2`/`NS2`/`MP2`/`MPB` if ever
+    exercised on a 3+ population dataset, even though those four
+    happened to be written correctly.
+  - `_half_arrangements` (built for `AML`/`F3`/`F4`'s asymmetric HALF
+    ordering, where element order matters) was briefly misapplied to
+    generate `NH2`'s plain symmetric pairs — not numerically wrong for
+    `r=2` (its HALF filter happens to keep only the ascending-index
+    permutation), but semantically confusing and needlessly expensive;
+    switched to the plain double loop `compute_HW_HB`/`compute_FST2`
+    already use elsewhere in this file.
+
+**Not yet done**: no cross-validation against a real DIYABC reftable
+for `toy_example2_ms_dna` yet — no `statobs.txt`/`reftable.bin`
+generated there (everything validated so far is internal consistency:
+hand-computed matrices, sanity bounds like `PSS ≤ NSS` or `NH2 ≥
+max(NHA_pop1, NHA_pop2)`, not "matches real DIYABC's actual numbers").
+Not wired into `pipeline.py`/`reftable_loop.py` at all. Unresolved:
+`toy_example2_ms_dna/headerRF.txt` declares the same stat column names
+(`NSS_1`, `NSS_2`, ...) under both `group G2` (`<A>`) and `group G3`
+(`<M>`) — the exact column-name-collision-across-groups scenario
+`stats_group_parser.py`'s docstring already flagged as an open question
+(dedup deferred, unclear if legitimate) — still undecided how the
+eventual DNA-sequence entry point should key/merge per-group results
+into `reftable.bin` columns when this happens. MicroSat's own stats
+(`NAL`/`HET`/`VAR`/`MGW`/`FST`/`LIK`/`DAS`/`DM2`) not started at all —
+different data shape (allele sizes, not tskit genotypes), no simulation
+side either. See `notes/resume_stat_dna.md` for a biology-first (not
+code-first) explanation of what each of the 13 stats measures.
 
 ### `scripts/` — ad hoc investigation scripts
 
