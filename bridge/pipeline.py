@@ -27,12 +27,14 @@ import msprime
 
 from bridge.ancestry_simulation import (
     build_samples_argument,
+    dna_mutation_simulation_per_locus,
+    dna_mutation_simulation_per_locus_from_values,
     simulate_genotypes_for_locus_type,
     simulate_poolseq_reads_with_mrc_filter,
 )
 from bridge.demography_builder import build_demography
 from bridge.loci_parser import parse_loci_description
-from bridge.observed_data import detect_snp_file_type
+from bridge.observed_data import detect_snp_file_type, observed_count_population
 from bridge.parameter_sampling import draw_parameter_values
 from bridge.prior_parser import parse_priors
 from bridge.scenario_parser import parse_header_scenarios
@@ -40,6 +42,7 @@ from bridge.scenario_types import Scenario
 from bridge.stats_group_parser import parse_requested_statistic_names
 from bridge.summary_statistics import (
     compute_all_statistics,
+    compute_all_statistics_dna,
     compute_all_statistics_poolseq,
 )
 
@@ -440,4 +443,119 @@ def compute_summary_statistics_from_values(
             reads_list, population_names, pool_sizes
         )
         summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
+    return summary_stats
+
+
+def compute_summary_statistics_dna(
+    reference_directory: str | Path,
+    scenario_index: int,
+    *,
+    seed: int,
+    stats_filter: str = "ALL",
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Calcule les 13 statistiques résumées ADN (compute_all_statistics_dna)
+    sur des données SIMULÉES par msprime -- équivalent ADN de
+    compute_summary_statistics (chemin IND/PoolSeq), pour les datasets
+    qui déclarent des loci séquence (`[S]`, groupes `G2`/`G3`... de
+    header.txt) plutôt que des SNP.
+
+    Tire les paramètres historiques (N1, ta, ts...) ET les priors de
+    groupe (k1/k2/mus_rate par groupe ADN, en interne à
+    dna_mutation_simulation_per_locus) depuis `seed` -- voir
+    compute_summary_statistics_dna_from_values pour la variante qui
+    rejoue des valeurs déjà connues plutôt que d'en tirer de nouvelles
+    (paired comparison avec un vrai reftable DIYABC).
+
+    `values` (le second élément du tuple retourné) ne contient QUE les
+    paramètres historiques, pas les priors de groupe -- dna_mutation_
+    simulation_per_locus ne renvoie nulle part les valeurs de k1/k2/
+    mus_rate qu'elle a tirées en interne, donc ce `values` seul ne
+    suffirait pas à rejouer exactement cette même particule (contrairement
+    au chemin SNP, où `values` capture tout ce qui a été tiré).
+
+    Args:
+        reference_directory: dossier contenant header.txt/headerRF.txt
+            et le fichier .mss observé (son nom lu sur la première ligne
+            du header).
+        scenario_index: le scénario à utiliser pour construire la
+            démographie (pas de tirage pondéré multi-scénario ici,
+            contrairement à reftable_loop.run_reftable_simulation).
+        seed: graine de la particule -- dérive toutes les graines
+            internes (tirage des paramètres historiques, des priors de
+            groupe, des généalogies et mutations par locus).
+        stats_filter: "ALL" (toutes les stats implémentées) ou "HEADER"
+            (seulement celles déclarées dans header.txt, voir
+            compute_summary_statistics pour le détail).
+
+    Returns:
+        (summary_stats, values) -- summary_stats est le dict {nom_
+        colonne_diyabc: valeur} de compute_all_statistics_dna (ex.
+        "NSS_2_1"), values est {nom_paramètre_historique: valeur}.
+    """
+    reference_directory = Path(reference_directory)
+    header_text = read_header_text(reference_directory)
+    mss_filename = header_text.splitlines()[0].strip()
+    mss_path = reference_directory / mss_filename
+
+    demography, values = build_random_demography_for_scenario_index(
+        header_text, scenario_index, seed
+    )
+
+    mutated = dna_mutation_simulation_per_locus(
+        header_text,
+        mss_path,
+        demography,
+        seed,
+    )
+
+    population_names = list(observed_count_population(mss_path).keys())
+    summary_stats = compute_all_statistics_dna(header_text, mutated, population_names)
+    summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
+
+    return summary_stats, values
+
+
+def compute_summary_statistics_dna_from_values(
+    reference_directory: str | Path,
+    scenario_index: int,
+    values: dict[str, float],
+    group_priors_values: dict[str, float],
+    *,
+    seed: int,
+    stats_filter: str = "ALL",
+) -> dict[str, float]:
+    """Variante de compute_summary_statistics_dna qui ne tire AUCUNE valeur
+    de prior : reprend telles quelles des valeurs de paramètres déjà
+    connues, typiquement les tirages RÉELS d'un reftable DIYABC existant
+    (voir reftable_loop.replay_reftable_simulation) -- permet de comparer
+    DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
+    biais possible de deux tirages indépendants.
+
+    group_priors_values : dict[str, float] -- {nom_param: valeur}
+    pour tous les groupes ADN déclaré dans header.txt. Ces valeurs sont celles que dna_mutation
+    simulation_per_locus aurait tirées en interne si on avait appelé la
+    variante "random" (compute_summary_statistics_dna) -- elles ne sont
+    pas capturées par le dict `values` retourné par cette fonction.
+    """
+    reference_directory = Path(reference_directory)
+    header_text = read_header_text(reference_directory)
+    mss_filename = header_text.splitlines()[0].strip()
+    mss_path = reference_directory / mss_filename
+
+    demography = build_demography_for_scenario_index(
+        header_text, scenario_index, values
+    )
+
+    mutated = dna_mutation_simulation_per_locus_from_values(
+        header_text,
+        mss_path,
+        demography,
+        group_priors_values=group_priors_values,
+        seed=seed,
+    )
+
+    population_names = list(observed_count_population(mss_path).keys())
+    summary_stats = compute_all_statistics_dna(header_text, mutated, population_names)
+    summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
+
     return summary_stats
