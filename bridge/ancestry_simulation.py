@@ -1521,3 +1521,166 @@ def build_group_local_param_per_locus_from_values(
                     mus_rate[locus.name],
                 )
     return params_per_locus
+
+
+def build_matrix_per_locus_from_values(
+    header_text: str,
+    mss_file_path: str | Path,
+    group_priors_values: dict[str, float],
+    seed: int,
+) -> dict[str, np.ndarray]:
+    """Variante de build_matrix_per_locus qui NE TIRE PAS les k1/k2 moyens
+    par groupe (étage 1, voir build_group_local_param_per_locus_from_values)
+    : elle réutilise des valeurs déjà connues, typiquement les tirages
+    RÉELS d'un reftable DIYABC existant (voir reftable_loop.
+    parse_real_reftable_params_with_group_priors) -- pour comparer DIYABC
+    et msprime sur EXACTEMENT les mêmes valeurs de k1/k2 par groupe, sans
+    le biais possible de deux tirages indépendants.
+
+    Le tirage par-locus (étage 2, la dispersion de k1/k2 autour de la
+    moyenne du groupe, via sampling_group_local_param à l'intérieur de
+    build_group_local_param_per_locus_from_values) N'EST PAS remplacé --
+    il continue d'être tiré depuis `seed`, car cette valeur par-locus
+    n'est jamais enregistrée dans le vrai reftable DIYABC (seule la
+    moyenne de groupe l'est) : il n'y a donc rien à rejouer pour lui.
+
+    Sinon identique à build_matrix_per_locus (même construction de
+    matrice de transition via build_transition_matrix, mêmes fréquences
+    de bases observées).
+    """
+    list_loci = parse_loci_description(header_text)
+    params_per_locus = build_group_local_param_per_locus_from_values(
+        header_text, group_priors_values, seed
+    )
+    sequences_by_indiv = observed_sequences(mss_file_path, list_loci)
+    frequencies_by_locus = base_frequency_by_locus(sequences_by_indiv)
+    group_priors = parse_group_priors(header_text)
+
+    matrix_per_locus = {}
+    for locus in list_loci:
+        if locus.ms_or_seq == "S":
+            group_locus = locus.group
+            gp_model = next(gp for gp in group_priors[group_locus] if gp.model)
+            name_model = gp_model.name_model
+            kappas = params_per_locus[locus.name][0], params_per_locus[locus.name][1]
+            frequencies = frequencies_by_locus[locus.name]
+            matrix_per_locus[locus.name] = build_transition_matrix(
+                name_model, kappas, frequencies
+            )
+    return matrix_per_locus
+
+
+def build_rate_map_per_locus_from_values(
+    header_text: str, group_priors_values: dict[str, float], seed: int
+) -> dict[str, msprime.RateMap]:
+    """Variante de build_rate_map_per_locus qui NE TIRE PAS le mus_rate
+    moyen par groupe (étage 1) : réutilise group_priors_values, comme
+    build_matrix_per_locus_from_values -- même principe, voir sa
+    docstring pour le détail complet.
+
+    Le tirage de `mutsit` (sample_site_rates, la dispersion du taux de
+    mutation par SITE au sein d'un locus) N'EST PAS remplacé -- il
+    continue de dépendre de `seed` (rng = random.Random(seed +
+    _SITE_RATE_SEED_OFFSET)), pour la même raison que le tirage
+    par-locus de k1/k2 : `mutsit` n'est jamais enregistré dans le vrai
+    reftable DIYABC, il n'y a donc rien à rejouer pour lui non plus.
+    """
+    list_loci = parse_loci_description(header_text)
+    params_per_locus = build_group_local_param_per_locus_from_values(
+        header_text, group_priors_values, seed
+    )
+    mus_rate_per_locus = {
+        locus.name: params_per_locus[locus.name][2]
+        for locus in list_loci
+        if locus.ms_or_seq == "S"
+    }
+    group_priors = parse_group_priors(header_text)
+
+    rate_map_per_locus = {}
+    rng = random.Random(seed + _SITE_RATE_SEED_OFFSET)
+    for locus in list_loci:
+        if locus.ms_or_seq == "S":
+            gp_model = next(gp for gp in group_priors[locus.group] if gp.model)
+            mutsit = sample_site_rates(
+                gp_model.p_fixe, gp_model.gams, locus.dnalength, rng=rng
+            )
+            mus_rate = mus_rate_per_locus[locus.name]
+            rate_map_per_locus[locus.name] = build_rate_map(
+                mus_rate=mus_rate, mutsit=mutsit, dnalength=locus.dnalength
+            )
+    return rate_map_per_locus
+
+
+def dna_mutation_simulation_per_locus_from_values(
+    header_text: str,
+    mss_file_path: str | Path,
+    demography: msprime.Demography,
+    group_priors_values: dict[str, float],
+    seed: int,
+) -> dict[str, tskit.TreeSequence]:
+    """Variante de dna_mutation_simulation_per_locus pour le rejeu apparié
+    DIYABC/msprime (voir build_matrix_per_locus_from_values pour le
+    principe général) : appelle build_rate_map_per_locus_from_values/
+    build_matrix_per_locus_from_values au lieu des originales, pour que
+    les k1/k2/mus_rate moyens par groupe soient ceux RÉELLEMENT tirés
+    par DIYABC (group_priors_values) plutôt que tirés à nouveau depuis
+    `seed`.
+
+    `demography` reste un paramètre déjà construit par l'appelant, comme
+    dans la version d'origine -- rien à changer ici pour les paramètres
+    historiques (N1, ta, ts...), leur propre rejeu "from values" est géré
+    en amont par pipeline.build_demography_for_scenario_index, réutilisée
+    telle quelle (générique, ne sait rien de SNP vs ADN).
+
+    Tout le reste (tirage de la généalogie par locus via msprime.sim_
+    ancestry, seed + _ANCESTRY_SEED_OFFSET + i / seed + _MUTATION_SEED_
+    OFFSET + i par locus, dispatch ploïdie/démographie par type
+    d'héritage) est identique à dna_mutation_simulation_per_locus.
+
+    La démographie et la ploïdie utilisées pour l'arbre de coalescence de
+    chaque locus dépendent de son type d'héritage (<A>/<H>/<M>, voir
+    `dna_ancestry_parameters_for_heritage`) -- un groupe peut mélanger des
+    loci de types différents (ex. toy_example2_ms_dna : G2 <A>, G3 <M>),
+    donc ce dispatch se fait par locus, jamais une fois pour tout le
+    dataset.
+    """
+    rate_map_per_locus = build_rate_map_per_locus_from_values(
+        header_text, group_priors_values, seed
+    )
+    matrix_per_locus = build_matrix_per_locus_from_values(
+        header_text, mss_file_path, group_priors_values, seed
+    )
+    list_loci = parse_loci_description(header_text)
+    frequencies_by_locus = base_frequency_by_locus(
+        observed_sequences(mss_file_path, list_loci)
+    )
+    samples = observed_count_population(mss_file_path=mss_file_path)
+    sex_ratio = parse_sex_ratio(mss_file_path)
+    mutated_tree_sequences = {}
+
+    for i, locus in enumerate(list_loci):
+        if locus.ms_or_seq != "S":
+            continue
+        else:
+            locus_demography, ploidy = dna_ancestry_parameters_for_heritage(
+                locus.heritage, demography, sex_ratio
+            )
+            tree_sequences = msprime.sim_ancestry(
+                samples=samples,
+                demography=locus_demography,
+                sequence_length=locus.dnalength,
+                random_seed=seed + _ANCESTRY_SEED_OFFSET + i,
+                ploidy=ploidy,
+            )
+            transition_matrix = matrix_per_locus[locus.name]
+            rate_map = rate_map_per_locus[locus.name]
+            frequencies = frequencies_by_locus[locus.name]
+            mutated_ts = simulate_dna_mutations(
+                tree_sequences,
+                transition_matrix,
+                frequencies,
+                rate_map,
+                seed + _MUTATION_SEED_OFFSET + i,
+            )
+            mutated_tree_sequences[locus.name] = mutated_ts
+    return mutated_tree_sequences
