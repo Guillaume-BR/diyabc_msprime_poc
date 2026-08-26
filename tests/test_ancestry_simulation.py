@@ -14,8 +14,10 @@ from conftest import (
 )
 
 from bridge.ancestry_simulation import (
+    _group_prior_values_from_columns,
     _reindex_reads_by_msprime_name,
     build_group_local_param_per_locus,
+    build_group_local_param_per_locus_from_values,
     build_male_only_samples_argument,
     build_matrix_per_locus,
     build_rate_map,
@@ -708,3 +710,42 @@ def test_dna_mutation_simulation_per_locus_ploidy_matches_heritage(header_text_t
     ts_a = mutated_tree_sequences["Locus_S_A_11_"]
     ts_m = mutated_tree_sequences["Locus_S_M_16_"]
     assert ts_a.num_samples == 2 * ts_m.num_samples
+
+
+def test_group_prior_values_from_columns(header_text_te2):
+    group_priors_values = {
+        "µmic_1": 0.0007375,
+        "pmic_1": 0.2029,
+        "snimic_1": 2.32e-07,
+        "µseq_2": 4.068e-07,
+        "k1seq_2": 2.684,
+        "µseq_3": 8.112e-06,
+        "k1seq_3": 13.42,
+    }
+
+    group_priors = parse_group_priors(header_text_te2)
+    result = _group_prior_values_from_columns(group_priors_values, group_priors)
+    assert result == {
+        "G2": {"MEANMU": 4.068e-07, "MEANK1": 2.684},
+        "G3": {"MEANMU": 8.112e-06, "MEANK1": 13.42},
+    }
+
+
+def test_build_group_local_param_per_locus_from_values(header_text_te2):
+    group_priors_values = {
+        "µmic_1": 0.0007375,
+        "pmic_1": 0.2029,
+        "snimic_1": 2.32e-07,
+        "µseq_2": 4.068e-07,
+        "k1seq_2": 2.684,
+        "µseq_3": 8.112e-06,
+        "k1seq_3": 13.42,
+    }
+
+    result = build_group_local_param_per_locus_from_values(
+        header_text_te2, group_priors_values, seed=42
+    )
+    assert len(result) == 10
+    assert len(result["Locus_S_A_11_"]) == 3
+    assert result["Locus_S_A_11_"][1] == 0.0
+    assert result["Locus_S_A_11_"][0] > 0.0

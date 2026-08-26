@@ -696,7 +696,9 @@ def simulate_genotypes_for_locus_type(
         raise NotImplementedError(f"Type de locus non supporté: {locus_type!r}")
 
 
+# -----------------------------------------------
 # Simulation des lectures PoolSeq
+# -----------------------------------------------
 
 
 def simulate_poolseq_reads(
@@ -977,6 +979,11 @@ def simulate_poolseq_reads_with_mrc_filter(
     )
 
 
+# -------------------------------------------------------
+# Séquence ADN
+# -------------------------------------------------------
+
+
 # Simulation des mutations pour les séquences ADN
 def build_transition_matrix(
     name_model: str, kappas: tuple[float, float], frequences_by_locus: dict[str, float]
@@ -1093,9 +1100,9 @@ def count_loci_per_group(list_loci: list[LociDescriptionDetailed]) -> dict[str, 
 
 def build_group_local_param_per_locus(
     header_text: str, seed: int
-) -> dict[str, tuple[float, float]]:
-    """Construit un dictionnaire des kappas par locus à partir d'une liste de descriptions de loci.
-    Retourne un dictionnaire avec les noms de loci comme clés et les tuples de kappas (k1, k2) comme valeurs.
+) -> dict[str, tuple[float, float, float]]:
+    """Construit un dictionnaire des kappas et du taux de mutation par locus à partir d'une liste de descriptions de loci.
+    Retourne un dictionnaire avec les noms de loci comme clés et les tuples de paramètres (k1, k2, musrate) comme valeurs.
     """
     params_per_locus = {}
     group_priors = parse_group_priors(header_text)
@@ -1371,3 +1378,146 @@ def dna_mutation_simulation_per_locus(
             )
             mutated_tree_sequences[locus.name] = mutated_ts
     return mutated_tree_sequences
+
+
+# equivalent à partir des valeurs tirées via diyabc
+
+
+def _group_prior_values_from_columns(
+    group_priors_values: dict[str, float], group_priors: dict
+) -> dict[str, dict[str, float]]:
+    """Construit un dictionnaire des valeurs de paramètres par groupe à partir des colonnes du fichier .priors.
+    Retourne un dictionnaire avec les noms de groupes comme clés et les dictionnaires de valeurs de paramètres comme valeurs.
+    """
+    group_values = {}
+    for group, priors in group_priors.items():
+        if next(prior for prior in priors).ms_or_seq != "S":
+            continue  # Ignore les groupes de loci non ADN
+        group_number = group[1:]  # Extrait le numéro du groupe (ex: "G1" -> "1")
+        group_values[group] = {}
+        gp_model = next(gp for gp in group_priors[group] if gp.model)
+        k1_used, k2_used = get_parameter_used_by_model(gp_model)
+        for prior in priors:
+            if prior.name == "MEANMU":
+                group_values[group][prior.name] = group_priors_values[
+                    f"µseq_{group_number}"
+                ]
+            elif prior.name == "MEANK1" and k1_used:
+                group_values[group][prior.name] = group_priors_values[
+                    f"k1seq_{group_number}"
+                ]
+            elif prior.name == "MEANK2" and k2_used:
+                group_values[group][prior.name] = group_priors_values[
+                    f"k2seq_{group_number}"
+                ]
+            else:
+                continue
+        else:
+            continue
+    return group_values
+
+
+def build_group_local_param_per_locus_from_values(
+    header_text: str, group_priors_values: dict[str, float], seed: int
+) -> dict[str, tuple[float, float, float]]:
+    """Construit un dictionnaire des kappas et du taux de mutation par locus à partir d'une liste de descriptions de loci et des
+    valeurs de priors identiques à ceux d'une simulation diyabc.
+    Retourne un dictionnaire avec les noms de loci comme clés et les tuples de kappas (k1, k2, musrate) comme valeurs.
+    """
+    params_per_locus = {}
+    group_priors = parse_group_priors(header_text)
+    list_loci = parse_loci_description(header_text)
+
+    list_loci_seq = [locus for locus in list_loci if locus.ms_or_seq == "S"]
+    nloc_per_group = count_loci_per_group(list_loci_seq)
+
+    # Un seul appel pour tous les groupes -- draw_group_parameter_values gère
+    # déjà en interne son propre décalage de graine (_GROUP_PRIOR_SEED_OFFSET),
+    # distinct de _KAPPA1_SEED_OFFSET/_KAPPA2_SEED_OFFSET utilisés plus bas
+    # pour le tirage par locus -- pas besoin (et pas correct) de la rappeler
+    # une fois par groupe/par kappa avec une graine décalée différente.
+    values = _group_prior_values_from_columns(
+        group_priors_values=group_priors_values, group_priors=group_priors
+    )
+
+    for group in nloc_per_group:
+        list_locus_in_group = [locus for locus in list_loci_seq if locus.group == group]
+        # calcul du mus_rate par locus
+        mus_rate = sampling_group_local_param(
+            next(gp for gp in group_priors[group] if gp.name == "GAMMU"),
+            k_moy=values[group]["MEANMU"],
+            n_loci=nloc_per_group[group],
+            check_nloc=True,
+            list_loci=list_locus_in_group,
+            rng=random.Random(seed + _MUS_RATE_SEED_OFFSET),
+        )
+        # calcul des kappas par locus selon le modèle de substitution du groupe
+        gp_model = next(gp for gp in group_priors[group] if gp.model)
+        verif_kappas = get_parameter_used_by_model(gp_model)
+        if not verif_kappas[0] and not verif_kappas[1]:
+            for locus in list_locus_in_group:
+                # Handle the case where neither k1 nor k2 is used by the model
+                params_per_locus[locus.name] = (0.0, 0.0, mus_rate[locus.name])
+        elif verif_kappas[0] and not verif_kappas[1]:  # Model K2P et HKY
+            gp_gamk1 = next(
+                (gp for gp in group_priors[group] if gp.name == "GAMK1"), None
+            )
+            if gp_gamk1 is None:
+                raise ValueError(
+                    f"Le modèle {gp_model} nécessite kappa1, mais aucun GAMK1 n'a été trouvé pour le groupe {group}."
+                )
+            k1_moy = values[group]["MEANK1"]
+            kappa1_values = sampling_group_local_param(
+                gp_gamk1,
+                k_moy=k1_moy,
+                n_loci=nloc_per_group[group],
+                check_nloc=True,
+                list_loci=list_locus_in_group,
+                rng=random.Random(seed + _KAPPA1_SEED_OFFSET),
+            )
+            for locus in list_locus_in_group:
+                params_per_locus[locus.name] = (
+                    kappa1_values[locus.name],
+                    0.0,
+                    mus_rate[locus.name],
+                )
+        elif verif_kappas[0] and verif_kappas[1]:  # Modèle TN
+            gp_gamk1 = next(
+                (gp for gp in group_priors[group] if gp.name == "GAMK1"), None
+            )
+            if gp_gamk1 is None:
+                raise ValueError(
+                    f"Le modèle {gp_model} nécessite kappa1, mais aucun GAMK1 n'a été trouvé pour le groupe {group}."
+                )
+            k1_moy = values[group]["MEANK1"]
+            gp_gamk2 = next(
+                (gp for gp in group_priors[group] if gp.name == "GAMK2"), None
+            )
+            if gp_gamk2 is None:
+                raise ValueError(
+                    f"Le modèle {gp_model} nécessite kappa2, mais aucun GAMK2 n'a été trouvé pour le groupe {group}."
+                )
+            k2_moy = values[group]["MEANK2"]
+            kappa1_values = sampling_group_local_param(
+                gp_gamk1,
+                k_moy=k1_moy,
+                n_loci=nloc_per_group[group],
+                check_nloc=True,
+                list_loci=list_locus_in_group,
+                rng=random.Random(seed + _KAPPA1_SEED_OFFSET),
+            )
+            kappa2_values = sampling_group_local_param(
+                gp_gamk2,
+                k_moy=k2_moy,
+                n_loci=nloc_per_group[group],
+                check_nloc=False,
+                list_loci=list_locus_in_group,
+                rng=random.Random(seed + _KAPPA2_SEED_OFFSET),
+            )
+            for locus in list_locus_in_group:
+                params_per_locus[locus.name] = (
+                    kappa1_values[locus.name],
+                    kappa2_values[locus.name],
+                    mus_rate[locus.name],
+                )
+    return params_per_locus
