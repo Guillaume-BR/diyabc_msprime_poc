@@ -806,3 +806,51 @@ def _run_single_particle_dna_from_values(
         parameter_values=values,
         summary_statistics=summary_statistics,
     )
+
+
+def replay_reftable_simulation_dna(
+    reference_directory: str | Path,
+    priors: list,
+    group_priors_names: list[str],
+    scenarios: list[Scenario],
+    real_reftable_path: str | Path,
+    stats_filter: str = "ALL",
+    max_workers: int | None = None,
+) -> list[ParticleResult]:
+
+    reference_directory = Path(reference_directory)
+
+    # On lit les sorties de diyabc (scénario tiré + valeurs de paramètres RÉELLEMENT tirées) pour
+    # les rejouer ensuite côté msprime, afin de comparer les deux simulateurs sur EXACTEMENT
+    # les mêmes tirages de priors.
+
+    rows = parse_real_reftable_params_with_group_priors(
+        path=real_reftable_path,
+        priors=priors,
+        scenarios=scenarios,
+        group_priors_names=group_priors_names,
+    )
+
+    results_by_index: dict[int, ParticleResult] = {}
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _run_single_particle_dna_from_values,
+                particle_index,
+                reference_directory,
+                scenario_index,
+                values,
+                group_priors_values,
+                stats_filter=stats_filter,
+            ): particle_index
+            for particle_index, (
+                scenario_index,
+                values,
+                group_priors_values,
+            ) in enumerate(rows)
+        }
+
+        for future in as_completed(futures):
+            particle_index = futures[future]
+            results_by_index[particle_index] = future.result()
+    return [results_by_index[i] for i in range(len(rows))]
