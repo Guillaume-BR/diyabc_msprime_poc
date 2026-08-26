@@ -4,13 +4,21 @@ reftable.txt (lisible, pour diff direct avec un vrai run DIYABC)."""
 
 import shutil
 import struct
+from pathlib import Path
 
 import pytest
-from conftest import GENERAL_BINARY_PATH, OBSERVED_SNP_FILE_HUMAN, REFERENCE_DIR
+from conftest import (
+    GENERAL_BINARY_PATH,
+    OBSERVED_SNP_FILE_HUMAN,
+    OBSERVED_SNP_FILE_TE2,
+    REFERENCE_DIR,
+)
 
 from bridge.demography_builder import get_parameter_names_used_by_scenario
 from bridge.prior_parser import is_constant_prior, parse_priors
 from bridge.reftable_loop import (
+    group_prior_column_names,
+    parse_real_reftable_params_with_group_priors,
     run_reftable_simulation,
     simulate_from_directory,
     write_reftable_bin,
@@ -270,3 +278,45 @@ def test_write_reftable_txt_header_lowercase_and_real_value_for_unused_params(
         # (bug corrigé : une case vide ne produit aucun token).
         assert len(tokens) == len(header_tokens)
         assert float(tokens[ra_index]) == pytest.approx(result.parameter_values["ra"])
+
+
+def test_parse_real_reftable_params_with_group_priors(header_text_te2):
+    list_priors = parse_priors(header_text_te2)[0]
+    group_priors_names = group_prior_column_names(header_text_te2)
+    scenarios = parse_header_scenarios(header_text_te2)
+    result = parse_real_reftable_params_with_group_priors(
+        path=OBSERVED_SNP_FILE_TE2.parent
+        / "first_records_of_the_reference_table_0.txt",
+        priors=list_priors,
+        scenarios=scenarios,
+        group_priors_names=group_priors_names,
+    )
+    path = OBSERVED_SNP_FILE_TE2.parent / "first_records_of_the_reference_table_0.txt"
+    text = Path(path).read_text().splitlines()
+
+    # Vérifie que le nombre de lignes lues correspond au nombre de lignes de données (en-tête exclue)
+    assert len(result) == len(text) - 1  # en-tête
+
+    # On va vérifier que la première ligne extraite correspond à la première ligne de données du fichier
+    first_data_line = text[1].split()
+    scenario_index = first_data_line[0]
+    assert result[0][0] == int(scenario_index)
+
+    for i, prior in enumerate(result[0][1]):
+        assert result[0][1][prior] == float(first_data_line[i + 1])
+
+    for i, group_priors in enumerate(result[0][2]):
+        assert result[0][2][group_priors] == float(
+            first_data_line[i + 1 + len(result[0][1])]
+        )
+
+    # test d'avoir toujours les noms des group_priors attendus dans le dictionnaire
+    for i in range(len(result)):
+        assert set(result[i][2].keys()) == set(
+            ["µmic_1", "pmic_1", "snimic_1", "µseq_2", "k1seq_2", "µseq_3", "k1seq_3"]
+        )
+
+    # test sur le nombre de valeurs de priors pour des scénarios différents
+    result_scenario_1 = next(result[i] for i in range(len(result)) if result[i][0] == 1)
+    result_scenario_2 = next(result[i] for i in range(len(result)) if result[i][0] == 2)
+    assert len(result_scenario_1[1]) != len(result_scenario_2[1])

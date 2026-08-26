@@ -259,9 +259,7 @@ def group_prior_column_names(header_text: str) -> list[str]:
 
 
 def parse_real_reftable_params(
-    path: str | Path,
-    priors: list,
-    scenarios: list[Scenario],
+    path: str | Path, priors: list, scenarios: list[Scenario], kept_by_scenario
 ) -> list[tuple[int, dict[str, float]]]:
     """Lit un reftable RÉEL produit par DIYABC (ex:
     first_records_of_the_reference_table_0.txt) et en extrait, ligne par
@@ -294,7 +292,7 @@ def parse_real_reftable_params(
     constants (is_constant_prior) et donc absents des colonnes de
     sortie.
     """
-    kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
+    priors_kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
 
     lines = [line for line in Path(path).read_text().splitlines() if line.strip()]
     data_lines = lines[1:]  # ligne 0 = en-tête
@@ -303,9 +301,64 @@ def parse_real_reftable_params(
     for line in data_lines:
         tokens = line.split()
         scenario_index = int(tokens[0])
-        param_names = kept_by_scenario[scenario_index]
+        param_names = priors_kept_by_scenario[scenario_index]
         values = {name: float(tokens[1 + i]) for i, name in enumerate(param_names)}
         rows.append((scenario_index, values))
+    return rows
+
+
+def parse_real_reftable_params_with_group_priors(
+    path: str | Path, priors: list, scenarios: list[Scenario], group_priors_names: list
+) -> list[tuple[int, dict[str, float], dict[str, float]]]:
+    """Variante de parse_real_reftable_params qui lit AUSSI les colonnes
+    de priors de groupe (`µseq_2`, `k1seq_2`...) d'un vrai reftable
+    DIYABC -- une fonction séparée plutôt qu'une extension en place, pour
+    ne rien risquer sur parse_real_reftable_params et ses appelants SNP
+    déjà validés (même choix que _run_single_particle/_run_single_
+    particle_from_values : deux fonctions distinctes plutôt qu'une seule
+    avec des branches conditionnelles).
+
+    Sur chaque ligne, les colonnes de priors de groupe suivent
+    IMMÉDIATEMENT les colonnes de paramètres historiques (elles-mêmes
+    variables en nombre selon le scénario tiré par cette ligne -- voir
+    priors_kept_by_scenario) et précèdent les colonnes de statistiques.
+
+    Contrairement aux paramètres historiques, les priors de groupe NE
+    SONT JAMAIS filtrées par scénario : `group_priors_names` (voir
+    group_prior_column_names) est utilisé TEL QUEL pour toutes les
+    lignes, quel que soit leur scénario -- vérifié empiriquement sur le
+    vrai reftable de toy_example2_ms_dna (`nparamut=7`, un compte
+    constant, contrairement à `nparam` qui varie par scénario). Appeler
+    `_kept_param_names_by_scenario(group_priors_names, scenarios)` ici
+    serait doublement faux : elle attend des objets `Prior` (pas des
+    strings -- `is_constant_prior` plante sur `.bounds`), et son filtre
+    `get_parameter_names_used_by_scenario` ne reconnaît de toute façon
+    que des noms de paramètres historiques, jamais de priors de groupe.
+
+    Retourne une liste de triplets (scenario_index, priors_values,
+    group_priors_values) -- les deux dicts de valeurs restent SÉPARÉS
+    (pas fusionnés en un seul) car ils alimentent deux étapes différentes
+    en aval : priors_values sert à construire la démographie, group_
+    priors_values au modèle de mutation ADN (k1/k2/mus_rate).
+    """
+    priors_kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
+
+    lines = [line for line in Path(path).read_text().splitlines() if line.strip()]
+    data_lines = lines[1:]  # ligne 0 = en-tête
+
+    rows = []
+    for line in data_lines:
+        tokens = line.split()
+        scenario_index = int(tokens[0])
+        priors_param_names = priors_kept_by_scenario[scenario_index]
+        priors_values = {
+            name: float(tokens[1 + i]) for i, name in enumerate(priors_param_names)
+        }
+        group_priors_values = {
+            name: float(tokens[1 + len(priors_param_names) + i])
+            for i, name in enumerate(group_priors_names)
+        }
+        rows.append((scenario_index, priors_values, group_priors_values))
     return rows
 
 
