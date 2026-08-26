@@ -39,6 +39,8 @@ from bridge.observed_data import detect_snp_file_type
 from bridge.parameter_sampling import draw_scenario
 from bridge.pipeline import (
     compute_summary_statistics,
+    compute_summary_statistics_dna,
+    compute_summary_statistics_dna_from_values,
     compute_summary_statistics_from_values,
     read_header_text,
 )
@@ -259,7 +261,7 @@ def group_prior_column_names(header_text: str) -> list[str]:
 
 
 def parse_real_reftable_params(
-    path: str | Path, priors: list, scenarios: list[Scenario], kept_by_scenario
+    path: str | Path, priors: list, scenarios: list[Scenario]
 ) -> list[tuple[int, dict[str, float]]]:
     """Lit un reftable RÉEL produit par DIYABC (ex:
     first_records_of_the_reference_table_0.txt) et en extrait, ligne par
@@ -733,3 +735,74 @@ def simulate_from_directory(
     print(f"Écriture du reftable binaire dans {test_directory}/reftable_msprime.bin")
 
     return results
+
+
+# ----------------------------------------------------
+# Pour les séquences ADN
+# ---------------------------------------------------
+
+
+def _run_single_particle_dna(
+    particle_index: int,
+    reference_directory: Path,
+    scenarios: list[Scenario],
+    *,
+    stats_filter: str,
+) -> ParticleResult:
+    """Calcule une seule particule -- fonction top-level (picklable),
+    appelée par chaque worker du ProcessPoolExecutor.
+
+    La seed utilisée est dérivée de particle_index, garantissant un
+    tirage distinct et reproductible par particule (même particle_index
+    -> même résultat, peu importe l'ordre d'exécution des workers).
+
+    IMPORTANT : seed = particle_index + 1, jamais particle_index seul.
+    msprime.sim_ancestry rejette explicitement seed=0 (ValueError "seeds
+    must be greater than 0 and less than 2^32") -- vérifié empiriquement.
+    Donc particle_index=0 (le cas le plus probable, première particule)
+    utilise seed=1, pas seed=0.
+    """
+    seed = particle_index + 1
+    drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
+
+    summary_statistics, parameter_values = compute_summary_statistics_dna(
+        reference_directory=reference_directory,
+        scenario_index=drawn_scenario.index,
+        seed=seed,
+        stats_filter=stats_filter,
+    )
+    return ParticleResult(
+        particle_index=particle_index,
+        scenario_index=drawn_scenario.index,
+        parameter_values=parameter_values,
+        summary_statistics=summary_statistics,
+    )
+
+
+def _run_single_particle_dna_from_values(
+    particle_index: int,
+    reference_directory: Path,
+    scenario_index: int,
+    values: dict[str, float],
+    group_priors_values: dict[str, float],
+    *,
+    stats_filter: str,
+) -> ParticleResult:
+    """Variante de _run_single_particle_dna qui NE TIRE AUCUN paramètre :
+    rejoue (scenario_index, values) tels que fournis -- typiquement issus
+    de parse_real_reftable_params."""
+    seed = particle_index + 1
+    summary_statistics = compute_summary_statistics_dna_from_values(
+        reference_directory=reference_directory,
+        scenario_index=scenario_index,
+        values=values,
+        group_priors_values=group_priors_values,
+        seed=seed,
+        stats_filter=stats_filter,
+    )
+    return ParticleResult(
+        particle_index=particle_index,
+        scenario_index=scenario_index,
+        parameter_values=values,
+        summary_statistics=summary_statistics,
+    )
