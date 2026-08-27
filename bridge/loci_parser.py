@@ -1,10 +1,10 @@
-"""
-Parseur de la section 'loci description' de header.txt. Gère le format
-condenséobservé dans human et toy_example5 pour les snp: ("5000 <A> G1 from
-1", ou "70 <A> 10 <X> 10 <M> 10 <Y> G1 from 1"), ainsi que le format détaillé
-un-locus-par-ligne observé dans sequences-mut ("Lep04 <A> [M] G1 2 40"),
-qui est un format différent (header.cpp distingue ces deux cas selon
-dataobs.filetype).
+"""Parseur de la section 'loci description' de header.txt.
+
+Gère le format condensé observé dans human et toy_example5 pour les SNP
+("5000 <A> G1 from 1", ou "70 <A> 10 <X> 10 <M> 10 <Y> G1 from 1"), ainsi
+que le format détaillé un-locus-par-ligne observé dans sequences-mut
+("Lep04 <A> [M] G1 2 40") -- ce sont deux formats différents (header.cpp
+distingue ces deux cas selon dataobs.filetype).
 """
 
 import re
@@ -25,13 +25,20 @@ _LOCI_PAIR_RE = re.compile(r"(\d+)\s*<([^>]+)>")
 _LOCI_TRAILER_RE = re.compile(r"(\S+)\s+from\s+(\d+)\s*$")
 
 
-def _find_loci_description_section_index(lines: list[str]) -> tuple[int, int]:
-    """Repère l'index de la ligne d'en-tête 'loci description (N)' --
-    factorisé entre parse_loci_description et rewrite_loci_count, qui en
+def _find_loci_description_section_index(lines: list[str]) -> int:
+    """Repère l'index de la ligne d'en-tête 'loci description (N)'.
+
+    Factorisé entre parse_loci_description et rewrite_loci_count, qui en
     ont toutes deux besoin.
 
-    Retourne l'index de la locus description
-    Lève ValueError si la section n'est trouvée nulle part.
+    Args:
+        lines: Les lignes de header.txt.
+
+    Returns:
+        L'index de la ligne d'en-tête.
+
+    Raises:
+        ValueError: Si la section n'est trouvée nulle part.
     """
     section_index = next(
         (i for i, line in enumerate(lines) if _SECTION_HEADER_RE.match(line.strip())),
@@ -45,18 +52,27 @@ def _find_loci_description_section_index(lines: list[str]) -> tuple[int, int]:
 
 
 def _extract_loci_info_condensed(text: str) -> tuple[dict[str, int], str, str]:
-    """Découpe une ligne de contenu condensée en (total_loci, groupe,
-    indice_1based) -- une ou plusieurs paires '<n> <type>' suivies de
-    '<groupe> from <indice>' (single-type ou multi-type indifféremment).
+    """Découpe une ligne de contenu condensée en ses trois composantes.
 
-    Lève NotImplementedError si le format ne correspond pas.
+    Une ou plusieurs paires '<n> <type>' suivies de '<groupe> from
+    <indice>' (single-type ou multi-type indifféremment).
+
+    Args:
+        text: La ligne de contenu (après la ligne d'en-tête de section).
+
+    Returns:
+        Un tuple (loci_counts_by_heritage, group, start_1based), où
+        loci_counts_by_heritage vaut {type_héritage: compte, ...}.
+
+    Raises:
+        NotImplementedError: Si le format ne correspond pas.
     """
     paires = _LOCI_PAIR_RE.findall(text)
     if not paires:
         raise NotImplementedError(
             f"Format de ligne non géré (aucune paire '<n> <type>' trouvée) : {text!r}"
         )
-    total_loci = {heritage: int(count) for count, heritage in paires}
+    loci_counts_by_heritage = {heritage: int(count) for count, heritage in paires}
 
     reste = _LOCI_PAIR_RE.sub("", text).strip()
     trailer_match = _LOCI_TRAILER_RE.match(reste)
@@ -66,18 +82,30 @@ def _extract_loci_info_condensed(text: str) -> tuple[dict[str, int], str, str]:
             f"après les paires '<n> <type>', trouvé {reste!r}) : {text!r}"
         )
     group, start_1based = trailer_match.groups()
-    return total_loci, group, start_1based
+    return loci_counts_by_heritage, group, start_1based
 
 
 def parse_loci_description(
     header_text: str,
 ) -> LociDescription | list[LociDescriptionDetailed]:
-    """Extrait la description des loci à partir de header.txt, pour le
-    format condensé (single-type comme human, ou multi-type comme
-    toy_example5) et le format description locus par locus
-    détaillé observé dans sequences-mut.
+    """Extrait la description des loci à partir de header.txt.
 
-    Lève NotImplementedError si le format détecté n'est pas d'un de ces type là.
+    Gère le format condensé (single-type comme human, ou multi-type
+    comme toy_example5) et le format détaillé un-locus-par-ligne observé
+    dans sequences-mut.
+
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Returns:
+        Un LociDescription pour le format condensé, ou une liste de
+        LociDescriptionDetailed (une par locus) pour le format détaillé.
+
+    Raises:
+        NotImplementedError: Si le format détecté n'est ni l'un ni
+            l'autre de ces deux formats.
+        ValueError: Propagée si la section 'loci description' est
+            introuvable.
     """
     lines = header_text.splitlines()
     section_index = _find_loci_description_section_index(lines)
@@ -123,10 +151,12 @@ def parse_loci_description(
         return list_loci
     else:
         content_line = lines[section_index + 1].strip()
-        total_loci, group, start_1based = _extract_loci_info_condensed(content_line)
+        loci_counts_by_heritage, group, start_1based = _extract_loci_info_condensed(
+            content_line
+        )
 
         return LociDescription(
-            total_loci=total_loci,
+            loci_counts_by_heritage=loci_counts_by_heritage,
             group=group,
             start_index=int(start_1based)
             - 1,  # conversion 1-based -> 0-based, comme prem = N-1 en C++
@@ -134,15 +164,25 @@ def parse_loci_description(
 
 
 def rewrite_loci_count(header_text: str, new_total_loci: int) -> str:
-    """Retourne une copie de header_text où le nombre de loci déclaré dans
-    'loci description' est remplacé par new_total_loci -- nécessaire pour
-    tester avec un nombre de loci réduit sans avoir à maintenir un
-    header.txt séparé à la main.
+    """Remplace le nombre de loci déclaré dans 'loci description'.
 
-    Contrairement à parse_loci_description, limité au format condensé à
-    un SEUL type d'héritage (lève NotImplementedError sur une ligne
-    multi-type comme celle de toy_example5) -- pas encore mis à jour
-    pour ce cas, non nécessaire pour human.
+    Nécessaire pour tester avec un nombre de loci réduit sans avoir à
+    maintenir un header.txt séparé à la main. Contrairement à
+    parse_loci_description, limité au format condensé à un SEUL type
+    d'héritage -- pas encore mis à jour pour le multi-type (ex:
+    toy_example5), non nécessaire pour human.
+
+    Args:
+        header_text: Texte complet de header.txt.
+        new_total_loci: Le nouveau nombre total de loci à déclarer.
+
+    Returns:
+        Une copie de header_text avec le nombre de loci remplacé.
+
+    Raises:
+        NotImplementedError: Si la section est au format détaillé
+            (multi-ligne), ou si la ligne condensée n'est pas au format
+            à un seul type d'héritage.
     """
     lines = header_text.splitlines()
     section_index = _find_loci_description_section_index(lines)

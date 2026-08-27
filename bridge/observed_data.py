@@ -363,7 +363,7 @@ def coalescence_coefficient(locus_type: str, sex_ratio: float) -> float:
     (particuleC.cpp:1340 : temps -= coeffcoal * N / n / (n-1) * log(ra)),
     en fonction du type d'héritage du locus et du sex-ratio du dataset.
 
-    locus_type : vocabulaire de LociDescription.total_loci ("A", "H",
+    locus_type : vocabulaire de LociDescription.loci_counts_by_heritage ("A", "H",
     "X", "Y" ou "M" -- voir loci_parser.py), PAS "<A>" avec les chevrons.
     sex_ratio : fraction de mâles, telle que retournée par
     parse_sex_ratio (0.5 = sex-ratio équilibré).

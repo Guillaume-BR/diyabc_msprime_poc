@@ -161,7 +161,9 @@ def run_reftable_simulation(
     snp_path = reference_directory / header_text.splitlines()[0].strip()
     observed_reads_per_locus = None
     if detect_snp_file_type(snp_path) == "POOL":
-        total_loci_poolseq = parse_loci_description(header_text).total_loci["A"]
+        total_loci_poolseq = parse_loci_description(
+            header_text
+        ).loci_counts_by_heritage["A"]
         observed_reads_per_locus = prepare_poolseq_observed_reads(
             snp_path, total_loci_poolseq
         )

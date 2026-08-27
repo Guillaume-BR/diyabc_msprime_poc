@@ -93,9 +93,10 @@ def _simulate_genotypes_for_all_locus_types(
 ) -> Iterator[dict[str, list[int]]]:
     """Boucle sur TOUS les types de locus déclarés dans la section 'loci
     description' de header_text (parse_loci_description(header_text).
-    total_loci -- dict[str, int], ex: {"A": 5000} pour human, {"A": 70,
-    "X": 10, "M": 10, "Y": 10} pour toy_example5), et concatène les
-    génotypes simulés pour chacun via simulate_genotypes_for_locus_type.
+    loci_counts_by_heritage -- dict[str, int], ex: {"A": 5000} pour
+    human, {"A": 70, "X": 10, "M": 10, "Y": 10} pour toy_example5), et
+    concatène les génotypes simulés pour chacun via
+    simulate_genotypes_for_locus_type.
 
     IMPORTANT -- num_loci est un compte PAR TYPE, pas un total : pour un
     dataset <A>-only comme human (un seul type déclaré), c'est
@@ -120,11 +121,13 @@ def _simulate_genotypes_for_all_locus_types(
     mémoire simultanément).
     """
 
-    total_loci = parse_loci_description(header_text).total_loci
+    loci_counts_by_heritage = parse_loci_description(
+        header_text
+    ).loci_counts_by_heritage
 
     liste_iterateurs_par_type = []
 
-    for locus_type, declared_count in total_loci.items():
+    for locus_type, declared_count in loci_counts_by_heritage.items():
         seed_for_type = seed + LOCUS_TYPE_SEED_OFFSET[locus_type]
         loci_count = num_loci if num_loci is not None else declared_count
         liste_iterateurs_par_type.append(
@@ -315,7 +318,9 @@ def compute_summary_statistics(
         summary_stats = compute_all_statistics(genotypes_list, population_names)
         summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
     else:
-        total_loci_poolseq = parse_loci_description(header_text).total_loci["A"]
+        total_loci_poolseq = parse_loci_description(
+            header_text
+        ).loci_counts_by_heritage["A"]
         demography, values = build_random_demography_for_scenario_index(
             header_text, scenario_index, seed
         )
@@ -423,7 +428,9 @@ def compute_summary_statistics_from_values(
         # l'argument num_loci est ignoré ici, côté PoolSeq on simule tous les loci déclarés dans header.txt
         # alors qu'en Indseq num_loci sert à limiter le nombre de loci simulés
 
-        total_loci_poolseq = parse_loci_description(header_text).total_loci["A"]
+        total_loci_poolseq = parse_loci_description(
+            header_text
+        ).loci_counts_by_heritage["A"]
         demography = build_demography_for_scenario_index(
             header_text, scenario_index, values
         )
