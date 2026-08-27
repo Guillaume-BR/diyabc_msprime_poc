@@ -1118,6 +1118,21 @@ def build_group_local_param_per_locus(
     # une fois par groupe/par kappa avec une graine décalée différente.
     values = draw_group_parameter_values(group_priors, seed)
 
+    # Une seule instance de RNG par paramètre, créée AVANT la boucle sur les
+    # groupes et réutilisée/avancée à chaque groupe -- même motif que le rng
+    # de build_rate_map_per_locus (déjà correct). Créer un random.Random(seed
+    # + OFFSET) FRAIS À CHAQUE ITÉRATION du groupe (comme avant ce correctif)
+    # fait que tous les groupes utilisant le même paramètre (ex: G2 et G3,
+    # tous deux K2P donc tous deux kappa1) rejouent EXACTEMENT la même
+    # séquence de tirages -- une corrélation inter-groupes invisible tant
+    # qu'un seul groupe de chaque modèle existe, révélée seulement en
+    # explorant la piste <M> avec toy_example2_ms_dna_50loci (G2/G3 tous
+    # deux K2P). Voir feedback_seed_reuse_pattern (même classe de bug déjà
+    # vue 4 fois dans ce projet).
+    mus_rate_rng = random.Random(seed + _MUS_RATE_SEED_OFFSET)
+    kappa1_rng = random.Random(seed + _KAPPA1_SEED_OFFSET)
+    kappa2_rng = random.Random(seed + _KAPPA2_SEED_OFFSET)
+
     for group in nloc_per_group:
         list_locus_in_group = [locus for locus in list_loci_seq if locus.group == group]
         # calcul du mus_rate par locus
@@ -1127,7 +1142,7 @@ def build_group_local_param_per_locus(
             n_loci=nloc_per_group[group],
             check_nloc=True,
             list_loci=list_locus_in_group,
-            rng=random.Random(seed + _MUS_RATE_SEED_OFFSET),
+            rng=mus_rate_rng,
         )
         # calcul des kappas par locus selon le modèle de substitution du groupe
         gp_model = next(gp for gp in group_priors[group] if gp.model)
@@ -1151,7 +1166,7 @@ def build_group_local_param_per_locus(
                 n_loci=nloc_per_group[group],
                 check_nloc=True,
                 list_loci=list_locus_in_group,
-                rng=random.Random(seed + _KAPPA1_SEED_OFFSET),
+                rng=kappa1_rng,
             )
             for locus in list_locus_in_group:
                 params_per_locus[locus.name] = (
@@ -1182,7 +1197,7 @@ def build_group_local_param_per_locus(
                 n_loci=nloc_per_group[group],
                 check_nloc=True,
                 list_loci=list_locus_in_group,
-                rng=random.Random(seed + _KAPPA1_SEED_OFFSET),
+                rng=kappa1_rng,
             )
             kappa2_values = sampling_group_local_param(
                 gp_gamk2,
@@ -1190,7 +1205,7 @@ def build_group_local_param_per_locus(
                 n_loci=nloc_per_group[group],
                 check_nloc=False,
                 list_loci=list_locus_in_group,
-                rng=random.Random(seed + _KAPPA2_SEED_OFFSET),
+                rng=kappa2_rng,
             )
             for locus in list_locus_in_group:
                 params_per_locus[locus.name] = (
@@ -1440,6 +1455,15 @@ def build_group_local_param_per_locus_from_values(
         group_priors_values=group_priors_values, group_priors=group_priors
     )
 
+    # Voir le commentaire équivalent dans build_group_local_param_per_locus :
+    # un random.Random(seed + OFFSET) créé À CHAQUE ITÉRATION du groupe fait
+    # rejouer la même séquence de tirages à tous les groupes partageant le
+    # même modèle (ex: G2/G3 tous deux K2P sur toy_example2_ms_dna) --
+    # corrigé en créant chaque rng UNE SEULE FOIS avant la boucle.
+    mus_rate_rng = random.Random(seed + _MUS_RATE_SEED_OFFSET)
+    kappa1_rng = random.Random(seed + _KAPPA1_SEED_OFFSET)
+    kappa2_rng = random.Random(seed + _KAPPA2_SEED_OFFSET)
+
     for group in nloc_per_group:
         list_locus_in_group = [locus for locus in list_loci_seq if locus.group == group]
         # calcul du mus_rate par locus
@@ -1449,7 +1473,7 @@ def build_group_local_param_per_locus_from_values(
             n_loci=nloc_per_group[group],
             check_nloc=True,
             list_loci=list_locus_in_group,
-            rng=random.Random(seed + _MUS_RATE_SEED_OFFSET),
+            rng=mus_rate_rng,
         )
         # calcul des kappas par locus selon le modèle de substitution du groupe
         gp_model = next(gp for gp in group_priors[group] if gp.model)
@@ -1473,7 +1497,7 @@ def build_group_local_param_per_locus_from_values(
                 n_loci=nloc_per_group[group],
                 check_nloc=True,
                 list_loci=list_locus_in_group,
-                rng=random.Random(seed + _KAPPA1_SEED_OFFSET),
+                rng=kappa1_rng,
             )
             for locus in list_locus_in_group:
                 params_per_locus[locus.name] = (
@@ -1504,7 +1528,7 @@ def build_group_local_param_per_locus_from_values(
                 n_loci=nloc_per_group[group],
                 check_nloc=True,
                 list_loci=list_locus_in_group,
-                rng=random.Random(seed + _KAPPA1_SEED_OFFSET),
+                rng=kappa1_rng,
             )
             kappa2_values = sampling_group_local_param(
                 gp_gamk2,
@@ -1512,7 +1536,7 @@ def build_group_local_param_per_locus_from_values(
                 n_loci=nloc_per_group[group],
                 check_nloc=False,
                 list_loci=list_locus_in_group,
-                rng=random.Random(seed + _KAPPA2_SEED_OFFSET),
+                rng=kappa2_rng,
             )
             for locus in list_locus_in_group:
                 params_per_locus[locus.name] = (
