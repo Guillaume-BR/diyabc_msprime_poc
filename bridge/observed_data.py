@@ -32,7 +32,7 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from bridge.scenario_types import LociDescriptionDetailed
+from bridge.header_dataclasses import LociDescriptionDetailed
 
 
 def _find_header_index(lines: list[str]) -> int:

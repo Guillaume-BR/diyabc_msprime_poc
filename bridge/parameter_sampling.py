@@ -16,7 +16,7 @@ import dataclasses
 import math
 import random
 
-from bridge.scenario_types import (
+from bridge.header_dataclasses import (
     GroupPrior,
     LociDescriptionDetailed,
     OrderConstraint,

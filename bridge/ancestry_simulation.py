@@ -26,6 +26,7 @@ import numpy as np
 import tskit
 
 from bridge.demography_builder import rescale_demography
+from bridge.header_dataclasses import LociDescriptionDetailed
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
     base_frequency_by_locus,
@@ -47,7 +48,6 @@ from bridge.parameter_sampling import (
     sampling_group_local_param,
 )
 from bridge.prior_parser import get_parameter_used_by_model, parse_group_priors
-from bridge.scenario_types import LociDescriptionDetailed
 
 # Offset de graine dédié à la boucle de rejet MAF et du rejet MRC, distinct du +1_000_000
 # déjà utilisé partout ailleurs dans le projet pour séparer la graine de

@@ -9,7 +9,7 @@ dataobs.filetype).
 
 import re
 
-from bridge.scenario_types import LociDescription, LociDescriptionDetailed
+from bridge.header_dataclasses import LociDescription, LociDescriptionDetailed
 
 _SECTION_HEADER_RE = re.compile(r"^loci description\s*\((\d+)\)\s*$")
 

@@ -1,5 +1,5 @@
 """
-Construit une msprime.Demography à partir d'un Scenario (scenario_types.py)
+Construit une msprime.Demography à partir d'un Scenario (header_dataclasses.py)
 et d'un dict de valeurs numériques tirées (parameter_sampling.py).
 
 evaluate_expression() est l'équivalent Python de ParticleC::getvalue()
@@ -14,7 +14,7 @@ import re
 
 import msprime
 
-from bridge.scenario_types import (
+from bridge.header_dataclasses import (
     MergeEvent,
     SampleEvent,
     Scenario,
@@ -102,7 +102,7 @@ def build_demography(
         if isinstance(event, SplitEvent):
             # pop_derived disparaît : chaque lignée part vers ancestral_pop1
             # avec probabilité admixture_rate, sinon vers ancestral_pop2 --
-            # voir SplitEvent (scenario_types.py) pour la sémantique exacte,
+            # voir SplitEvent (header_dataclasses.py) pour la sémantique exacte,
             # vérifiée contre particuleC.cpp::ParticleC::split_pop.
             rate = evaluate_expression(event.admixture_rate, values)
             demography.add_admixture(

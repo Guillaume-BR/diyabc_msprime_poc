@@ -1,19 +1,19 @@
 """
 Parseur du texte de header.txt vers les structures définies dans
-scenario_types.py.
+header_dataclasses.py.
 
-Aucune valeur numérique n'est calculée ici (voir scenario_types.py pour
+Aucune valeur numérique n'est calculée ici (voir header_dataclasses.py pour
 la justification). Ce module ne fait que de la transcription texte -> objets.
 
 Vocabulaire géré : sample, merge, varNe, split (admixture) -- couvre les
-6 scénarios du dataset human. Voir SplitEvent (scenario_types.py) pour la
+6 scénarios du dataset human. Voir SplitEvent (header_dataclasses.py) pour la
 sémantique exacte de split, vérifiée contre history.cpp/particuleC.cpp.
 """
 
 import re
 import warnings
 
-from bridge.scenario_types import (
+from bridge.header_dataclasses import (
     MergeEvent,
     SampleEvent,
     Scenario,

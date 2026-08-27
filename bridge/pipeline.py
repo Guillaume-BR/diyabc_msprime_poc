@@ -33,12 +33,12 @@ from bridge.ancestry_simulation import (
     simulate_poolseq_reads_with_mrc_filter,
 )
 from bridge.demography_builder import build_demography
+from bridge.header_dataclasses import Scenario
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import detect_snp_file_type, observed_count_population
 from bridge.parameter_sampling import draw_parameter_values
 from bridge.prior_parser import parse_priors
 from bridge.scenario_parser import parse_header_scenarios
-from bridge.scenario_types import Scenario
 from bridge.stats_group_parser import parse_requested_statistic_names
 from bridge.summary_statistics import (
     compute_all_statistics,

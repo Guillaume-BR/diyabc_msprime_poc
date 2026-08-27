@@ -34,6 +34,7 @@ from pathlib import Path
 
 from bridge.ancestry_simulation import prepare_poolseq_observed_reads
 from bridge.demography_builder import get_parameter_names_used_by_scenario
+from bridge.header_dataclasses import Scenario
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import detect_snp_file_type
 from bridge.parameter_sampling import draw_scenario
@@ -51,7 +52,6 @@ from bridge.prior_parser import (
     parse_priors,
 )
 from bridge.scenario_parser import parse_header_scenarios
-from bridge.scenario_types import Scenario
 
 # Décalage appliqué à la seed de particule avant de tirer le scénario
 # (draw_scenario), pour ne JAMAIS partager la même seed brute avec le
