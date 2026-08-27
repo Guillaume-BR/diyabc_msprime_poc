@@ -11,11 +11,18 @@ cette approche par délégation au C++).
 
 
 def parse_statobs(statobs_text: str) -> dict[str, float]:
-    """Parse le contenu d'un fichier statobsRF.txt/statobs.txt en dict
-    {nom_colonne: valeur}.
+    """Parse le contenu d'un fichier statobsRF.txt/statobs.txt.
 
-    Lève ValueError si le fichier ne contient pas exactement 2 lignes
-    non vides, ou si le nombre de noms et de valeurs ne correspond pas.
+    Args:
+        statobs_text: Contenu complet du fichier statobsRF.txt/statobs.txt.
+
+    Returns:
+        Un dict {nom_colonne: valeur}.
+
+    Raises:
+        ValueError: Si le fichier ne contient pas exactement 2 lignes
+            non vides, ou si le nombre de noms et de valeurs ne
+            correspond pas.
     """
     lines = [line for line in statobs_text.splitlines() if line.strip()]
     if len(lines) != 2:
