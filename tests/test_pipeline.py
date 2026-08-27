@@ -14,6 +14,7 @@ from conftest import (
 from bridge.pipeline import (
     build_random_demography_for_scenario_index,
     compute_summary_statistics,
+    compute_summary_statistics_dna,
     compute_summary_statistics_from_values,
     read_header_text,
     run_poc_for_directory,
@@ -273,3 +274,16 @@ def test_compute_summary_statistics_unknown_stats_filter_raises():
             seed=1,
             stats_filter="BOGUS",
         )
+
+
+def test_compute_summary_statistics_dna():
+    stats, _ = compute_summary_statistics_dna(
+        reference_directory=REFERENCE_DIR.parent / "toy_example2_ms_dna",
+        scenario_index=1,
+        seed=42,
+    )
+
+    assert len(stats) == 42
+    assert stats["NSS_2_1"] == pytest.approx(5.8)
+    assert stats["HST_2_1.2"] == pytest.approx(0.029037253935292443)
+    assert stats["NH2_3_1.2"] == pytest.approx(9.4)

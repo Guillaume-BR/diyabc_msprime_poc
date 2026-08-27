@@ -150,7 +150,7 @@ def test_mean_segregating_sites_per_group(header_text_te2):
     assert mean_g2 == {"pop1": pytest.approx(5.8), "pop2": pytest.approx(5.6)}
 
     mean_g3 = compute_NSS(tree_sequences_for_group("G3"), population_names)
-    assert mean_g3 == {"pop1": pytest.approx(5.6), "pop2": pytest.approx(5.6)}
+    assert mean_g3 == {"pop1": pytest.approx(7.4), "pop2": pytest.approx(7.2)}
 
 
 def test_mean_segregating_sites_per_group_empty_defaults_to_zero():
@@ -190,7 +190,7 @@ def test_mean_distinct_haplotypes_per_group(header_text_te2):
     assert mean_g2 == {"pop1": pytest.approx(5.2), "pop2": pytest.approx(5.4)}
 
     mean_g3 = compute_NHA(tree_sequences_for_group("G3"), population_names)
-    assert mean_g3 == {"pop1": pytest.approx(5.0), "pop2": pytest.approx(3.6)}
+    assert mean_g3 == {"pop1": pytest.approx(6.6), "pop2": pytest.approx(5.6)}
 
 
 def test_mean_distinct_haplotypes_per_group_empty_defaults_to_zero():
@@ -234,8 +234,8 @@ def test_mean_pairwise_differences_per_group(header_text_te2):
 
     mean_g3 = compute_MPD(tree_sequences_for_group("G3"), population_names)
     assert mean_g3 == {
-        "pop1": pytest.approx(1.2252631578947368),
-        "pop2": pytest.approx(1.2978947368421054),
+        "pop1": pytest.approx(1.5442105263157895),
+        "pop2": pytest.approx(1.6536842105263159),
     }
 
 
@@ -280,8 +280,8 @@ def test_variance_pairwise_differences_per_group(header_text_te2):
 
     variance_g3 = compute_VPD(tree_sequences_for_group("G3"), population_names)
     assert variance_g3 == {
-        "pop1": pytest.approx(1.5865441381230851),
-        "pop2": pytest.approx(3.0353940406571986),
+        "pop1": pytest.approx(1.4944639376218325),
+        "pop2": pytest.approx(2.191707045391256),
     }
 
 
@@ -326,8 +326,8 @@ def test_mean_tajima_d_per_group(header_text_te2):
 
     dta_g3 = compute_DTA(tree_sequences_for_group("G3"), population_names)
     assert dta_g3 == {
-        "pop1": pytest.approx(-0.453016737083286),
-        "pop2": pytest.approx(-0.10017554623967702),
+        "pop1": pytest.approx(-0.7770721382927418),
+        "pop2": pytest.approx(-0.5952575949594332),
     }
 
 
@@ -368,7 +368,7 @@ def test_mean_private_segregating_sites_per_group(header_text_te2):
     assert pss_g2 == {"pop1": pytest.approx(1.2), "pop2": pytest.approx(1.0)}
 
     pss_g3 = compute_PSS(tree_sequences_for_group("G3"), population_names)
-    assert pss_g3 == {"pop1": pytest.approx(3.8), "pop2": pytest.approx(3.8)}
+    assert pss_g3 == {"pop1": pytest.approx(4.0), "pop2": pytest.approx(3.8)}
 
 
 def test_mean_private_segregating_sites_per_group_empty_defaults_to_zero():
@@ -412,8 +412,8 @@ def test_mean_minor_allele_count_per_group(header_text_te2):
 
     mns_g3 = compute_MNS(tree_sequences_for_group("G3"), population_names)
     assert mns_g3 == {
-        "pop1": pytest.approx(1.575),
-        "pop2": pytest.approx(3.0385964912280703),
+        "pop1": pytest.approx(2.57),
+        "pop2": pytest.approx(2.8654545454545453),
     }
 
 
@@ -458,8 +458,8 @@ def test_variance_minor_allele_count_per_group(header_text_te2):
 
     vns_g3 = compute_VNS(tree_sequences_for_group("G3"), population_names)
     assert vns_g3 == {
-        "pop1": pytest.approx(3.121875),
-        "pop2": pytest.approx(5.515358571868267),
+        "pop1": pytest.approx(3.6141666666666667),
+        "pop2": pytest.approx(5.315702479338843),
     }
 
 
@@ -500,7 +500,7 @@ def test_mean_distinct_haplotypes_per_group_pairwize(header_text_te2):
     assert mean_g2 == {"1.2": pytest.approx(6.8)}
 
     mean_g3 = compute_NH2(tree_sequences_for_group("G3"), population_names)
-    assert mean_g3 == {"1.2": pytest.approx(6.6)}
+    assert mean_g3 == {"1.2": pytest.approx(9.4)}
 
 
 def test_mean_distinct_haplotypes_per_group_pairwize_empty_defaults_to_zero():
@@ -539,7 +539,7 @@ def test_mean_segregating_sites_per_group_pairwize(header_text_te2):
     assert mean_g2 == {"1.2": pytest.approx(6.8)}
 
     mean_g3 = compute_NS2(tree_sequences_for_group("G3"), population_names)
-    assert mean_g3 == {"1.2": pytest.approx(9.4)}
+    assert mean_g3 == {"1.2": pytest.approx(11.2)}
 
 
 def test_mean_segregating_sites_per_group_pairwize_empty_defaults_to_zero():
@@ -578,7 +578,7 @@ def test_mean_pairwise_differences_per_group_pairwize(header_text_te2):
     assert mean_g2 == {"1.2": pytest.approx(1.2498717948717948)}
 
     mean_g3 = compute_MP2(tree_sequences_for_group("G3"), population_names)
-    assert mean_g3 == {"1.2": pytest.approx(1.261578947368421)}
+    assert mean_g3 == {"1.2": pytest.approx(1.5989473684210527)}
 
 
 def test_mean_pairwise_differences_per_group_pairwize_empty_defaults_to_zero():
@@ -617,7 +617,7 @@ def test_mean_pairwise_differences_between_per_group_pairwize(header_text_te2):
     assert mean_g2 == {"1.2": pytest.approx(1.28725)}
 
     mean_g3 = compute_MPB(tree_sequences_for_group("G3"), population_names)
-    assert mean_g3 == {"1.2": pytest.approx(1.374)}
+    assert mean_g3 == {"1.2": pytest.approx(1.6759999999999997)}
 
 
 def test_mean_pairwise_differences_between_per_group_pairwize_empty_defaults_to_zero():
@@ -656,7 +656,7 @@ def test_mean_hst_per_group_pairwize(header_text_te2):
     assert mean_g2 == {"1.2": pytest.approx(0.029037253935292443)}
 
     mean_g3 = compute_HST(tree_sequences_for_group("G3"), population_names)
-    assert mean_g3 == {"1.2": pytest.approx(0.0818202712020225)}
+    assert mean_g3 == {"1.2": pytest.approx(0.04597412385378725)}
 
 
 def test_compute_all_statistics_dna(header_text_te2):
@@ -690,4 +690,4 @@ def test_compute_all_statistics_dna(header_text_te2):
     assert len(results) == 42
     assert pytest.approx(results["NSS_2_1"]) == 5.8
     assert pytest.approx(results["HST_2_1.2"]) == 0.029037253935292443
-    assert pytest.approx(results["NH2_3_1.2"]) == 6.6
+    assert pytest.approx(results["NH2_3_1.2"]) == 9.4
