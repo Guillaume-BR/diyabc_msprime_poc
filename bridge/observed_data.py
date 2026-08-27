@@ -34,20 +34,32 @@ from pathlib import Path
 
 from bridge.header_dataclasses import LociDescriptionDetailed
 
+# ------------------------------------------------------
+# Parsing pour les fichiers SNP
+# ------------------------------------------------------
+
 
 def _find_header_index(lines: list[str]) -> int:
-    """Repère l'index de la ligne d'en-tête 'IND SEX POP' ou 'POOL' parmi les deux
-    premières lignes du fichier -- factorisé entre count_samples_per_population
-    et individual_sexes_per_population, qui en ont toutes deux besoin.
+    """Repère l'index de la ligne d'en-tête 'IND SEX POP' ou 'POOL'.
 
-    L'en-tête peut être précédé ou non d'un commentaire libre en première
-    ligne (ex: '<NM=1NF> <MAF=hudson> ...', comportement observé dans
-    data.cpp, qui teste les deux cas) : on recherche son index plutôt que
-    de supposer sa position, pour ne perdre aucune ligne de données quel
-    que soit le cas.
+    Recherchée parmi les deux premières lignes du fichier --
+    factorisé entre count_samples_per_population et
+    individual_sexes_per_population, qui en ont toutes deux besoin.
+    L'en-tête peut être précédé ou non d'un commentaire libre en
+    première ligne (ex: '<NM=1NF> <MAF=hudson> ...', comportement
+    observé dans data.cpp, qui teste les deux cas) : on recherche son
+    index plutôt que de supposer sa position, pour ne perdre aucune
+    ligne de données quel que soit le cas.
 
-    Lève ValueError si l'en-tête n'est trouvé dans aucune des deux
-    premières lignes.
+    Args:
+        lines: Les lignes du fichier .snp.
+
+    Returns:
+        L'index de la ligne d'en-tête.
+
+    Raises:
+        ValueError: Si l'en-tête n'est trouvé dans aucune des deux
+            premières lignes.
     """
 
     header_index = next(
@@ -68,10 +80,17 @@ def _find_header_index(lines: list[str]) -> int:
 
 
 def detect_snp_file_type(snp_file_path: str | Path) -> str:
-    """Détecte le type de fichier .snp DIYABC : "INDSEQ" (individus par
-    ligne) ou "POOLSEQ" (pools par ligne), à l'aide du header_index
-    trouvé par _find_header_index, en lisant la première ligne
-    non vide du fichier contenant "IND" ou "POOL".
+    """Détecte le type de fichier .snp DIYABC.
+
+    À l'aide du header_index trouvé par _find_header_index, en lisant
+    la première ligne non vide du fichier contenant "IND" ou "POOL".
+
+    Args:
+        snp_file_path: Chemin du fichier .snp.
+
+    Returns:
+        "IND" (individus par ligne, IndSeq) ou "POOL" (pools par
+        ligne, PoolSeq).
     """
     lines = Path(snp_file_path).read_text().splitlines()
     header_index = _find_header_index(lines)
@@ -82,11 +101,22 @@ def detect_snp_file_type(snp_file_path: str | Path) -> str:
 
 
 def _parse_pool_header_line(lines: list[str], header_index: int) -> dict[str, int]:
-    """Parse la ligne d'en-tête POOL du fichier .snp DIYABC, au format
-    'POOL POP_NAME:HAPLOID_SAMPLE_SIZE  POP1:200 POP2:200 POP3:200 POP4:200',
-    et retourne un dictionnaire {nom_population: taille_haploïde}.
+    """Parse la ligne d'en-tête POOL du fichier .snp DIYABC.
 
-    Ex: pour toy_example4 -> {"POP1": 200, "POP2": 200, "POP3": 200, "POP4": 200}
+    Format : 'POOL POP_NAME:HAPLOID_SAMPLE_SIZE  POP1:200 POP2:200
+    POP3:200 POP4:200'.
+
+    Args:
+        lines: Les lignes du fichier .snp.
+        header_index: L'index de la ligne d'en-tête POOL.
+
+    Returns:
+        Un dict {nom_population: taille_haploïde}, ex: pour
+        toy_example4 -> {"POP1": 200, "POP2": 200, "POP3": 200,
+        "POP4": 200}.
+
+    Raises:
+        ValueError: Si aucune population n'est déclarée dans la ligne.
     """
     header_line = lines[header_index]
     first_pop = header_line.find("POP")
@@ -110,10 +140,10 @@ def _parse_pool_header_line(lines: list[str], header_index: int) -> dict[str, in
 
 
 def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
-    """Compte le nombre d'individus par population dans un fichier .snp
-    DIYABC au format 'IND SEX POP <génotypes...>'n ou 'POOL POP_NAME:HAPLOID_SAMPLE_SIZE'.
+    """Compte le nombre d'individus par population dans un fichier .snp DIYABC.
 
-    Ex: pour human -> {"ASW": 30, "YRI": 30, ...} ou pour toy_example4 -> {"POP1": 200, "POP2": 200, "POP3": 200, "POP4": 200}.
+    Format 'IND SEX POP <génotypes...>' ou 'POOL
+    POP_NAME:HAPLOID_SAMPLE_SIZE'.
 
     IMPORTANT -- garantie d'ordre : le dict retourné préserve l'ordre de
     première apparition des populations dans le fichier (garanti par
@@ -126,6 +156,14 @@ def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
     D'APPARITION de ce fichier. Ne jamais remplacer Counter par un type
     qui ne garantirait pas cet ordre (ex: trier les clés alphabétiquement
     casserait silencieusement ce mapping).
+
+    Args:
+        snp_file_path: Chemin du fichier .snp.
+
+    Returns:
+        Un dict {nom_population: effectif}, ex: pour human ->
+        {"ASW": 30, "YRI": 30, ...} ou pour toy_example4 ->
+        {"POP1": 200, "POP2": 200, "POP3": 200, "POP4": 200}.
     """
     path = Path(snp_file_path)
     lines = path.read_text().splitlines()
@@ -149,11 +187,9 @@ def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
 def individual_sexes_per_population(
     snp_file_path: str | Path,
 ) -> dict[str, list[str]]:
-    """Lit le sexe de chaque individu, regroupé par population, dans un
-    fichier .snp DIYABC au format 'IND SEX POP <génotypes...>'.
+    """Lit le sexe de chaque individu, regroupé par population.
 
-    Ex: pour toy_example5 -> {"pop1": ["M", "F", "F", ...], ...}
-
+    Fichier .snp DIYABC au format 'IND SEX POP <génotypes...>'.
     Valeurs telles quelles côté DIYABC (data.cpp:702-704) : "M", "F", ou
     "9" (sexe inconnu -- cas de human_snp_all22chr_maf5.snp, où les 120
     individus sont tous "9" puisque le dataset est <A>-only et ne
@@ -165,6 +201,13 @@ def individual_sexes_per_population(
     Même garantie d'ordre que count_samples_per_population : listes dans
     l'ordre d'apparition des individus dans le fichier, par population
     dans l'ordre de première apparition.
+
+    Args:
+        snp_file_path: Chemin du fichier .snp.
+
+    Returns:
+        Un dict {nom_population: [sexe, ...]}, ex: pour toy_example5 ->
+        {"pop1": ["M", "F", "F", ...], ...}.
     """
     path = Path(snp_file_path)
     lines = path.read_text().splitlines()
@@ -184,16 +227,21 @@ def individual_sexes_per_population(
 
 
 def parse_sex_ratio(snp_file_path: str | Path) -> float:
-    """Lit le sex-ratio déclaré en tête de fichier .snp DIYABC, au format
-    '<NM=xNF> ...' où x = nombre de mâles / nombre de femelles (ex:
-    '<NM=0.428571NF>' pour toy_example5).
+    """Lit le sex-ratio déclaré en tête de fichier .snp DIYABC.
 
-    Retourne sexratio = x / (1+x) (fraction de mâles), reproduisant
-    exactement DataC::readfile (data.cpp:475-486). Comme dans le C++,
-    retombe sur 0.5 si le token '<NM=' est absent de la première ligne --
-    et, contrairement à _find_header_index, ne cherche JAMAIS que la
-    ligne 0 : le C++ ne considère que la toute première ligne du fichier,
+    Format '<NM=xNF> ...' où x = nombre de mâles / nombre de femelles
+    (ex: '<NM=0.428571NF>' pour toy_example5). Reproduit exactement
+    DataC::readfile (data.cpp:475-486). Comme dans le C++, retombe sur
+    0.5 si le token '<NM=' est absent de la première ligne -- et,
+    contrairement à _find_header_index, ne cherche JAMAIS que la ligne
+    0 : le C++ ne considère que la toute première ligne du fichier,
     jamais 'IND SEX POP' elle-même.
+
+    Args:
+        snp_file_path: Chemin du fichier .snp.
+
+    Returns:
+        sexratio = x / (1+x) (fraction de mâles).
     """
     path = Path(snp_file_path)
     with path.open() as f:
@@ -209,16 +257,23 @@ def parse_sex_ratio(snp_file_path: str | Path) -> float:
 
 
 def parse_maf_ratio(snp_file_path: str | Path) -> float:
-    """Lit le MAF déclaré en tête de fichier .snp DIYABC, au format
-    '<MAF=xxx> ...' où xxx = MAF (ex: '<MAF=hudson>' ou '<MAF=0.05>').
+    """Lit le Minimum Allele Frequency (MAF) déclaré en tête de fichier .snp DIYABC.
 
-    Retourne le seuil MAF, reproduisant exactement DataC::readfile
-    (data.cpp:475-497) : 0.0 si le token '<MAF=' est absent de la première
-    ligne, ou si xxx n'est pas numérique (ex: 'hudson'), comme le ferait
-    atof() en C++ -- 0.0 veut dire "pas de filtre" (algorithme de Hudson
-    standard), jamais distingué du cas "MAF=0%" explicite, exactement comme
-    côté C++. Contrairement à _find_header_index, ne cherche JAMAIS que la
-    ligne 0 : le C++ ne considère que la toute première ligne du fichier.
+    Format '<MAF=xxx> ...' où xxx = MAF (ex: '<MAF=hudson>' ou
+    '<MAF=0.05>'). Reproduit exactement DataC::readfile
+    (data.cpp:475-497) : 0.0 si le token '<MAF=' est absent de la
+    première ligne, ou si xxx n'est pas numérique (ex: 'hudson'),
+    comme le ferait atof() en C++ -- 0.0 veut dire "pas de filtre"
+    (algorithme de Hudson standard), jamais distingué du cas "MAF=0%"
+    explicite, exactement comme côté C++. Contrairement à
+    _find_header_index, ne cherche JAMAIS que la ligne 0 : le C++ ne
+    considère que la toute première ligne du fichier.
+
+    Args:
+        snp_file_path: Chemin du fichier .snp.
+
+    Returns:
+        Le seuil MAF.
     """
 
     path = Path(snp_file_path)
@@ -238,13 +293,19 @@ def parse_maf_ratio(snp_file_path: str | Path) -> float:
 
 
 def parse_mrc_ratio(snp_file_path: str | Path) -> float:
-    """Lit le MRC déclaré en tête de fichier .snp DIYABC, au format
-    '<MRC=xxx> ...' où xxx = MRC ).
+    """Lit le Minimum Read Count (MRC) déclaré en tête de fichier .snp DIYABC.
 
-    Retourne le seuil MRC, reproduisant exactement DataC::readfile
-    (data.cpp:498-508) : 1 si le token '<MRC=' est absent de la première
-    ligne, ou si xxx n'est pas numérique (ex: 'hudson'), comme le ferait
-    atof() en C++ -- 1 veut dire "pas de filtre"
+    Format '<MRC=xxx> ...' où xxx = MRC. Reproduit exactement
+    DataC::readfile (data.cpp:498-508) : 1 si le token '<MRC=' est
+    absent de la première ligne, ou si xxx n'est pas numérique (ex:
+    'hudson'), comme le ferait atof() en C++ -- 1 veut dire "pas de
+    filtre".
+
+    Args:
+        snp_file_path: Chemin du fichier .snp.
+
+    Returns:
+        Le seuil MRC.
     """
 
     path = Path(snp_file_path)
@@ -264,43 +325,53 @@ def parse_mrc_ratio(snp_file_path: str | Path) -> float:
 
 
 def population_index_to_name(snp_file_path: str | Path) -> dict[int, str]:
-    """Construit le mapping entre l'indice de population utilisé dans
-    header.txt (1-indexed : pop1, pop2, ...) et le nom réel de population
-    tel qu'il apparaît dans le fichier .snp (ex: "ASW", "YRI"...).
+    """Construit le mapping entre l'indice de population de header.txt et son nom réel.
 
-    Ex: {1: "ASW", 2: "YRI", 3: "CHB", 4: "GBR"} pour human et {1: "POP1", 2: "POP2", 3: "POP3", 4: "POP4"} pour toy_example4.
+    header.txt est 1-indexed (pop1, pop2, ...) ; le nom réel est celui
+    qui apparaît dans le fichier .snp (ex: "ASW", "YRI"...). Voir la
+    docstring de count_samples_per_population pour la justification de
+    ce mapping par ordre d'apparition (header.txt ne nomme jamais les
+    populations).
 
-    Voir la docstring de count_samples_per_population pour la
-    justification de ce mapping par ordre d'apparition (header.txt ne
-    nomme jamais les populations).
+    Args:
+        snp_file_path: Chemin du fichier .snp.
+
+    Returns:
+        Un dict {indice_1based: nom_population}, ex: {1: "ASW",
+        2: "YRI", 3: "CHB", 4: "GBR"} pour human et {1: "POP1",
+        2: "POP2", 3: "POP3", 4: "POP4"} pour toy_example4.
     """
     names_in_order = list(count_samples_per_population(snp_file_path).keys())
     return {i + 1: name for i, name in enumerate(names_in_order)}
 
 
 def observed_mrc(reads_by_population: dict[str, tuple[int, int]]) -> float:
-    """Calcule le MRC observé pour un locus donné, à partir des lectures
-    observées par population (dictionnaire {nom_population: (nreads1,
-    nreads1+nreads2)}).
+    """Calcule le MRC observé pour un locus donné.
 
-    Retourne min(somme reads allèle1, somme reads allèle2) TOUTES
-    populations combinées, reproduisant exactement DataC::purgelocMRCPOOLSEQ
-    (data.cpp:1087-1093).
+    Reproduit exactement DataC::purgelocMRCPOOLSEQ (data.cpp:1087-1093).
+
+    Args:
+        reads_by_population: Dict {nom_population: (nreads1,
+            nreads1+nreads2)}.
+
+    Returns:
+        min(somme reads allèle1, somme reads allèle2) TOUTES
+        populations combinées.
     """
     sum_derived = sum(derived for derived, _ in reads_by_population.values())
     sum_total = sum(total for _, total in reads_by_population.values())
-    return min(sum_derived, sum_total - sum_derived) if sum_total > 0 else 0.0
+    mrc = min(sum_derived, sum_total - sum_derived) if sum_total > 0 else 0.0
+    return mrc
 
 
 def observed_reads(
     snp_file_path: str | Path, num_loci: int | None = None
 ) -> list[dict[str, tuple[int, int]]]:
-    """Lit les lignes de génotypes du fichier .snp DIYABC POOLSEQ, en ignorant
-    l'en-tête et les lignes vides. Retourne la liste des lignes de
-    comptage de reads (nreads1, nreads1 + nreads2) par population, dans l'ordre d'apparition des populations
-    dans le fichier. Chaque tuple contient le nombre de lectures pour l'allèle 1 et
-    le nombre total de lectures (allèle 1 + allèle 2) pour cette population.
-    On retourne une ligne de la forme POP1: (nreads1, nreads1 + nreads2), POP2: (nreads1, nreads1 + nreads2), ...
+    """Lit les lignes de génotypes du fichier .snp DIYABC POOLSEQ.
+
+    Ignore l'en-tête et les lignes vides. Chaque tuple contient le
+    nombre de lectures pour l'allèle 1 et le nombre total de lectures
+    (allèle 1 + allèle 2) pour cette population.
 
     Purge les loci sous le seuil MRC (`<MRC=N>`, via parse_mrc_ratio) --
     reproduit `DataC::purgelocMRCPOOLSEQ` (data.cpp), qui élimine ces
@@ -315,10 +386,22 @@ def observed_reads(
     de >1% par rapport au vrai statobs.txt de DIYABC sans cette purge,
     0/130 avec.
 
-    num_loci : si non None, limite le nombre de loci lus à ce nombre
-    (utile pour toy_example4, où on ne veut que les 100 premiers loci
-    passants le seuil MRC, pour reproduire exactement le statobs.txt de
-    DIYABC). Si None, lit tous les loci du fichier.
+    Args:
+        snp_file_path: Chemin du fichier .snp (doit être POOLSEQ).
+        num_loci: Si non None, limite le nombre de loci lus à ce
+            nombre (utile pour toy_example4, où on ne veut que les 100
+            premiers loci passants le seuil MRC, pour reproduire
+            exactement le statobs.txt de DIYABC). Si None, lit tous
+            les loci du fichier.
+
+    Returns:
+        La liste des lignes de comptage de reads par population, dans
+        l'ordre d'apparition des populations dans le fichier -- chaque
+        ligne de la forme {"POP1": (nreads1, nreads1+nreads2),
+        "POP2": (nreads1, nreads1+nreads2), ...}.
+
+    Raises:
+        ValueError: Si le fichier n'est pas au format POOLSEQ.
     """
     if detect_snp_file_type(snp_file_path) != "POOL":
         raise ValueError(
@@ -357,16 +440,13 @@ def observed_reads(
 
 
 def coalescence_coefficient(locus_type: str, sex_ratio: float) -> float:
-    """Reproduit DataC::cal_coeffcoal (data.cpp:1589-1605) : le
+    """Calcule le coefficient de coalescence en fonction du type d'héritage.
+
+    Reproduit DataC::cal_coeffcoal (data.cpp:1589-1605) : le
     coefficient qui rescale N (taille de population, prior déclaré dans
     header.txt) dans la formule de temps de coalescence
     (particuleC.cpp:1340 : temps -= coeffcoal * N / n / (n-1) * log(ra)),
     en fonction du type d'héritage du locus et du sex-ratio du dataset.
-
-    locus_type : vocabulaire de LociDescription.loci_counts_by_heritage ("A", "H",
-    "X", "Y" ou "M" -- voir loci_parser.py), PAS "<A>" avec les chevrons.
-    sex_ratio : fraction de mâles, telle que retournée par
-    parse_sex_ratio (0.5 = sex-ratio équilibré).
 
     À l'appel avec n=2 (une paire de lignées), coeffcoal*N/2 donne le
     nombre EFFECTIF de copies de gène dans la population pour ce type de
@@ -374,6 +454,20 @@ def coalescence_coefficient(locus_type: str, sex_ratio: float) -> float:
     1.5N (3/4 de 2N), <Y>/<M> -> 0.5N chacun (1/4 de 2N). Cette fonction
     ne fait PAS cette conversion : elle retourne coeffcoal brut, comme le
     C++, pour rester directement comparable à cal_coeffcoal.
+
+    Args:
+        locus_type: Vocabulaire de
+            LociDescription.loci_counts_by_heritage ("A", "H", "X",
+            "Y" ou "M" -- voir loci_parser.py), PAS "<A>" avec les
+            chevrons.
+        sex_ratio: Fraction de mâles, telle que retournée par
+            parse_sex_ratio (0.5 = sex-ratio équilibré).
+
+    Returns:
+        Le coefficient coeffcoal brut.
+
+    Raises:
+        NotImplementedError: Si locus_type est inconnu.
     """
 
     if locus_type == "A":
@@ -393,16 +487,35 @@ def coalescence_coefficient(locus_type: str, sex_ratio: float) -> float:
         )
 
 
+# --------------------------------------------------------------
 # Parsing des séquences ADN observées
+# --------------------------------------------------------------
 
 
 def observed_sequences(
     mss_file_path: str | Path, list_loci: list[LociDescriptionDetailed]
 ) -> dict[str, list[str]]:
-    """Lit les séquences ADN observées dans un fichier .mss
-    Retourne un dictionnaire avec le nom du locus comme clé et une liste de séquences
-    comme valeur. Chaque séquence est une chaîne de caractères représentant
-    les bases nucléotidiques (A, C, G, T, N ou -) pour chaque individu ou pool.
+    """Lit les séquences ADN observées dans un fichier .mss.
+
+    Args:
+        mss_file_path: Chemin du fichier .mss.
+        list_loci: La description détaillée des loci (voir
+            loci_parser.parse_loci_description), utilisée pour
+            distinguer les loci séquentiels ([S]) des loci
+            microsatellites ([M]) et pour nommer les entrées du
+            dictionnaire retourné.
+
+    Returns:
+        Un dict {nom_locus: [séquence, ...]}. Chaque séquence est une
+        chaîne de caractères représentant les bases nucléotidiques (A,
+        C, G, T, N ou -) pour chaque individu ou pool -- un locus
+        diploïde (<A>) produit 2 entrées par individu, un locus
+        haploïde (<M>) en produit 1.
+
+    Raises:
+        ValueError: Si le fichier ne contient aucune ligne 'POP', ou
+            si le nombre de séquences observées sur une ligne ne
+            correspond pas au nombre de loci séquentiels attendu.
     """
     lines = Path(mss_file_path).read_text().splitlines()
 
@@ -444,7 +557,15 @@ def observed_sequences(
 
 def observed_count_population(mss_file_path: str | Path) -> dict[str, int]:
     """Compte le nombre d'individus par population dans un fichier .mss.
-    Retourne un dictionnaire avec les noms des populations comme clés et les nombres d'individus comme valeurs.
+
+    Args:
+        mss_file_path: Chemin du fichier .mss.
+
+    Returns:
+        Un dict {"pop1": effectif, "pop2": effectif, ...}.
+
+    Raises:
+        ValueError: Si le fichier ne contient aucune ligne 'POP'.
     """
     lines = Path(mss_file_path).read_text().splitlines()
 
@@ -470,9 +591,19 @@ def observed_count_population(mss_file_path: str | Path) -> dict[str, int]:
 def base_frequency_by_locus(
     sequences_by_locus: dict[str, list[str]],
 ) -> dict[str, dict[str, float]]:
-    """Calcule la fréquence des séquences observées par locus, à partir du
-    dictionnaire {nom_locus: [séquence1, séquence2, ...]} retourné par
-    observed_sequences. Retourne un dictionnaire {nom_locus: Counter({séquence: fréquence})}.
+    """Calcule la fréquence des bases observées par locus.
+
+    Args:
+        sequences_by_locus: Dict {nom_locus: [séquence, ...]} tel que
+            retourné par observed_sequences.
+
+    Returns:
+        Un dict {nom_locus: {"pi_A": ..., "pi_C": ..., "pi_G": ...,
+        "pi_T": ...}}.
+
+    Raises:
+        ValueError: Si une séquence contient une base inattendue
+            (autre que A, C, G, T, N ou -).
     """
     base_frequencies_by_locus: dict[str, dict[str, float]] = {}
     for locus_name in sequences_by_locus:
