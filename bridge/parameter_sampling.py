@@ -71,29 +71,27 @@ def _draw_one_value(prior: Prior, rng: random.Random) -> float:
     """Tire une valeur pour un prior donné, selon sa loi et ses bornes.
     Lève NotImplementedError si la loi n'est pas encore implémentée.
     """
-    if prior.bounds[0] == prior.bounds[1]:
+    if prior.min == prior.max:
         # bornes identiques : pas de tirage, valeur fixée
-        value = float(prior.bounds[0])
+        value = float(prior.min)
     elif prior.law == "UN":  # uniform
-        min_, max_, *_ = prior.bounds
-        value = rng.uniform(min_, max_)
+        value = rng.uniform(prior.min, prior.max)
     elif prior.law == "LU":  # log-uniform
-        min_, max_, *_ = prior.bounds
-        value = math.exp(rng.uniform(math.log(min_), math.log(max_)))
+        value = math.exp(rng.uniform(math.log(prior.min), math.log(prior.max)))
     elif prior.law == "NO":  # normal
-        min_, max_, mean, sdshape = prior.bounds
+        min_, max_, mean, sdshape = prior.min, prior.max, prior.mean, prior.sdshape
         while True:
             value = rng.gauss(mean, sdshape)
             if min_ <= value <= max_:
                 break
     elif prior.law == "LN":  # log-gaussian
-        min_, max_, mean, sdshape = prior.bounds
+        min_, max_, mean, sdshape = prior.min, prior.max, prior.mean, prior.sdshape
         while True:
             value = math.exp(rng.gauss(math.log(mean), math.log(sdshape)))
             if min_ <= value <= max_:
                 break
     elif prior.law == "GA":  # gamma
-        min_, max_, mean, sdshape = prior.bounds
+        min_, max_, mean, sdshape = prior.min, prior.max, prior.mean, prior.sdshape
         if mean < 1e-12:
             value = 0.0
         elif sdshape < 1e-12:
@@ -148,12 +146,14 @@ def _draw_one_group_value(group_prior: GroupPrior, rng: random.Random) -> float:
             f"Le group prior {group_prior.name!r} a une loi GA mais pas de moyenne associée."
             f"Il faut d'abord tirer la valeau du prior SDSHAPE correspondant du même groupe"
         )
-    bounds = [group_prior.min, group_prior.max, group_prior.mean, group_prior.sdshape]
     prior = Prior(
         name=group_prior.name,
         category="G",  # catégorie fictive pour les group priors
         law=group_prior.law,
-        bounds=bounds,
+        min=group_prior.min,
+        max=group_prior.max,
+        mean=group_prior.mean,
+        sdshape=group_prior.sdshape,
     )
     return _draw_one_value(prior, rng)
 

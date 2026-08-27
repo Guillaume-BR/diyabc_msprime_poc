@@ -64,8 +64,18 @@ def parse_priors(header_text: str) -> tuple[list[Prior], list[OrderConstraint]]:
         prior_match = _PRIOR_LINE_RE.match(line)
         if prior_match:
             name, category, law, bounds_str = prior_match.groups()
-            bounds = tuple(float(b) for b in bounds_str.split(","))
-            priors.append(Prior(name=name, category=category, law=law, bounds=bounds))
+            min_, max_, mean, sdshape = (float(b) for b in bounds_str.split(","))
+            priors.append(
+                Prior(
+                    name=name,
+                    category=category,
+                    law=law,
+                    min=min_,
+                    max=max_,
+                    mean=mean,
+                    sdshape=sdshape,
+                )
+            )
             continue
 
         constraint_match = _CONSTRAINT_LINE_RE.match(line)
@@ -207,12 +217,8 @@ def is_constant_prior(prior: Prior) -> bool:
                          (évite une division par zéro -- comportement de
                          readReftable.R, où le test est dans un bloc
                          "if (maxi != 0.0)").
-
-    Ne gère que les priors avec au moins 2 bornes numériques (suffisant
-    pour UN/LU/GA, les seules lois rencontrées jusqu'ici -- bounds[0] et
-    bounds[1] sont systématiquement min et max dans header.txt).
     """
-    mini, maxi = prior.bounds[0], prior.bounds[1]
+    mini, maxi = prior.min, prior.max
     if maxi == 0.0:
         return False
     return (maxi - mini) / maxi <= 0.000001

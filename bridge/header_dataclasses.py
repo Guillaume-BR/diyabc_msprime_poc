@@ -52,19 +52,29 @@ class Prior:
     """Une ligne de la section 'historical parameters priors' de header.txt.
 
     Ex: 'N1 N UN[1000.0,100000.0,0.0,0.0]' devient
-    Prior(name="N1", category="N", law="UN", bounds=(1000.0, 100000.0, 0.0, 0.0)).
+    Prior(name="N1", category="N", law="UN", min=1000.0, max=100000.0,
+    mean=0.0, sdshape=0.0).
 
     Attributes:
         name: Nom du paramètre (ex: "N1").
         category: "N" (taille), "T" (temps) ou "A" (taux admixture).
-        law: Loi de tirage ("UN", "LU", "GA"...).
-        bounds: Bornes/paramètres de la loi, dans l'ordre du header.
+        law: Loi de tirage ("UN", "LU", "NO", "LN" ou "GA").
+        min: Borne basse.
+        max: Borne haute.
+        mean: Moyenne, utilisée seulement par "NO"/"LN"/"GA" (0.0 et non
+            lu sinon).
+        sdshape: Écart-type ("NO") ou paramètre de forme de la
+            reparamétrisation gamma ("LN"/"GA"), utilisé seulement par
+            "NO"/"LN"/"GA" (0.0 et non lu sinon).
     """
 
     name: str
     category: str
     law: str
-    bounds: tuple[float, ...]
+    min: float
+    max: float
+    mean: float
+    sdshape: float
 
 
 @dataclass

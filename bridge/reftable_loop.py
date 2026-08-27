@@ -333,7 +333,7 @@ def parse_real_reftable_params_with_group_priors(
     constant, contrairement à `nparam` qui varie par scénario). Appeler
     `_kept_param_names_by_scenario(group_priors_names, scenarios)` ici
     serait doublement faux : elle attend des objets `Prior` (pas des
-    strings -- `is_constant_prior` plante sur `.bounds`), et son filtre
+    strings -- `is_constant_prior` plante sur `.min`/`.max`), et son filtre
     `get_parameter_names_used_by_scenario` ne reconnaît de toute façon
     que des noms de paramètres historiques, jamais de priors de groupe.
 
