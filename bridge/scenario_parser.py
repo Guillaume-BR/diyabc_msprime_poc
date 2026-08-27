@@ -1,9 +1,7 @@
-"""
-Parseur du texte de header.txt vers les structures définies dans
-header_dataclasses.py.
+"""Parseur de header.txt vers les dataclasses de header_dataclasses.py.
 
 Aucune valeur numérique n'est calculée ici (voir header_dataclasses.py pour
-la justification). Ce module ne fait que de la transcription texte -> objets.
+la justification) -- ce module ne fait que de la transcription texte -> objets.
 
 Vocabulaire géré : sample, merge, varNe, split (admixture) -- couvre les
 6 scénarios du dataset human. Voir SplitEvent (header_dataclasses.py) pour la
@@ -26,10 +24,21 @@ _SCENARIO_HEADER_RE = re.compile(r"^scenario\s+(\d+)\s+\[([\d.]+)\]\s+\((\d+)\)\
 
 
 def split_scenario_blocks(header_text: str) -> list[str]:
-    """Découpe le texte complet de header.txt en blocs bruts, un par
-    scénario, chaque bloc commençant par sa ligne d'en-tête
-    'scenario N [poids] (nlignes)' et s'arrêtant juste avant le bloc suivant
-    (ou la fin de la section, ex: 'historical parameters priors')."""
+    """Découpe header.txt en blocs bruts, un par scénario.
+
+    Chaque bloc commence par sa ligne d'en-tête
+    'scenario N [poids] (nlignes)' et s'arrête juste avant le bloc suivant
+    (ou la fin de la section, ex: 'historical parameters priors').
+
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Returns:
+        Un bloc brut par scénario, dans l'ordre du fichier.
+
+    Raises:
+        ValueError: Si aucun bloc 'scenario N [...] (...)' n'est trouvé.
+    """
     lines = header_text.splitlines()
 
     # Repère les lignes d'index où démarre chaque scénario
@@ -63,8 +72,20 @@ def split_scenario_blocks(header_text: str) -> list[str]:
 
 
 def parse_scenario_block(block_text: str) -> Scenario:
-    """Transforme un bloc brut (en commençant par la ligne 'scenario N [...]')
-    en objet Scenario rempli."""
+    """Transforme un bloc brut en objet Scenario rempli.
+
+    Args:
+        block_text: Bloc brut, en commençant par la ligne 'scenario N [...]'.
+
+    Returns:
+        Le Scenario correspondant.
+
+    Raises:
+        ValueError: Si la première ligne n'est pas un en-tête de scénario
+            valide ('scenario N [poids] (nlignes)').
+        NotImplementedError: Propagée par _parse_event_line si une ligne
+            d'événement utilise un mot-clé non géré.
+    """
     lines = [line.strip() for line in block_text.splitlines() if line.strip()]
 
     header_match = _SCENARIO_HEADER_RE.match(lines[0])
@@ -91,10 +112,22 @@ def parse_scenario_block(block_text: str) -> Scenario:
 
 
 def _parse_event_line(line: str):
-    """Transforme une ligne d'événement, ex: 't1 merge 2 1', en
-    SampleEvent / MergeEventn_pops / VarNeEvent selon le mot-clé rencontré.
+    """Transforme une ligne d'événement en objet Event correspondant.
 
-    Vocabulaire de référence : src-JMC-C++/history.cpp (ScenarioC::read_events).
+    Ex: 't1 merge 2 1' -> MergeEvent(time_expr="t1", ancestral_pop=2,
+    derived_pop=1). Vocabulaire de référence : src-JMC-C++/history.cpp
+    (ScenarioC::read_events).
+
+    Args:
+        line: Une ligne d'événement du bloc scénario (ex: 't1 merge 2 1').
+
+    Returns:
+        Un SampleEvent, MergeEvent, VarNeEvent ou SplitEvent selon le
+        mot-clé rencontré.
+
+    Raises:
+        NotImplementedError: Si le mot-clé d'action n'est pas dans
+            sample/merge/varNe/split.
     """
     tokens = line.split()
     time_expr, action = tokens[0], tokens[1]
@@ -144,9 +177,16 @@ def _parse_event_line(line: str):
 def parse_header_scenarios(header_text: str) -> list[Scenario]:
     """Point d'entrée principal : header.txt complet -> liste de Scenario.
 
-    Important : seule l'exception NotImplementedError est avalée ici,
-    volontairement. Toute autre exception (erreur de parsing réelle, bug)
-    doit continuer à se propager normalement.
+    Important : seule NotImplementedError est avalée ici, volontairement
+    (le bloc est ignoré avec un warning) -- toute autre exception (erreur
+    de parsing réelle, bug) continue de se propager normalement.
+
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Returns:
+        Les Scenario parsés avec succès. Un bloc dont le vocabulaire n'est
+        pas géré est silencieusement ignoré (warning émis), pas levé.
     """
     blocks = split_scenario_blocks(header_text)
     scenarios = []

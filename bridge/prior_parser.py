@@ -21,8 +21,17 @@ _CONSTRAINT_LINE_RE = re.compile(r"^(\S+?)(>=|<=|>|<)(\S+)$")
 
 
 def _extract_historical_priors_section(header_text: str) -> list[str]:
-    """Extrait la section 'historical parameters priors' du texte complet de header.txt,
-    et retourne la liste des lignes de cette section (sans les lignes vides)."""
+    """Extrait les lignes de la section 'historical parameters priors'.
+
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Returns:
+        Les lignes de la section, sans les lignes vides.
+
+    Raises:
+        ValueError: Si la section ou sa fin est introuvable.
+    """
     lines = header_text.splitlines()
 
     start = next(
@@ -53,9 +62,16 @@ def _extract_historical_priors_section(header_text: str) -> list[str]:
 def parse_priors(header_text: str) -> tuple[list[Prior], list[OrderConstraint]]:
     """Extrait les priors et les contraintes d'ordre de header.txt.
 
-    Retourne (priors, constraints). Une ligne qui ne correspond à aucun
-    des deux formats connus lève une erreur explicite plutôt que d'être
-    silencieusement ignorée.
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Returns:
+        Un tuple (priors, constraints).
+
+    Raises:
+        ValueError: Si une ligne de la section ne correspond à aucun des
+            deux formats connus (prior ou contrainte) -- pas d'ignorance
+            silencieuse.
     """
     priors: list[Prior] = []
     constraints: list[OrderConstraint] = []
@@ -91,9 +107,44 @@ def parse_priors(header_text: str) -> tuple[list[Prior], list[OrderConstraint]]:
     return priors, constraints
 
 
+def is_constant_prior(prior: Prior) -> bool:
+    """Détecte si un prior est quasi-dégénéré (min ≈ max), donc en
+    pratique une constante déguisée en prior -- DIYABC exclut ces
+    paramètres des colonnes du reftable.bin (vérifié indépendamment dans
+    readReftable.R et abcranger/readreftable.cpp, voir notes/
+    exploration.md et docs/synthese_diyabc_msprime.docx section 5.2).
+
+    Règle exacte (reproduite des deux sources ci-dessus) :
+        si maxi != 0.0 : constant si (maxi-mini)/maxi <= 0.000001
+        si maxi == 0.0 : jamais considéré comme constant par cette règle
+                         (évite une division par zéro -- comportement de
+                         readReftable.R, où le test est dans un bloc
+                         "if (maxi != 0.0)").
+
+    Args:
+        prior: Le prior à tester.
+
+    Returns:
+        True si le prior est quasi-constant selon la règle ci-dessus.
+    """
+    mini, maxi = prior.min, prior.max
+    if maxi == 0.0:
+        return False
+    return (maxi - mini) / maxi <= 0.000001
+
+
 def _extract_priors_group_section(header_text: str) -> list[str]:
-    """Extrait la section 'group priors' du texte complet de header.txt,
-    et retourne la liste des lignes de cette section (sans les lignes vides)."""
+    """Extrait les lignes de la section 'group priors'.
+
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Returns:
+        Les lignes de la section, sans les lignes vides.
+
+    Raises:
+        ValueError: Si la section ou sa fin est introuvable.
+    """
     lines = header_text.splitlines()
 
     g_start = (
@@ -115,13 +166,23 @@ def _extract_priors_group_section(header_text: str) -> list[str]:
 
 
 def parse_group_priors(header_text: str) -> dict[str, list[GroupPrior]]:
-    """Extrait les priors et model des différents group priors de header.txt.
+    """Extrait les priors et models des différents group priors de header.txt.
 
-    Retourne un dictionnaire {group_name: [GroupPrior, ...], ...}.
-    Une ligne est soit une loi de prior, soit un model.
-    On pourra envisager de mettre un test plus robuste sur le format de la ligne de model,
-    mais pour l'instant on se contente de supposer que si la ligne n'est pas une loi de prior.
-    Possibilité d'erreur silencieuse !!
+    Une ligne est soit une loi de prior, soit un model : si elle ne
+    correspond pas au format d'une loi, elle est supposée être un model,
+    sans validation positive du format 'MODEL ...' -- une ligne réellement
+    malformée serait donc mal interprétée silencieusement plutôt que de
+    lever une erreur claire (gap connu, pas encore corrigé).
+
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Returns:
+        {nom_de_groupe: [GroupPrior, ...], ...}.
+
+    Raises:
+        ValueError: Si une ligne 'group ...' est malformée, ou si une
+            ligne de prior/model apparaît avant toute ligne 'group'.
     """
     group_priors: dict[str, list[GroupPrior]] = {}
 
@@ -204,31 +265,21 @@ def parse_group_priors(header_text: str) -> dict[str, list[GroupPrior]]:
     return group_priors
 
 
-def is_constant_prior(prior: Prior) -> bool:
-    """Détecte si un prior est quasi-dégénéré (min ≈ max), donc en
-    pratique une constante déguisée en prior -- DIYABC exclut ces
-    paramètres des colonnes du reftable.bin (vérifié indépendamment dans
-    readReftable.R et abcranger/readreftable.cpp, voir notes/
-    exploration.md et docs/synthese_diyabc_msprime.docx section 5.2).
-
-    Règle exacte (reproduite des deux sources ci-dessus) :
-        si maxi != 0.0 : constant si (maxi-mini)/maxi <= 0.000001
-        si maxi == 0.0 : jamais considéré comme constant par cette règle
-                         (évite une division par zéro -- comportement de
-                         readReftable.R, où le test est dans un bloc
-                         "if (maxi != 0.0)").
-    """
-    mini, maxi = prior.min, prior.max
-    if maxi == 0.0:
-        return False
-    return (maxi - mini) / maxi <= 0.000001
-
-
 def get_parameter_used_by_model(group_prior: GroupPrior) -> tuple[bool, bool]:
-    """Détermine les paramètres actifs dans le modèle mutaionnel dans le cas de séquences d'ADN
-    Retourne un tuple (bool, bool) : (transition/transversion ratio, proportion de sites invariables)
-    Pour JK, les deux paramètres sont inactifs (False, False), pour K2P et HKY, seul k1 est actif (True, False),
-    pour TN, les deux paramètres k1, k2 sont actifs (True, True)
+    """Détermine les paramètres k1/k2 actifs pour un modèle mutationnel ADN.
+
+    JK -> aucun des deux actif, K2P/HKY -> k1 seul, TN -> les deux.
+
+    Args:
+        group_prior: Un GroupPrior de type model (group_prior.model is True).
+
+    Returns:
+        (k1_used, k2_used).
+
+    Raises:
+        NotImplementedError: Si group_prior n'est pas un model, si
+            name_model est absent, ou si le modèle n'est pas géré
+            (JK/K2P/HKY/TN).
     """
     if not group_prior.model:
         raise NotImplementedError(
@@ -246,5 +297,5 @@ def get_parameter_used_by_model(group_prior: GroupPrior) -> tuple[bool, bool]:
         return (True, True)
     else:
         raise NotImplementedError(
-            f"Le modèle mutaionnel {group_prior.name_model} n'est pas encore implémenté"
+            f"Le modèle mutationnel {group_prior.name_model} n'est pas encore implémenté"
         )
