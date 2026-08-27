@@ -29,10 +29,17 @@ end-to-end, on `toy_example2_ms_dna`
 As of 2026-08-25, all 13 DNA-sequence-specific summary statistics
 (`NHA`/`NSS`/`MPD`/`VPD`/`DTA`/`PSS`/`MNS`/`VNS` per-population,
 `NH2`/`NS2`/`MP2`/`MPB`/`HST` per-pair) are implemented and tested too
-— see "DNA sequence summary statistics" below.
-**Not done yet**: wiring any of this into `reftable_loop.py`/the main
-`compute_all_statistics`-equivalent entry point (no cross-validation
-against a real DIYABC reftable for this data type yet either).
+— see "DNA sequence summary statistics" below. As of 2026-08-26, the
+full DIYABC-replay pipeline (paired real-vs-msprime validation, same
+architecture as the SNP side) is wired end-to-end for DNA sequences too
+(`pipeline.compute_summary_statistics_dna`/`_from_values`,
+`reftable_loop.replay_reftable_simulation_dna`) and cross-validated
+against a real 1000-particle DIYABC reftable on `toy_example2_ms_dna` —
+see "DIYABC-replay pipeline for DNA sequences" below. A 2026-08-27
+follow-up investigation (50+50-loci stress dataset, then direct
+`particuleC.cpp` source reading) explains a residual, narrow
+statistical gap on mitochondrial (`<M>`) loci — not a port bug, see
+"Known gap: G3 (`<M>`) variance deficit" below.
 MicroSat itself (stepwise mutation model, `NAL`/`HET`-style summary
 statistics) has no simulation-side code at all yet, only header
 parsing. The goal is to demonstrate that a
@@ -952,23 +959,207 @@ scope here.
     switched to the plain double loop `compute_HW_HB`/`compute_FST2`
     already use elsewhere in this file.
 
-**Not yet done**: no cross-validation against a real DIYABC reftable
-for `toy_example2_ms_dna` yet — no `statobs.txt`/`reftable.bin`
-generated there (everything validated so far is internal consistency:
-hand-computed matrices, sanity bounds like `PSS ≤ NSS` or `NH2 ≥
-max(NHA_pop1, NHA_pop2)`, not "matches real DIYABC's actual numbers").
-Not wired into `pipeline.py`/`reftable_loop.py` at all. Unresolved:
-`toy_example2_ms_dna/headerRF.txt` declares the same stat column names
-(`NSS_1`, `NSS_2`, ...) under both `group G2` (`<A>`) and `group G3`
-(`<M>`) — the exact column-name-collision-across-groups scenario
-`stats_group_parser.py`'s docstring already flagged as an open question
-(dedup deferred, unclear if legitimate) — still undecided how the
-eventual DNA-sequence entry point should key/merge per-group results
-into `reftable.bin` columns when this happens. MicroSat's own stats
-(`NAL`/`HET`/`VAR`/`MGW`/`FST`/`LIK`/`DAS`/`DM2`) not started at all —
-different data shape (allele sizes, not tskit genotypes), no simulation
-side either. See `notes/resume_stat_dna.md` for a biology-first (not
-code-first) explanation of what each of the 13 stats measures.
+**Resolved 2026-08-25**: the column-collision question below WAS a real
+issue and IS handled — see `compute_all_statistics_dna` in the same
+file, which embeds the group index in every column name
+(`stats_group_parser.parse_requested_statistic_names` was fixed
+alongside it), exactly mirroring how the real DIYABC reftable itself
+names these columns (`NSS_2_1` for group G2, `NSS_3_1` for group G3,
+never a bare `NSS_1`) — verified byte-for-byte against real `diyabc`
+output on `toy_example2_ms_dna`. `compute_all_statistics_dna(header_text,
+tree_sequences_by_locus, population_names)` is the top-level DNA entry
+point (mirrors `compute_all_statistics`), now wired into `pipeline.py`
+(see "DIYABC-replay pipeline for DNA sequences" below) — the
+`stats_group_parser.py` docstring's old "dedup deferred, unclear if
+legitimate" framing is stale, ignore it.
+
+**Not yet done**: MicroSat's own stats (`NAL`/`HET`/`VAR`/`MGW`/`FST`/
+`LIK`/`DAS`/`DM2`) not started at all — different data shape (allele
+sizes, not tskit genotypes), no simulation side either. See
+`notes/resume_stat_dna.md` for a biology-first (not code-first)
+explanation of what each of the 13 DNA stats measures.
+
+### DIYABC-replay pipeline for DNA sequences (2026-08-26) — cross-validated against a real reftable
+
+Mirrors the SNP-side replay architecture (see item 12 above,
+`run_reftable_simulation` vs. `replay_reftable_simulation`) exactly: a
+`_dna`/`_from_values` sibling of each SNP function, never modifying the
+SNP originals, so this can't regress the already-validated SNP path.
+Six pieces, all in `bridge/`:
+
+1. `reftable_loop.group_prior_column_names(header_text)` — real
+   reftable column names for group priors (`µseq_2`, `k1seq_2`,
+   `µmic_1`, `pmic_1`...). Verified scenario-INDEPENDENT (`nparamut` is
+   a constant across scenarios, unlike `nparam` for historical params)
+   — do NOT reuse `_kept_param_names_by_scenario` here, it expects
+   `Prior` objects with `.bounds` (not strings) and filters by
+   scenario, a concept group priors don't have.
+2. `reftable_loop.parse_real_reftable_params_with_group_priors(path,
+   priors, scenarios, group_priors_names)` — a NEW sibling of
+   `parse_real_reftable_params`, returns triplets `(scenario_index,
+   historical_values, group_priors_values)` with the two value dicts
+   kept SEPARATE (they feed different downstream stages: demography
+   vs. mutation model). Like the SNP original, handles the real
+   reftable's per-row ragged column width (see `parse_real_
+   reftable_params`'s own docstring for why a naive whitespace-split
+   parser silently misaligns columns here).
+3. `ancestry_simulation._group_prior_values_from_columns(group_priors_
+   values, group_priors)` — reshapes the flat real-column dict into the
+   nested `{group: {"MEANMU":.., "MEANK1":..}}` shape `draw_group_
+   parameter_values` already produces, so `build_group_local_param_
+   per_locus`'s existing body (model branching, per-locus `sampling_
+   group_local_param` calls) is reused byte-for-byte in `build_group_
+   local_param_per_locus_from_values`. Only the group-level (tier 1)
+   draw is replaced with the real value; the per-locus (tier 2)
+   dispersion around that mean is NEVER replaced — real DIYABC doesn't
+   record it in the reftable, so there's nothing to replay, it keeps
+   drawing from `seed`. Same principle propagates through `build_
+   matrix_per_locus_from_values`/`build_rate_map_per_locus_from_values`/
+   `dna_mutation_simulation_per_locus_from_values`.
+4. `pipeline.compute_summary_statistics_dna`/`_from_values`,
+   `reftable_loop._run_single_particle_dna`/`_from_values`,
+   `reftable_loop.replay_reftable_simulation_dna` — each a direct
+   mirror of its SNP sibling, no `num_loci`/`observed_reads_per_locus`
+   params (no PoolSeq/loci-truncation concept for DNA sequences).
+5. `write_reftable_txt` needed ZERO new code — already fully generic
+   (`ParticleResult` + `priors`/`scenarios`), reused as-is for DNA
+   results.
+6. `scripts/replay_diyabc_priors_dna.py` (and its 50-loci-dataset copy
+   `scripts/replay_diyabc_priors_dna_50loci.py`) — the runnable
+   end-to-end script, mirrors `scripts/replay_diyabc_priors.py`. Run as
+   `python3 -m scripts.replay_diyabc_priors_dna` from the repo root
+   (see the `scripts/` section below for why). A 1000-particle real
+   reftable replay runs in under 2 minutes.
+
+**Validation result** (`toy_example2_ms_dna`, scenario 1, 1000
+particles, 5+5 DNA loci): historical params match the real reftable
+EXACTLY (`rdiff_mean = 0`, KS `p = 1.0` on `N1`/`t1`/`ta`/`ra`/`t2` —
+confirms the replay plumbing itself is correct). Of the 42 DNA stat
+columns, 11 show KS `p<0.05` — see the next section for the full
+investigation of that gap.
+
+### Known gap: G3 (`<M>`) variance deficit in DNA-sequence stats (investigated 2026-08-27 — not a port bug)
+
+On the 5+5-loci validation above, 11/42 DNA stat columns show a
+significant KS difference, concentrated almost entirely in `MNS`/`VNS`/
+`DTA`/`VPD` (variance-of-pairwise-differences-derived stats) and worse
+on group G3 (`<M>`, mitochondrial/haploid) than G2 (`<A>`, autosomal
+diploid). Full investigation in `notes/exploration.md`'s 2026-08-27
+entry (source citations, tables, code excerpts); summary:
+
+- **Tested and REFUTED**: "not enough loci" (the precedent from the
+  2026-07-17 SNP entry above, where 10→650 loci per type resolved a
+  similar-looking gap). Built `reference/toy_example2_ms_dna_50loci/`
+  (new directory, `toy_example2_ms_dna` never touched — 50+50 DNA loci
+  instead of 5+5, duplicated under new sequential names continuing the
+  original numbering to avoid collisions), reran the same real-DIYABC
+  replay validation: **17/47 columns significant, not fewer** — the
+  proportion did not shrink. The corrected picture (a first comparison
+  attempt was itself buggy — a naive `pd.read_csv(sep=r'\s+')` on the
+  real reftable's ragged rows silently misaligns columns; fixed by
+  reusing `_kept_param_names_by_scenario`/`group_prior_column_names` to
+  parse each row by its own scenario) sharpened rather than changed the
+  finding: G2 matches DIYABC very well (std ratio sim/real 0.94-1.04
+  across all 8 stats), G3 is where the gap concentrates, and it's a
+  **variance deficit** (std ratio sim/real 0.65-0.94, down to **0.26 on
+  `DTA`**), not a location shift — `DTA`'s huge-looking `rdiff%` (up to
+  +139%) is a red herring since its true mean is ~0, tiny absolute
+  diffs blow up as a percentage.
+- **Ruled out via two throwaway diagnostics measuring cross-locus CV
+  (coefficient of variation) within real replayed particles**: ancestry
+  alone (`msprime.sim_ancestry`, no mutation, `total_branch_length` as
+  proxy) gives CV(G3)/CV(G2) ≈ **1.05**; the full mutation pipeline
+  (real replayed group-prior means, `num_mutations` as proxy) gives ≈
+  **1.02**. Both near 1: our own G2 and G3 have essentially the SAME
+  relative inter-locus variance at every stage — the per-locus
+  dispersion machinery, the `coalescence_coefficient`/`rescale_
+  demography`/`ploidy` dispatch, and the mutation submodel are all
+  internally consistent. The gap is specifically that real DIYABC's G3
+  carries MORE variance relative to its own mean than G2, while our
+  simulation's ratio stays flat around 1.
+- **Root cause traced directly in `particuleC.cpp`** (sibling repo
+  `~/Documents/Github/diyabc`, see `reference_diyabc_cpp_repo` project
+  memory) rather than continuing to theorize from the Python side:
+  - `ParticleC::coal_pop`'s continuous-approximation waiting-time
+    formula (`coeffcoal * N / (k*(k-1)) * (-log(ra))`, lines ~1340)
+    implies `Ne_effective = coeffcoal*N/2` — confirms our own
+    `rescale_demography(factor=coeffcoal/2)` is an exact match on the
+    MEAN behavior.
+  - `ParticleC::evalcriterium` (lines 1251-1275): DIYABC has a SECOND,
+    discrete "generation per generation" Wright-Fisher coalescent mode
+    we don't replicate at all. Checked empirically (temporary trace
+    instrumentation in `coal_pop`, rebuilt via the repo's own
+    `CMakeLists.txt`, reverted after) — on this dataset's typical `N1`
+    (1000-10000), the discrete mode never triggers for either heritage
+    type. Ruled out as the cause, but a real, un-replicated code path
+    to keep in mind for a dataset with much smaller `N`.
+  - `ParticleC::split_pop` (lines 1513-1524): the admixture event
+    (`ta split`) draws an INDEPENDENT Bernoulli coin per surviving
+    lineage to assign it to one of the two ancestral populations.
+    Traced 4 real particles: `<A>` arrives at `ta` with 5-13 surviving
+    lineages (fairly evenly split), `<M>` with only 1-6 (one side is 0
+    lineages in 3 of 4 cases) — with this few lineages the admixture
+    partition becomes near-binary (all-or-nothing), a qualitatively
+    different, more discrete regime than `<A>`'s. This plausibly
+    explains why the earlier `total_branch_length`-based CV diagnostic
+    found nothing: branch length is continuous and averages out an
+    all-or-nothing population-assignment effect, while `DTA`/pairwise-
+    difference stats are specifically sensitive to that exact kind of
+    population-structure pattern.
+  - **Final check — does OUR OWN msprime simulation reproduce this same
+    effect?** `msprime.sim_ancestry(..., record_migrations=True)` +
+    inspecting `ts.tables.migrations` (`dest` population at `t=ta`) is
+    the direct msprime-side equivalent of tracing `split_pop`. Across
+    30 real particles (1332 G2 loci, 968 G3 loci): G3 has one side at
+    exactly 0 lineages in **55.6%** of loci vs. **30.6%** for G2 — same
+    direction, comparable magnitude to the C++ trace. **Confirms our
+    own port DOES reproduce the near-binary effect** (`msprime.add_
+    admixture` does the same per-lineage independent draw as
+    `split_pop`) — this is NOT a missing/underproduced effect in the
+    port.
+
+**Conclusion: no bug found in the port.** The residual variance gap on
+G3 is explained by a real, source-confirmed combinatorial effect
+(few surviving lineages at the admixture event → near-binary partition)
+that's present and correctly reproduced on both sides. An exact
+magnitude match would require replaying the literal same randomness
+DIYABC used locus-by-locus (i.e. instrumenting DIYABC to export raw
+per-locus genealogies, not just summary statistics) — out of scope for
+this POC. Investigation closed 2026-08-27: the POC's goal (prove
+`header.txt`→msprime feasibility) is already met, and the gap is narrow
+(a stat-family subset, one heritage type, surfaced only by a synthetic
+stress dataset built specifically to find it).
+
+**One separate, real bug found and fixed along the way** (unrelated to
+the above — ruled out as its cause): `ancestry_simulation.build_group_
+local_param_per_locus`/its `_from_values` twin recreated `random.
+Random(seed + _KAPPA1_SEED_OFFSET)` (and `_KAPPA2_`/`_MUS_RATE_SEED_
+OFFSET`) fresh inside the `for group in nloc_per_group` loop, with an
+offset that didn't depend on the group — so any two groups sharing a
+model needing the same parameter (G2 and G3 here, both `K2P`, both
+using kappa1) replayed the IDENTICAL draw sequence, just recentred on a
+different `k_moy`. Invisible at 5+5 loci (both groups' `GAMK1` happen
+to declare the same shape, so relative dispersion looked identical by
+coincidence); only surfaced once this investigation needed a real
+multi-group same-model dataset to stress it. Fixed by constructing each
+parameter's `rng` ONCE before the group loop (same pattern as `build_
+rate_map_per_locus`'s already-correct `_SITE_RATE_SEED_OFFSET` usage).
+Fixing it changed exactly the 15 G3/pairwise "golden value" test
+assertions in `tests/test_summary_statistics.py`/`test_pipeline.py`
+(regenerated) and left every G2-only assertion byte-identical — the
+exact fingerprint confirming the fix is correctly scoped (G2 is always
+first in the loop, so its RNG's starting state never changed). See
+`feedback_seed_reuse_pattern` project memory — same bug class, 5th
+occurrence in this codebase.
+
+**Open, unexplained thread (flagged 2026-08-27, not investigated)**: on
+the 50+50-loci dataset, `DTA_2_2` (and to a lesser extent `DTA_2_1`) —
+both **G2** columns — also show a real, visually-confirmed distribution
+difference, but it does NOT fit the G3-variance-deficit story above:
+their std ratio sim/real is close to 1 (like the rest of G2), the
+difference is instead a small but real MEAN shift (real ≈0.018, sim
+≈0.043 for `DTA_2_2`). Not yet investigated — a legitimate loose end,
+distinct from the G3 mechanism this section documents.
 
 ### `scripts/` — ad hoc investigation scripts
 

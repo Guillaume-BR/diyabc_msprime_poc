@@ -53,3 +53,22 @@ Modules du pipeline (bridge/) :
 - observed_data.py — comptage échantillons + mapping pop ✅
 - ancestry_simulation.py — coalescence + mutation ✅
 - pipeline.py — orchestration de tout ce qui précède ✅
+
+
+## Etat au 02/07/2026
+
+POC DIYABC → msprime : COMPLET, VALIDÉ, OPTIMISÉ
+
+Pipeline 100% Python :
+  header.txt → Demography → coalescence msprime → Hudson (1 mutation/locus)
+  → 130 stats calculées en Python pur → reftable.bin
+
+Validation :
+  ✅ 130 stats identiques au binaire C++ general (comparaison exacte)
+  ✅ reftable.bin lu sans erreur par readReftable.R (outil indépendant)
+  ✅ Format compatible abcranger
+
+Performance :
+  8.6 min pour 1000 particules × 5000 loci (8 cœurs)
+  → plus rapide que DIYABC -g 1 -t 8 (14 min)
+  → facteur ~3 de DIYABC -g 50 -t 8 (mode batch optimisé)
