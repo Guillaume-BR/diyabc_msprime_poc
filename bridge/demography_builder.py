@@ -28,11 +28,22 @@ _EXPR_RE = re.compile(r"^(\w+)([+-])(\w+)$")
 
 
 def evaluate_expression(expr: str, values: dict[str, float]) -> float:
-    """Évalue une expression de temps ou de taille telle qu'elle apparaît
-    dans header.txt : un nombre littéral ("0"), un nom de paramètre tiré
-    ("t1"), ou une somme/différence de deux noms ("t2-d3", "t2+d3").
+    """Évalue une expression de temps ou de taille de header.txt.
 
-    Équivalent de ParticleC::getvalue() en C++.
+    Un nombre littéral ("0"), un nom de paramètre tiré ("t1"), ou une
+    somme/différence de deux noms ("t2-d3", "t2+d3"). Équivalent de
+    ParticleC::getvalue() en C++.
+
+    Args:
+        expr: L'expression à évaluer.
+        values: Les valeurs déjà tirées des priors, {nom: valeur}.
+
+    Returns:
+        La valeur numérique de l'expression.
+
+    Raises:
+        ValueError: Si expr n'est ni un nombre littéral, ni un nom de
+            paramètre connu, ni une somme/différence de tels noms.
     """
     match = _EXPR_RE.match(expr)
     if match:
@@ -56,11 +67,23 @@ def evaluate_expression(expr: str, values: dict[str, float]) -> float:
 def build_demography(
     scenario: Scenario, values: dict[str, float]
 ) -> msprime.Demography:
-    """Construit la Demography msprime correspondant au scenario, avec les
-    valeurs numériques déjà tirées dans `values`.
+    """Construit la Demography msprime correspondant au scenario.
 
     Les populations sont nommées "pop1", "pop2", ... d'après leur indice
     dans header.txt (1-indexed, comme dans le fichier).
+
+    Args:
+        scenario: Le scénario parsé (header_dataclasses.Scenario).
+        values: Les valeurs numériques déjà tirées des priors, {nom:
+            valeur}.
+
+    Returns:
+        La Demography msprime correspondante, avec ses événements triés
+        par temps croissant.
+
+    Raises:
+        NotImplementedError: Si scenario contient un type d'événement
+            non géré.
     """
     # n_pops = len(scenario.initial_pop_size_exprs)
     demography = msprime.Demography()
@@ -127,19 +150,15 @@ def build_demography(
 def rescale_demography(
     demography: msprime.Demography, factor: float
 ) -> msprime.Demography:
-    """Retourne une COPIE de demography où chaque taille de population est
-    multipliée par factor -- ne modifie jamais l'original (une même
-    Demography <A> est réutilisée telle quelle pour bâtir la version
-    rescalée <X>/<Y>/<M> du même scénario/tirage de valeurs, donc muter en
-    place casserait les autres types de locus qui doivent encore utiliser
-    la version non rescalée).
+    """Rescale toutes les tailles de population d'une Demography par factor.
 
-    factor : à appeler avec coalescence_coefficient(locus_type,
-    sex_ratio) / 2 (voir observed_data.py -- le /2 vient de la conversion
-    coeffcoal*N/2 = nombre effectif de copies de gène). Le
-    facteur est calculé par l'appelant.
+    Retourne une COPIE de demography -- ne modifie jamais l'original
+    (une même Demography <A> est réutilisée telle quelle pour bâtir la
+    version rescalée <X>/<Y>/<M> du même scénario/tirage de valeurs,
+    donc muter en place casserait les autres types de locus qui
+    doivent encore utiliser la version non rescalée).
 
-    Deux choses à rescaler :
+    Deux choses sont rescalées :
     - demography.populations : chaque Population a un .initial_size
       (toujours défini, jamais None).
     - demography.events : SEULS les événements PopulationParametersChange
@@ -149,6 +168,17 @@ def rescale_demography(
       taille -- pas notre cas ici, mais à ne pas casser si ça arrive).
       Les autres types d'événements (PopulationSplit, Admixture...) n'ont
       pas d'attribut .initial_size du tout.
+
+    Args:
+        demography: La Demography à rescaler (jamais modifiée).
+        factor: Le facteur multiplicatif, à appeler avec
+            coalescence_coefficient(locus_type, sex_ratio) / 2 (voir
+            observed_data.py -- le /2 vient de la conversion
+            coeffcoal*N/2 = nombre effectif de copies de gène). Le
+            facteur est calculé par l'appelant.
+
+    Returns:
+        La copie rescalée de demography.
     """
 
     demography_copy = demography.copy()
@@ -164,15 +194,22 @@ def rescale_demography(
 
 
 def extract_referenced_names(expr: str) -> set[str]:
-    """Extrait le ou les noms de paramètres référencés par une expression
-    de header.txt, SANS l'évaluer numériquement -- "t2-d3" -> {"t2","d3"},
-    "t1" -> {"t1"}, "0" -> set() (un nombre littéral ne référence aucun
-    paramètre).
+    """Extrait les noms de paramètres référencés par une expression de header.txt.
 
-    Utilisé pour déterminer quels paramètres un scénario utilise
-    réellement (nécessaire pour filtrer les colonnes du reftable.bin par
-    scénario -- voir reftable_loop.write_reftable_bin et notes/
-    exploration.md, bug "21 vs 16 paramètres pour le scénario 1").
+    SANS l'évaluer numériquement -- "t2-d3" -> {"t2","d3"}, "t1" ->
+    {"t1"}, "0" -> set() (un nombre littéral ne référence aucun
+    paramètre). Utilisé pour déterminer quels paramètres un scénario
+    utilise réellement (nécessaire pour filtrer les colonnes du
+    reftable.bin par scénario -- voir reftable_loop.write_reftable_bin
+    et notes/exploration.md, bug "21 vs 16 paramètres pour le
+    scénario 1").
+
+    Args:
+        expr: L'expression à analyser.
+
+    Returns:
+        L'ensemble des noms de paramètres référencés (vide pour un
+        nombre littéral).
     """
     match = _EXPR_RE.match(expr)
     if match:
@@ -187,16 +224,22 @@ def extract_referenced_names(expr: str) -> set[str]:
 
 
 def get_parameter_names_used_by_scenario(scenario: Scenario) -> set[str]:
-    """Collecte l'ensemble des noms de paramètres réellement référencés
-    par un scénario : tailles de population initiales, et time_expr /
-    new_size_expr de chacun de ses événements.
+    """Collecte les noms de paramètres réellement référencés par un scénario.
 
-    C'est ce sous-ensemble (pas la totalité des priors déclarés dans
-    header.txt) qui doit constituer les colonnes param[] du reftable.bin
-    pour ce scénario -- un scénario donné n'utilise généralement qu'une
-    partie des priors globaux (ex: human/header.txt a 21 priors déclarés,
-    mais le scénario 1 n'en référence que 16 -- ra/t11/t22/t33/t44
-    appartiennent aux scénarios 2-6, pas au scénario 1).
+    Tailles de population initiales, et time_expr / new_size_expr de
+    chacun de ses événements. C'est ce sous-ensemble (pas la totalité
+    des priors déclarés dans header.txt) qui doit constituer les
+    colonnes param[] du reftable.bin pour ce scénario -- un scénario
+    donné n'utilise généralement qu'une partie des priors globaux (ex:
+    human/header.txt a 21 priors déclarés, mais le scénario 1 n'en
+    référence que 16 -- ra/t11/t22/t33/t44 appartiennent aux scénarios
+    2-6, pas au scénario 1).
+
+    Args:
+        scenario: Le scénario parsé (header_dataclasses.Scenario).
+
+    Returns:
+        L'ensemble des noms de paramètres utilisés par ce scénario.
     """
     names: set[str] = set()
 
