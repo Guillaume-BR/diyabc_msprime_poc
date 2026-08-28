@@ -43,10 +43,23 @@ _GROUP_LINE_RE = re.compile(r"^group\s+(\S+)\s*\((\d+)\)\s*$")
 
 
 def _split_stats_blocks(header_text: str) -> list[str]:
-    """Découpe le texte complet de header.txt en blocs bruts, un par
-    groupe, chaque bloc commençant par sa ligne d'en-tête
-    'group G1 (N)' et s'arrêtant juste avant le bloc suivant
-    (ou la fin de la section, ex: 'scenario')."""
+    """Découpe header.txt en blocs bruts, un par groupe de statistiques.
+
+    Chaque bloc commence par sa ligne d'en-tête 'group G1 (N)' et
+    s'arrête juste avant le bloc suivant (ou la fin de la section, ex:
+    'scenario').
+
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Returns:
+        La liste des blocs bruts, un par groupe, dans l'ordre de
+        déclaration.
+
+    Raises:
+        ValueError: Si la section 'group summary statistics' ou aucun
+            bloc 'group Gx (N)' n'est trouvé.
+    """
 
     lines = header_text.splitlines()
     # repère la ligne d'index où démarre la section "group summary statistics (N)".
@@ -88,9 +101,23 @@ def _split_stats_blocks(header_text: str) -> list[str]:
 
 
 def parse_requested_statistic_names(header_text: str) -> list[str]:
-    """Extrait, dans l'ordre de déclaration, les noms de colonnes de
-    statistiques attendues par header.txt (section 'group summary
-    statistics').
+    """Extrait les noms de colonnes de statistiques attendues par header.txt.
+
+    Section 'group summary statistics'. Un seul groupe -> colonnes
+    "STAT_index" (ex: "ML1p_1"). Plusieurs groupes -> colonnes
+    "STAT_groupe_index" (ex: "ML1p_1_1") -- voir le docstring du
+    module pour le détail des deux formats.
+
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Returns:
+        Les noms de colonnes, dans l'ordre de déclaration.
+
+    Raises:
+        ValueError: Si une ligne de groupe est inattendue, ou si le
+            nombre de statistiques trouvées ne correspond pas au
+            compte annoncé par 'group Gx (N)'.
     """
     blocks = _split_stats_blocks(header_text)
     nb_blocks = len(blocks)
@@ -101,7 +128,7 @@ def parse_requested_statistic_names(header_text: str) -> list[str]:
         group_match = _GROUP_LINE_RE.match(group_line)
         if not group_match:
             raise ValueError(f"Ligne de groupe inattendue : {group_line!r}")
-        numero_group = group_match.group(1)[1:]  # ex: "G1" -> "1"
+        group_number = group_match.group(1)[1:]  # ex: "G1" -> "1"
 
         expected_count = int(group_match.group(2))
 
@@ -122,7 +149,7 @@ def parse_requested_statistic_names(header_text: str) -> list[str]:
             for stripped in content_lines:
                 tokens = stripped.split()
                 stat_name, indices = tokens[0], tokens[1:]
-                names.extend(f"{stat_name}_{numero_group}_{index}" for index in indices)
+                names.extend(f"{stat_name}_{group_number}_{index}" for index in indices)
 
         if len(names) != expected_count:
             raise ValueError(
