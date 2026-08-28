@@ -278,7 +278,7 @@ def sampling_group_local_param(
     list_loci: list[LociDescriptionDetailed],
     rng: random.Random,
 ) -> dict[str, float]:
-    """Échantillonne le tirage par-locus (tier 2) d'un paramètre de groupe.
+    """Échantillonne le tirage par-locus (second niveau) d'un paramètre de groupe.
 
     S'applique aussi bien à kappa1/kappa2 (`build_transition_matrix`)
     qu'à mus_rate -- rien de spécifique à kappa dans l'implémentation.
@@ -287,8 +287,8 @@ def sampling_group_local_param(
         group_prior: Le GroupPrior déjà résolu pour ce groupe (via
             draw_group_parameter_values), dont le `mean` est remplacé
             par `k_moy` avant tirage.
-        k_moy: La valeur moyenne du groupe (tier 1), déjà tirée par
-            draw_group_parameter_values.
+        k_moy: La valeur moyenne du groupe (premier niveau), déjà
+            tirée par draw_group_parameter_values.
         n_loci: Le nombre de loci du groupe.
         check_nloc: Si True, un tirage indépendant par locus n'a lieu
             que si `n_loci > 1` en plus de `sdshape > 0.001` (cas de
@@ -335,7 +335,7 @@ def sample_site_rates(
     sous-ensemble aléatoire).
 
     Args:
-        p_fixe: Proportion de sites invariants (`GroupPrior.p_fixe`).
+        p_fixe: Pourcentage (0-100, pas une fraction 0-1) de sites invariants (`GroupPrior.p_fixe`).
         gams: Forme gamma de l'hétérogénéité de taux par site
             (`GroupPrior.gams`) -- 0.0 est une valeur valide,
             équivalente à un taux uniforme (voir MwcGen::ggamma3).
@@ -346,8 +346,8 @@ def sample_site_rates(
         La liste `mutsit`, de longueur `dnalength`, normalisée à
         somme 1.
     """
-    nsv = math.floor(dnalength * (1 - 0.01 * p_fixe) + 0.5)
-    nb_sites_fixes = dnalength - nsv
+    nb_sites_variables = math.floor(dnalength * (1 - 0.01 * p_fixe) + 0.5)
+    nb_sites_fixes = dnalength - nb_sites_variables
     if gams < 1e-12:
         mutsit = [1.0] * dnalength
     else:
@@ -360,7 +360,7 @@ def sample_site_rates(
     # ensemble aléatoire. On reproduit ce comportement tel quel (fidélité à
     # DIYABC), pas ce que le code semblait vouloir faire.
     # On garde en réserve et on l'active si besoin.
-    # sitefix = [0] * (dnalength - nsv)
+    # sitefix = [0] * (dnalength - nb_sites_variables)
     # for i in range(len(sitefix)):
     #    if i == 0:
     #        sitefix[i]  = rng.randint(1, dnalength)
