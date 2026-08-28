@@ -6,8 +6,8 @@ mentor (voir notes/exploration.md) pour les scénarios 1, 2 et 4.
 
 import pytest
 
+from bridge.header_dataclasses import MergeEvent, SampleEvent, SplitEvent, VarNeEvent
 from bridge.scenario_parser import parse_header_scenarios
-from bridge.scenario_types import MergeEvent, SampleEvent, SplitEvent, VarNeEvent
 
 
 def test_unimplemented_scenarios_are_skipped_with_warning(header_text):

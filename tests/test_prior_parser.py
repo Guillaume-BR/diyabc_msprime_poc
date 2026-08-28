@@ -3,13 +3,13 @@ depuis header.txt, et la règle de filtrage des priors quasi-constants."""
 
 import pytest
 
+from bridge.header_dataclasses import GroupPrior, OrderConstraint, Prior
 from bridge.prior_parser import (
     get_parameter_used_by_model,
     is_constant_prior,
     parse_group_priors,
     parse_priors,
 )
-from bridge.scenario_types import GroupPrior, OrderConstraint, Prior
 
 
 def test_priors_and_constraints(header_text):
@@ -21,10 +21,10 @@ def test_priors_and_constraints(header_text):
     priors_by_name = {p.name: p for p in priors}
     assert priors_by_name["N1"].category == "N"
     assert priors_by_name["N1"].law == "UN"
-    assert priors_by_name["N1"].bounds == (1000.0, 100000.0, 0.0, 0.0)
+    assert (priors_by_name["N1"].min, priors_by_name["N1"].max) == (1000.0, 100000.0)
 
     assert priors_by_name["t1"].category == "T"
-    assert priors_by_name["t1"].bounds == (1.0, 30.0, 0.0, 0.0)
+    assert (priors_by_name["t1"].min, priors_by_name["t1"].max) == (1.0, 30.0)
 
     assert OrderConstraint(param1="t4", operator=">", param2="t3") in constraints
     assert OrderConstraint(param1="t3", operator=">", param2="t2") in constraints
@@ -55,25 +55,37 @@ def test_is_constant_prior():
     """Vérifie la règle de filtrage des priors quasi-constants."""
     # Cas normal : large intervalle, jamais constant
     normal_prior = Prior(
-        name="N1", category="N", law="UN", bounds=(1000.0, 100000.0, 0.0, 0.0)
+        name="N1",
+        category="N",
+        law="UN",
+        min=1000.0,
+        max=100000.0,
+        mean=0.0,
+        sdshape=0.0,
     )
     assert is_constant_prior(normal_prior) is False
 
     # Cas dégénéré : min == max, clairement constant
     constant_prior = Prior(
-        name="X", category="N", law="UN", bounds=(100.0, 100.0, 0.0, 0.0)
+        name="X", category="N", law="UN", min=100.0, max=100.0, mean=0.0, sdshape=0.0
     )
     assert is_constant_prior(constant_prior) is True
 
     # Cas limite : différence infime, sous le seuil
     near_constant_prior = Prior(
-        name="Y", category="N", law="UN", bounds=(100.0, 100.00001, 0.0, 0.0)
+        name="Y",
+        category="N",
+        law="UN",
+        min=100.0,
+        max=100.00001,
+        mean=0.0,
+        sdshape=0.0,
     )
     assert is_constant_prior(near_constant_prior) is True
 
     # Cas limite inverse : différence juste au-dessus du seuil
     barely_variable_prior = Prior(
-        name="Z", category="N", law="UN", bounds=(100.0, 100.1, 0.0, 0.0)
+        name="Z", category="N", law="UN", min=100.0, max=100.1, mean=0.0, sdshape=0.0
     )
     assert is_constant_prior(barely_variable_prior) is False
 

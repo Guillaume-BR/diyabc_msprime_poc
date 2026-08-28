@@ -96,7 +96,7 @@ def test_observed_reads(header_text_te4):
     1 < 5 -- il doit donc être absent du résultat ; le premier élément
     retourné est le premier locus du fichier qui passe réellement le
     seuil."""
-    max_loci = parse_loci_description(header_text_te4).total_loci["A"]
+    max_loci = parse_loci_description(header_text_te4).loci_counts_by_heritage["A"]
     observed_reads_te4 = observed_reads(OBSERVED_SNP_FILE_TE4, num_loci=max_loci)
     observed_reads_te4_total = observed_reads(OBSERVED_SNP_FILE_TE4, num_loci=None)
     assert len(observed_reads_te4) == 100

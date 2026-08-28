@@ -5,6 +5,7 @@ tirage pondéré du scénario."""
 import dataclasses
 import random
 
+from bridge.header_dataclasses import Prior, Scenario
 from bridge.loci_parser import parse_loci_description
 from bridge.parameter_sampling import (
     _draw_one_value,
@@ -16,7 +17,6 @@ from bridge.parameter_sampling import (
 )
 from bridge.prior_parser import parse_group_priors, parse_priors
 from bridge.scenario_parser import parse_header_scenarios
-from bridge.scenario_types import Prior, Scenario
 
 
 def test_draw_parameter_values(header_text):
@@ -87,7 +87,9 @@ def test_draw_one_value_round_half_up_not_banker():
     particuleC.cpp), PAS round-half-to-even (comportement par défaut de
     la fonction round() de Python) -- cas où les deux méthodes divergent
     : x=2.5 -> 3 en round-half-up, mais round(2.5) == 2 en Python."""
-    prior = Prior(name="N1", category="N", law="UN", bounds=(0.0, 10.0, 0.0, 0.0))
+    prior = Prior(
+        name="N1", category="N", law="UN", min=0.0, max=10.0, mean=0.0, sdshape=0.0
+    )
 
     value = _draw_one_value(prior, _FakeRng(2.5))
 

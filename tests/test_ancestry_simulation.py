@@ -40,6 +40,7 @@ from bridge.ancestry_simulation import (
     with_mrc_filter,
 )
 from bridge.demography_builder import rescale_demography
+from bridge.header_dataclasses import LociDescriptionDetailed
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
     coalescence_coefficient,
@@ -49,7 +50,6 @@ from bridge.observed_data import (
 )
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.prior_parser import parse_group_priors
-from bridge.scenario_types import LociDescriptionDetailed
 
 
 def test_simulate_independent_loci_scenario1(header_text):
@@ -377,7 +377,7 @@ def test_simulate_poolseq_reads_with_mrc_filter(header_text_te4):
         header_text_te4, scenario_index=1, seed=42
     )
 
-    num_loci = parse_loci_description(header_text_te4).total_loci["A"]
+    num_loci = parse_loci_description(header_text_te4).loci_counts_by_heritage["A"]
     mrc = parse_mrc_ratio(OBSERVED_SNP_FILE_TE4)
 
     results = list(
