@@ -28,7 +28,7 @@ _EXPR_RE = re.compile(r"^(\w+)([+-])(\w+)$")
 
 
 def evaluate_expression(expr: str, values: dict[str, float]) -> float:
-    """Évalue une expression de temps ou de taille de header.txt.
+    """Évalue une expression de temps ou de taille de header.txt de manière récursive.
 
     Un nombre littéral ("0"), un nom de paramètre tiré ("t1"), ou une
     somme/différence de deux noms ("t2-d3", "t2+d3"). Équivalent de
