@@ -41,19 +41,27 @@ class ConstraintsNotSatisfiedError(Exception):
 
 
 def draw_scenario(scenarios: list[Scenario], seed: int) -> Scenario:
-    """Tire un scénario parmi `scenarios`, pondéré par son `weight`
-    (le "prior_proba" de particuleC.cpp::ParticleC::drawscenario).
+    """Tire un scénario parmi `scenarios`, pondéré par son `weight`.
 
-    Reproduit exactement l'algorithme C++ : tirage d'un nombre uniforme
-    `ra` dans [0,1), puis balayage de la somme cumulée des poids jusqu'à
-    ce qu'elle atteigne ou dépasse `ra` -- même logique d'inversion de
-    CDF que _draw_single_mutation_edge_child (ancestry_simulation.py),
+    Le poids est le "prior_proba" de
+    particuleC.cpp::ParticleC::drawscenario. Reproduit exactement
+    l'algorithme C++ : tirage d'un nombre uniforme `ra` dans [0,1),
+    puis balayage de la somme cumulée des poids jusqu'à ce qu'elle
+    atteigne ou dépasse `ra` -- même logique d'inversion de CDF que
+    _draw_single_mutation_edge_child (ancestry_simulation.py),
     vérifiée boundary-compatible avec la boucle C++ ("while ra > sp").
 
     Ne normalise PAS les poids (comme le C++, qui ne le fait pas non
     plus) : si leur somme est < 1, le DERNIER scénario de la liste sert
     de secours pour tout `ra` au-delà de la somme cumulée -- même
     comportement que la boucle C++, bornée à nscenarios-1.
+
+    Args:
+        scenarios: Les scénarios candidats.
+        seed: La graine du tirage.
+
+    Returns:
+        Le scénario tiré.
     """
     rng = random.Random(seed)
     ra = rng.random()
@@ -64,12 +72,22 @@ def draw_scenario(scenarios: list[Scenario], seed: int) -> Scenario:
         if ra <= cumulative:
             return scenario
 
-    return scenarios[-1]
+    return scenarios[-1]  # dernier scénario de secours si somme des poids < ra
 
 
 def _draw_one_value(prior: Prior, rng: random.Random) -> float:
     """Tire une valeur pour un prior donné, selon sa loi et ses bornes.
-    Lève NotImplementedError si la loi n'est pas encore implémentée.
+    Pour les lois normale, log-normale et gamma, on retire les valeurs hors bornes comme DIYABC.
+
+    Args:
+        prior: Le prior à tirer.
+        rng: Le générateur aléatoire à utiliser.
+
+    Returns:
+        La valeur tirée.
+
+    Raises:
+        NotImplementedError: Si la loi n'est pas encore implémentée.
     """
     if prior.min == prior.max:
         # bornes identiques : pas de tirage, valeur fixée
@@ -101,7 +119,7 @@ def _draw_one_value(prior: Prior, rng: random.Random) -> float:
         else:
             while True:
                 value = rng.gammavariate(sdshape, mean / sdshape)
-                if min_ <= value <= max_:
+                if min_ <= value <= max_:  #
                     break
     else:
         raise NotImplementedError(
@@ -121,10 +139,23 @@ def _draw_one_value(prior: Prior, rng: random.Random) -> float:
 
 def _draw_one_group_value(group_prior: GroupPrior, rng: random.Random) -> float:
     """Tire une valeur pour un group prior donné, selon sa loi et ses bornes.
-    Quelques gardes-fous pour éviter des erreurs de tirage si le group prior est mal défini.
-    Lève ValueError si le group prior n'a pas de loi ou de bornes associées, ou si la loi est GA mais que les priors MEAN et SDSHAPE
-    correspondants n'ont pas été tirés avant.
-    Lève NotImplementedError si la loi n'est pas encore implémentée via _draw_one_value.
+
+    Quelques gardes-fous pour éviter des erreurs de tirage si le group
+    prior est mal défini.
+
+    Args:
+        group_prior: Le group prior à tirer.
+        rng: Le générateur aléatoire à utiliser.
+
+    Returns:
+        La valeur tirée.
+
+    Raises:
+        ValueError: Si le group prior n'a pas de loi ou de bornes
+            associées, ou si la loi est GA mais que les priors MEAN et
+            SDSHAPE correspondants n'ont pas été tirés avant.
+        NotImplementedError: Si la loi n'est pas encore implémentée
+            (propagée depuis _draw_one_value).
     """
     if group_prior.law is None:
         raise ValueError(
@@ -165,12 +196,24 @@ def draw_parameter_values(
     max_attempts: int = 1000,
 ) -> dict[str, float]:
     """Tire une valeur pour chaque prior, en retirant tant que les
-    contraintes d'ordre ne sont pas toutes satisfaites.
+    contraintes d'ordre ne sont pas toutes satisfaites. On reproduit le comportement de DIYABC,
+    en gardant le premier tirage satisfaisant toutes les contraintes.
 
-    Lève ConstraintsNotSatisfiedError si aucun tirage valide n'est trouvé
-    en max_attempts essais -- signe probable d'une configuration de
-    contraintes incohérente (bornes de priors incompatibles avec les
-    contraintes demandées) plutôt que d'une simple mauvaise chance.
+    Args:
+        priors: Les priors à tirer.
+        constraints: Les contraintes d'ordre à satisfaire (ex: "t4>t3").
+        seed: La graine du tirage.
+        max_attempts: Le nombre maximal d'essais avant d'abandonner.
+
+    Returns:
+        Un dict {nom_prior: valeur}.
+
+    Raises:
+        ConstraintsNotSatisfiedError: Si aucun tirage valide n'est
+            trouvé en max_attempts essais -- signe probable d'une
+            configuration de contraintes incohérente (bornes de
+            priors incompatibles avec les contraintes demandées)
+            plutôt que d'une simple mauvaise chance.
     """
     rng = random.Random(seed)
 
@@ -190,8 +233,7 @@ def draw_group_parameter_values(
     group_priors: dict[str, list[GroupPrior]],
     seed: int,
 ) -> dict[str, dict[str, float]]:
-    """
-    Tire une valeur pour chaque group prior ou bien des valeurs pour le modèle.
+    """Tire une valeur pour chaque group prior ou bien des valeurs pour le modèle.
 
     `seed` est décalé de _GROUP_PRIOR_SEED_OFFSET avant utilisation -- ne
     corrèle jamais ce tirage avec celui de draw_parameter_values, même si
@@ -201,6 +243,13 @@ def draw_group_parameter_values(
     (MEANMU avant GAMMU, etc.) reproduit le comportement de DIYABC, qui lit
     ces lignes dans un ordre fixe sans jamais regarder leur nom (voir
     header.cpp::readHeadersimGroupPrior).
+
+    Args:
+        group_priors: Dict {nom_groupe: [GroupPrior, ...]}.
+        seed: La graine de base du tirage (décalée en interne).
+
+    Returns:
+        Un dict {nom_groupe: {nom_prior: valeur}}.
     """
     rng = random.Random(seed + _GROUP_PRIOR_SEED_OFFSET)
     group_priors_values: dict[str, dict[str, float]] = {}
@@ -229,10 +278,29 @@ def sampling_group_local_param(
     list_loci: list[LociDescriptionDetailed],
     rng: random.Random,
 ) -> dict[str, float]:
-    """Échantillonne les valeurs de kappa pour chaque groupe de loci en fonction des priorités définies.
-    Retourne un dictionnaire avec les noms de groupes comme clés et les valeurs de kappa échantillonnées comme valeurs.
-    Pour kappa1, il faut passsé l'argument check_nloc à True pour vérifier le nombre de loci et échantillonner en conséquence.
-    Pour kappa2, il faut passsé l'argumentââ check_nloc à False pour
+    """Échantillonne le tirage par-locus (tier 2) d'un paramètre de groupe.
+
+    S'applique aussi bien à kappa1/kappa2 (`build_transition_matrix`)
+    qu'à mus_rate -- rien de spécifique à kappa dans l'implémentation.
+
+    Args:
+        group_prior: Le GroupPrior déjà résolu pour ce groupe (via
+            draw_group_parameter_values), dont le `mean` est remplacé
+            par `k_moy` avant tirage.
+        k_moy: La valeur moyenne du groupe (tier 1), déjà tirée par
+            draw_group_parameter_values.
+        n_loci: Le nombre de loci du groupe.
+        check_nloc: Si True, un tirage indépendant par locus n'a lieu
+            que si `n_loci > 1` en plus de `sdshape > 0.001` (cas de
+            kappa1/mus_rate). Si False, seule la condition sur
+            `sdshape` est vérifiée (cas de kappa2 -- asymétrie propre à
+            DIYABC, reproduite telle quelle).
+        list_loci: Les loci du groupe.
+        rng: Le générateur aléatoire à utiliser.
+
+    Returns:
+        Un dict {nom_locus: valeur} -- soit un tirage indépendant par
+        locus, soit `k_moy` répété pour chaque locus.
     """
 
     kappa_values = {}
@@ -261,8 +329,22 @@ def sample_site_rates(
     p_fixe: float, gams: float, dnalength: int, rng: random.Random
 ) -> list[float]:
     """Tire mutsit : le taux de mutation relatif par site pour un locus séquence.
-    Reproduit header.cpp:707-738 (y compris le "bug" sitefix -- les sites fixes
-    sont toujours les premiers de la séquence, pas un sous-ensemble aléatoire).
+
+    Reproduit header.cpp:707-738 (y compris le "bug" sitefix -- les
+    sites fixes sont toujours les premiers de la séquence, pas un
+    sous-ensemble aléatoire).
+
+    Args:
+        p_fixe: Proportion de sites invariants (`GroupPrior.p_fixe`).
+        gams: Forme gamma de l'hétérogénéité de taux par site
+            (`GroupPrior.gams`) -- 0.0 est une valeur valide,
+            équivalente à un taux uniforme (voir MwcGen::ggamma3).
+        dnalength: Longueur du locus.
+        rng: Le générateur aléatoire à utiliser.
+
+    Returns:
+        La liste `mutsit`, de longueur `dnalength`, normalisée à
+        somme 1.
     """
     nsv = math.floor(dnalength * (1 - 0.01 * p_fixe) + 0.5)
     nb_sites_fixes = dnalength - nsv
