@@ -96,7 +96,8 @@ class GroupPrior:
         sdshape: Écart-type ou paramètre de forme, None si pas précisé.
         model: True si c'est un model, False si c'est une loi, None si pas précisé.
         name_model: Nom du modèle (ex: "K2P"), None si c'est une loi.
-        p_fixe: Proportion de sites invariants, None si pas précisé.
+        p_fixe: Pourcentage (0-100, pas une fraction 0-1) de sites
+            invariants, None si pas précisé.
         gams: Paramètre de forme gamma (hétérogénéité de taux), None si pas précisé.
     """
 

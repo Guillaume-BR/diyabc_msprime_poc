@@ -105,12 +105,13 @@ _ANCESTRY_SEED_OFFSET = 110_000_000
 def build_samples_argument(
     snp_file_path: str,
 ) -> dict[str, int]:
-    """Construit l'argument `samples` attendu par msprime.sim_ancestry :
-    {nom_population_msprime: nombre_d_individus}, où le nom de population
-    msprime ("pop1", "pop2"...) correspond à l'indice utilisé dans
-    header.txt, mappé sur le nombre réel d'individus observés pour la
-    population correspondante (voir observed_data.py pour la
-    justification du mapping par ordre d'apparition).
+    """Construit l'argument `samples` de msprime.sim_ancestry pour un locus <A>.
+
+    Le nom de population msprime ("pop1", "pop2"...) correspond à
+    l'indice utilisé dans header.txt, mappé sur le nombre réel
+    d'individus observés pour la population correspondante (voir
+    observed_data.py pour la justification du mapping par ordre
+    d'apparition).
 
     Un seul appel à count_samples_per_population (pas
     population_index_to_name EN PLUS, qui relit et rescanne tout le
@@ -118,6 +119,12 @@ def build_samples_argument(
     ordre) -- l'indice 1-based se déduit directement de la position dans
     ce même dict, garanti dans l'ordre de première apparition (voir sa
     docstring).
+
+    Args:
+        snp_file_path: Chemin du fichier .snp.
+
+    Returns:
+        Un dict {nom_population_msprime: nombre_d_individus}.
     """
     counts_by_name = count_samples_per_population(snp_file_path)
 
@@ -130,18 +137,17 @@ def build_samples_argument(
 def build_sex_stratified_samples_argument(
     snp_file_path: str,
 ) -> list[msprime.SampleSet]:
-    """Construit l'argument `samples` pour un locus <X> : contrairement à
-    build_samples_argument (un compte par population, ploidy uniforme),
-    <X> a besoin d'une ploidy DIFFÉRENTE par individu selon son sexe
-    (femelles=2 copies, mâles=1 -- voir ParticleC::calploidy,
-    particuleC.cpp:220-233), donc une liste de msprime.SampleSet plutôt
-    qu'un simple dict.
+    """Construit l'argument `samples` de msprime.sim_ancestry pour un locus <X>.
 
-    Retourne 2 SampleSet par population : un pour les femelles
-    (ploidy=2), un pour les mâles (ploidy=1) -- population= doit être le
-    nom msprime ("pop1", "pop2"...), PAS le nom réel du fichier .snp
-    (même traduction que build_samples_argument, via
-    population_index_to_name).
+    Contrairement à build_samples_argument (un compte par population,
+    ploidy uniforme), <X> a besoin d'une ploidy DIFFÉRENTE par individu
+    selon son sexe (femelles=2 copies, mâles=1 -- voir
+    ParticleC::calploidy, particuleC.cpp:220-233), donc une liste de
+    msprime.SampleSet plutôt qu'un simple dict : 2 SampleSet par
+    population, un pour les femelles (ploidy=2), un pour les mâles
+    (ploidy=1) -- population= est le nom msprime ("pop1", "pop2"...),
+    PAS le nom réel du fichier .snp (même traduction que
+    build_samples_argument, via population_index_to_name).
 
     IMPORTANT -- le ploidy PAR SampleSet ne contrôle QUE le nombre de
     lignées regroupées par individu dans le résultat, PAS le taux de
@@ -152,12 +158,20 @@ def build_sex_stratified_samples_argument(
     empiriquement avec le mentor que c'est le ploidy GLOBAL de
     sim_ancestry qui interprète initial_size, pas celui des SampleSet.
 
-    Lève une erreur si un individu a le sexe "9" (inconnu) -- ex:
-    human_snp_all22chr_maf5.snp, où AUCUN individu n'est sexé (dataset
-    <A>-only) : on ne peut pas construire un échantillonnage <X> dessus,
-    mieux vaut le signaler explicitement que de produire un résultat
-    silencieusement faux (individual_sexes_per_population laisse ce
-    choix à l'appelant, c'est ici qu'il se prend).
+    Args:
+        snp_file_path: Chemin du fichier .snp.
+
+    Returns:
+        La liste des msprime.SampleSet (2 par population).
+
+    Raises:
+        ValueError: Si un individu a le sexe "9" (inconnu) -- ex:
+            human_snp_all22chr_maf5.snp, où AUCUN individu n'est sexé
+            (dataset <A>-only) : on ne peut pas construire un
+            échantillonnage <X> dessus, mieux vaut le signaler
+            explicitement que de produire un résultat silencieusement
+            faux (individual_sexes_per_population laisse ce choix à
+            l'appelant, c'est ici qu'il se prend).
     """
     samples_by_population = []
 
@@ -189,9 +203,9 @@ def build_sex_stratified_samples_argument(
 
 
 def build_male_only_samples_argument(snp_file_path: str) -> dict[str, int]:
-    """Construit l'argument `samples` attendu par msprime.sim_ancestry pour
-    un locus <Y> : {nom_population_msprime: nombre_d_individus_mâles}, où
-    le nom de population msprime ("pop1", "pop2"...) correspond à
+    """Construit l'argument `samples` de msprime.sim_ancestry pour un locus <Y>.
+
+    Le nom de population msprime ("pop1", "pop2"...) correspond à
     l'indice utilisé dans header.txt, mappé sur le nombre réel
     d'individus MÂLES observés pour la population correspondante (voir
     observed_data.py pour la justification du mapping par ordre
@@ -202,6 +216,15 @@ def build_male_only_samples_argument(snp_file_path: str) -> dict[str, int]:
     (mâles et femelles), contrairement à <Y> qui n'existe que chez les
     mâles -- <M> doit réutiliser build_samples_argument (tout le monde)
     avec ploidy=1, pas cette fonction.
+
+    Args:
+        snp_file_path: Chemin du fichier .snp.
+
+    Returns:
+        Un dict {nom_population_msprime: nombre_d_individus_mâles}.
+
+    Raises:
+        ValueError: Si un individu a le sexe "9" (inconnu).
     """
     samples_by_population = {}
 
@@ -230,34 +253,44 @@ def simulate_independent_loci(
     seed: int,
     ploidy: int = 2,
 ) -> Iterator[tskit.TreeSequence]:
-    """Simule num_loci généalogies indépendantes (un locus SNP = un
-    réplicat, pas de recombinaison interne ni de liaison entre loci),
-    sous la démographie donnée.
+    """Simule num_loci généalogies indépendantes sous la démographie donnée.
 
-    Retourne un itérateur (pas une liste) : pour 51250 loci, matérialiser
-    toutes les TreeSequence en mémoire simultanément serait coûteux --
-    l'appelant doit consommer cet itérateur au fil de l'eau (ex: pour
-    calculer des statistiques résumées locus par locus).
+    Un locus SNP = un réplicat, pas de recombinaison interne ni de
+    liaison entre loci. Retourne un itérateur (pas une liste) : pour
+    51250 loci, matérialiser toutes les TreeSequence en mémoire
+    simultanément serait coûteux -- l'appelant doit consommer cet
+    itérateur au fil de l'eau (ex: pour calculer des statistiques
+    résumées locus par locus).
 
-    samples : dict[str, int] (un compte par population, ploidy uniforme
-    -- <A>/<M>, voir build_samples_argument) ou list[msprime.SampleSet]
-    (ploidy hétérogène par sous-groupe au sein d'une population -- <X>,
-    voir build_sex_stratified_samples_argument). Les deux formes sont
-    transmises telles quelles à msprime.sim_ancestry, qui les accepte
-    indifféremment.
+    Args:
+        demography: La démographie msprime.
+        samples: dict[str, int] (un compte par population, ploidy
+            uniforme -- <A>/<M>, voir build_samples_argument) ou
+            list[msprime.SampleSet] (ploidy hétérogène par sous-groupe
+            au sein d'une population -- <X>, voir
+            build_sex_stratified_samples_argument). Les deux formes
+            sont transmises telles quelles à msprime.sim_ancestry, qui
+            les accepte indifféremment.
+        num_loci: Le nombre de généalogies indépendantes à simuler.
+        seed: La graine de la simulation.
+        ploidy: 2 (défaut) pour <A>, cohérent avec une transmission
+            diploïde classique -- chaque "sample individual" de
+            `samples` compte pour 2 lignées génomiques. Pour <Y>/<M>,
+            passer ploidy=1 avec une `demography` déjà rescalée par
+            rescale_demography (voir demography_builder.py) : ces
+            loci sont haploïdes (une seule copie de gène transmise),
+            et le facteur de rescaling de Ne (coalescence_coefficient,
+            observed_data.py) suppose cette combinaison ploidy=1 + Ne
+            rescalé, pas ploidy=2 + Ne d'origine. Pour <X>, passer
+            aussi ploidy=1 (voir
+            build_sex_stratified_samples_argument : c'est le ploidy
+            PAR SampleSet, pas ce paramètre global, qui donne 2
+            copies aux femelles et 1 aux mâles -- ce paramètre-ci ne
+            fixe que le taux de coalescence, via la Demography déjà
+            rescalée).
 
-    ploidy : 2 (défaut) pour <A>, cohérent avec une transmission diploïde
-    classique -- chaque "sample individual" de `samples` compte pour 2
-    lignées génomiques. Pour <Y>/<M>, passer ploidy=1 avec une
-    `demography` déjà rescalée par rescale_demography (voir
-    demography_builder.py) : ces loci sont haploïdes (une seule copie de
-    gène transmise), et le facteur de rescaling de Ne
-    (coalescence_coefficient, observed_data.py) suppose cette
-    combinaison ploidy=1 + Ne rescalé, pas ploidy=2 + Ne d'origine. Pour
-    <X>, passer aussi ploidy=1 (voir build_sex_stratified_samples_argument
-    : c'est le ploidy PAR SampleSet, pas ce paramètre global, qui donne
-    2 copies aux femelles et 1 aux mâles -- ce paramètre-ci ne fixe que
-    le taux de coalescence, via la Demography déjà rescalée).
+    Returns:
+        Un itérateur de num_loci TreeSequence indépendantes.
     """
     return msprime.sim_ancestry(
         samples=samples,
@@ -276,19 +309,15 @@ def simulate_shared_ancestry_loci(
     seed: int,
     ploidy: int = 1,
 ) -> Iterator[tskit.TreeSequence]:
-    """Simule UNE SEULE généalogie puis la retourne répétée num_loci fois
-    -- pour <Y>/<M>, dont tous les loci d'un même type partagent la même
+    """Simule UNE SEULE généalogie puis la retourne répétée num_loci fois.
+
+    Pour <Y>/<M>, dont tous les loci d'un même type partagent la même
     généalogie réelle (non-recombinants, transmission uniparentale),
     contrairement à <A>/<X> qui tirent un arbre indépendant par locus
     (simulate_independent_loci). Reproduit le comportement de
     particuleC.cpp:2422-2435 (GeneTreeY/GeneTreeM : premier locus <Y> ou
     <M> tire un arbre normalement, tous les suivants COPIENT ce même
     arbre -- seule la mutation change d'un locus à l'autre).
-
-    samples/ploidy : même contrat que simulate_independent_loci (voir sa
-    docstring) -- cette fonction ne fait que réutiliser
-    simulate_independent_loci avec num_loci=1, elle ne réinterprète pas
-    ces paramètres.
 
     IMPORTANT -- ne PAS réimplémenter le tirage de mutation ici :
     simulate_snp_genotypes(tree_sequences, seed) lit déjà tree_sequences
@@ -299,6 +328,25 @@ def simulate_shared_ancestry_loci(
     UNE SEULE généalogie, sans aucune modification de cette fonction
     (vérifié empiriquement : 5 répétitions du même arbre -> 5 génotypes
     différents).
+
+    Args:
+        demography: La démographie msprime.
+        samples: Même contrat que simulate_independent_loci (voir sa
+            docstring) -- cette fonction ne fait que réutiliser
+            simulate_independent_loci avec num_loci=1, elle ne
+            réinterprète pas ce paramètre.
+        num_loci: Le nombre de fois où répéter la généalogie unique.
+        seed: La graine de la simulation.
+        ploidy: Pour <Y>/<M>, passer ploidy=1 (défaut) avec une `demography` déjà rescalée par
+            rescale_demography (voir demography_builder.py) : ces
+            loci sont haploïdes (une seule copie de gène transmise),
+            et le facteur de rescaling de Ne (coalescence_coefficient,
+            observed_data.py) suppose cette combinaison ploidy=1 + Ne
+            rescalé, pas ploidy=2 + Ne d'origine.
+
+    Returns:
+        Un itérateur de num_loci TreeSequence, toutes identiques (le
+        même objet Python répété).
     """
 
     shared_genealogy = next(
@@ -313,10 +361,11 @@ def simulate_shared_ancestry_loci(
 
 
 def _draw_single_mutation_edge_child(ts: tskit.TreeSequence, rng: random.Random) -> int:
-    """Tire le noeud portant la mutation unique, avec probabilité
-    proportionnelle à la longueur de sa branche -- algorithme de Hudson,
-    entièrement vectorisé via les tables (pas d'appel branch_length() par
-    noeud). Valable pour un arbre unique (sequence_length=1).
+    """Tire le noeud portant la mutation unique de l'algorithme de Hudson.
+
+    Probabilité proportionnelle à la longueur de sa branche --
+    entièrement vectorisé via les tables (pas d'appel branch_length()
+    par noeud). Valable pour un arbre unique (sequence_length=1).
 
     Chaque edge = une branche (couple parent-enfant) ; edges.child liste
     donc tous les noeuds ayant une branche au-dessus d'eux (tous sauf la
@@ -325,6 +374,13 @@ def _draw_single_mutation_edge_child(ts: tskit.TreeSequence, rng: random.Random)
     Validé empiriquement (proportions observées vs attendues <1% ; valeurs
     de statistiques identiques à la version par branch_length() -- voir
     notes/exploration.md).
+
+    Args:
+        ts: La TreeSequence (un seul arbre, sequence_length=1).
+        rng: Le générateur aléatoire à utiliser.
+
+    Returns:
+        L'ID du noeud enfant portant la mutation.
     """
     edges = ts.tables.edges
     node_times = ts.tables.nodes.time
@@ -335,7 +391,9 @@ def _draw_single_mutation_edge_child(ts: tskit.TreeSequence, rng: random.Random)
 
     total = lengths.sum()
     target = rng.uniform(0, total)
-    idx = np.searchsorted(np.cumsum(lengths), target)
+    idx = np.searchsorted(
+        np.cumsum(lengths), target
+    )  # premier index où la somme cumulée dépasse target
     if idx >= len(edges.child):
         idx = len(edges.child) - 1
     return int(edges.child[idx])
@@ -344,8 +402,7 @@ def _draw_single_mutation_edge_child(ts: tskit.TreeSequence, rng: random.Random)
 def compute_population_layout(
     ts: tskit.TreeSequence,
 ) -> list[tuple[str | None, np.ndarray]]:
-    """Calcule la liste (nom de population, IDs des noeuds échantillons de
-    cette population) pour une TreeSequence donnée.
+    """Calcule le layout (nom de population, IDs des noeuds échantillons) d'une TreeSequence.
 
     Factorisé pour pouvoir être calculé UNE SEULE FOIS et réutilisé sur
     plusieurs loci/tentatives qui partagent la même `demography`/
@@ -357,6 +414,13 @@ def compute_population_layout(
     de `with_maf_filter`/`with_maf_filter_shared_ancestry` (cache
     explicite à travers les tentatives, voir notes/exploration.md,
     entrée du 20/07/2026).
+
+    Args:
+        ts: La TreeSequence à inspecter.
+
+    Returns:
+        La liste des (nom_population, IDs des noeuds échantillons de
+        cette population), une entrée par population non vide.
     """
     layout = []
     for pop_index, population in enumerate(ts.tables.populations):
@@ -373,35 +437,45 @@ def simulate_snp_genotypes(
     seed: int,
     population_layout: list[tuple[str | None, np.ndarray]] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
-    """Pour chaque TreeSequence (un locus = un arbre indépendant), tire
+    """Tire une mutation par locus (Hudson) et retourne les génotypes par population.
+
+    Pour chaque TreeSequence (un locus = un arbre indépendant), tire
     une mutation UNIQUE selon l'algorithme de Hudson (vectorisé), et
     retourne les génotypes (0=ancestral, 1=dérivé) REGROUPÉS PAR
-    POPULATION.
+    POPULATION. Voir _draw_single_mutation_edge_child pour l'algorithme
+    de tirage, et la docstring d'origine pour la justification du
+    modèle (doc DIYABC section 2.4.3 : exactement une mutation par
+    locus, locus toujours polymorphe).
 
-    Voir _draw_single_mutation_edge_child pour l'algorithme de tirage, et
-    la docstring d'origine pour la justification du modèle (doc DIYABC
-    section 2.4.3 : exactement une mutation par locus, locus toujours
-    polymorphe).
+    Args:
+        tree_sequences: Un itérateur de TreeSequence, un arbre
+            indépendant par locus.
+        seed: La graine du tirage de mutation.
+        population_layout: Voir `compute_population_layout`. Si
+            `None` (cas d'un appel unique sur tout un flux de loci,
+            ex: chemin `maf=0.0`), calculé UNE SEULE FOIS ici même, au
+            premier locus, et réutilisé pour tous les suivants --
+            valable car tous les `tree_sequences` d'un même appel
+            partagent la même `demography`/`samples` d'origine (mêmes
+            réplicats d'un seul appel à simulate_independent_loci/
+            simulate_shared_ancestry_loci) : seule la topologie
+            coalescente varie d'un locus à l'autre, jamais
+            l'assignation des noeuds échantillons aux populations
+            (vérifié empiriquement). Si fourni par l'appelant (ex:
+            boucles de rejet MAF de `with_maf_filter`/`with_maf_
+            filter_shared_ancestry`, qui appellent cette fonction une
+            fois PAR TENTATIVE et calculent donc leur propre cache à
+            travers les tentatives), utilisé tel quel sans jamais être
+            recalculé. Sans ce cache, le redécodage du metadata des
+            populations et le refiltrage de ts.samples(population=...)
+            à CHAQUE locus représentaient à eux seuls ~20% du temps
+            d'une particule sur 5000 loci (voir notes/exploration.md,
+            entrée du 20/07/2026) -- le plus gros poste évitable du
+            surcoût tskit par locus identifié dans cette investigation.
 
-    `population_layout` (voir `compute_population_layout`) : si `None` (cas
-    d'un appel unique sur tout un flux de loci, ex: chemin `maf=0.0`),
-    calculé UNE SEULE FOIS ici même, au premier locus, et réutilisé pour
-    tous les suivants -- valable car tous les `tree_sequences` d'un même
-    appel partagent la même `demography`/`samples` d'origine (mêmes
-    réplicats d'un seul appel à simulate_independent_loci/
-    simulate_shared_ancestry_loci) : seule la topologie coalescente varie
-    d'un locus à l'autre, jamais l'assignation des noeuds échantillons
-    aux populations (vérifié empiriquement). Si fourni par l'appelant
-    (ex: boucles de rejet MAF de `with_maf_filter`/`with_maf_filter_
-    shared_ancestry`, qui appellent cette fonction une fois PAR
-    TENTATIVE et calculent donc leur propre cache à travers les
-    tentatives), utilisé tel quel sans jamais être recalculé. Sans ce
-    cache, le redécodage du metadata des populations et le refiltrage de
-    ts.samples(population=...) à CHAQUE locus représentaient à eux seuls
-    ~20% du temps d'une particule sur 5000 loci (voir
-    notes/exploration.md, entrée du 20/07/2026) -- le plus gros poste
-    évitable du surcoût tskit par locus identifié dans cette
-    investigation.
+    Returns:
+        Un itérateur de dicts {nom_population: [génotype, ...]} (un
+        dict par locus).
     """
     rng = random.Random(seed)
 
@@ -424,8 +498,18 @@ def simulate_snp_genotypes(
 
 
 def observed_maf(locus_genotypes: dict[str, list[int]]) -> float:
-    """MAF poolée sur toutes les populations, comme ParticleC::mafreached
-    (min(dérivé, ancestral) / total) -- pas juste la fréquence dérivée."""
+    """Calcule la MAF poolée sur toutes les populations pour un locus.
+
+    Comme ParticleC::mafreached (min(dérivé, ancestral) / total) -- pas
+    juste la fréquence dérivée.
+
+    Args:
+        locus_genotypes: Dict {nom_population: [génotype, ...]} (0 ou
+            1) pour un seul locus.
+
+    Returns:
+        La MAF (fréquence de l'allèle minoritaire).
+    """
     all_genotypes = [g for genos in locus_genotypes.values() for g in genos]
     n1 = sum(all_genotypes)
     n0 = len(all_genotypes) - n1
@@ -440,30 +524,24 @@ def with_maf_filter(
     seed: int,
     ploidy: int = 2,
 ) -> Iterator[dict[str, list[int]]]:
-    """Simule des loci SNP indépendants avec filtre MAF (minor allele
-    frequency, cf. doc DIYABC section 2.4.3) : si la fréquence de
-    l'allèle MINORITAIRE (le moins fréquent des deux, dérivé ou
-    ancestral -- pas forcément le dérivé) est strictement inférieure à
-    `maf`, on rejette ce locus et on en resimule un nouveau (nouvelle
-    généalogie + nouvelle mutation, jamais de recyclage de l'arbre
-    rejeté) jusqu'à obtenir `num_loci` loci acceptés. Reproduit
-    `ParticleC::mafreached` (particuleC.cpp:2194-2210).
+    """Simule des loci SNP indépendants avec filtre MAF.
 
-    `maf` doit déjà être extrait (ex: via `parse_maf_ratio` sur le fichier
-    .snp observé) -- cette fonction ne lit aucun fichier, à l'appelant de
-    décider d'où vient le seuil.
-
-    `ploidy` : transmis tel quel à `simulate_independent_loci` (même
-    contrat -- 2 pour <A>, 1 pour <H>/<X> avec une `demography` déjà
-    rescalée, voir sa docstring).
+    MAF = minor allele frequency, cf. doc DIYABC section 2.4.3 : si la
+    fréquence de l'allèle MINORITAIRE (le moins fréquent des deux,
+    dérivé ou ancestral -- pas forcément le dérivé) est strictement
+    inférieure à `maf`, on rejette ce locus et on en resimule un
+    nouveau (nouvelle généalogie + nouvelle mutation, jamais de
+    recyclage de l'arbre rejeté) jusqu'à obtenir `num_loci` loci
+    acceptés. Reproduit `ParticleC::mafreached`
+    (particuleC.cpp:2194-2210).
 
     `maf=0.0` (équivalent DIYABC de `<MAF=hudson>` ou d'un tag absent)
-    délègue directement à `simulate_independent_loci` + `simulate_snp_genotypes`
-    avec la même graine pour les deux (comme le fait déjà chaque branche
-    de `simulate_genotypes_for_locus_type`) -- comportement et résultats
-    identiques à un appel direct de ces deux fonctions, pour ne rien
-    changer aux datasets déjà validés qui n'ont pas de filtre MAF actif
-    (human, toy_example5, ...).
+    délègue directement à `simulate_independent_loci` +
+    `simulate_snp_genotypes` avec la même graine pour les deux (comme
+    le fait déjà chaque branche de `simulate_genotypes_for_locus_type`)
+    -- comportement et résultats identiques à un appel direct de ces
+    deux fonctions, pour ne rien changer aux datasets déjà validés qui
+    n'ont pas de filtre MAF actif (human, toy_example5, ...).
 
     `maf>0.0` : les tentatives sont tirées PAR LOT de
     `max(_MAF_BATCH_SIZE, num_loci // 4)` (un seul appel
@@ -478,6 +556,22 @@ def with_maf_filter(
     `samples`, jamais de la graine tirée -- elle est donc calculée une
     seule fois, à la toute première tentative, et réutilisée pour toutes
     les suivantes (voir notes/exploration.md, entrée du 20/07/2026).
+
+    Args:
+        demography: La démographie msprime.
+        samples: Même contrat que simulate_independent_loci.
+        num_loci: Le nombre de loci acceptés à produire.
+        maf: Le seuil MAF, déjà extrait (ex: via `parse_maf_ratio` sur
+            le fichier .snp observé) -- cette fonction ne lit aucun
+            fichier, à l'appelant de décider d'où vient le seuil.
+        seed: La graine de la simulation.
+        ploidy: Transmis tel quel à `simulate_independent_loci` (même
+            contrat -- 2 pour <A>, 1 pour <H>/<X> avec une
+            `demography` déjà rescalée, voir sa docstring).
+
+    Returns:
+        Un itérateur de `num_loci` dicts {nom_population:
+        [génotype, ...]}, tous au-dessus du seuil MAF.
     """
     if maf == 0.0:
         tree_sequences = simulate_independent_loci(
@@ -536,11 +630,13 @@ def with_maf_filter_shared_ancestry(
     seed: int,
     ploidy: int = 1,
 ) -> Iterator[dict[str, list[int]]]:
-    """Variante de with_maf_filter pour <Y>/<M> : contrairement aux loci
-    <A>/<H>/<X> (chaque locus = sa propre généalogie indépendante), tous
-    les loci <Y> (resp. <M>) d'une même particule PARTAGENT UNE SEULE
-    généalogie (voir simulate_shared_ancestry_loci) -- seule la mutation
-    diffère d'un locus à l'autre.
+    """Variante de with_maf_filter pour <Y>/<M> (généalogie partagée).
+
+    Contrairement aux loci <A>/<H>/<X> (chaque locus = sa propre
+    généalogie indépendante), tous les loci <Y> (resp. <M>) d'une même
+    particule PARTAGENT UNE SEULE généalogie (voir
+    simulate_shared_ancestry_loci) -- seule la mutation diffère d'un
+    locus à l'autre.
 
     Reproduit exactement `particuleC.cpp:2424-2495` : le cache
     GeneTreeY/GeneTreeM est rempli AVANT le test MAF, donc indépendamment
@@ -552,10 +648,23 @@ def with_maf_filter_shared_ancestry(
     généalogie à chaque rejet -- les deux mécanismes sont réellement
     différents côté DIYABC, pas juste une simplification.
 
-    `maf` doit déjà être extrait (voir with_maf_filter). `maf=0.0` délègue
-    directement à simulate_shared_ancestry_loci + simulate_snp_genotypes
-    avec la même graine pour les deux, comportement identique à un appel
-    direct de ces deux fonctions.
+    Args:
+        demography: La démographie msprime (déjà rescalée par
+            l'appelant si nécessaire).
+        samples: Même contrat que simulate_independent_loci.
+        num_loci: Le nombre de loci acceptés à produire.
+        maf: Le seuil MAF, déjà extrait (voir with_maf_filter).
+            `maf=0.0` délègue directement à
+            simulate_shared_ancestry_loci + simulate_snp_genotypes
+            avec la même graine pour les deux, comportement identique
+            à un appel direct de ces deux fonctions.
+        seed: La graine de la simulation.
+        ploidy: Transmis tel quel à simulate_independent_loci/
+            simulate_shared_ancestry_loci.
+
+    Returns:
+        Un itérateur de `num_loci` dicts {nom_population:
+        [génotype, ...]}, tous au-dessus du seuil MAF.
     """
     if maf == 0.0:
         tree_sequences = simulate_shared_ancestry_loci(
@@ -604,16 +713,14 @@ def simulate_genotypes_for_locus_type(
     num_loci: int,
     seed: int,
 ) -> Iterator[dict[str, list[int]]]:
-    """Point d'entrée unique par type de locus : choisit la bonne
-    combinaison samples/demography-rescalée-ou-non/ploidy/fonction de
-    simulation-indépendante-ou-partagée selon locus_type, puis retourne
-    les génotypes simulés (même contrat de sortie que
-    simulate_snp_genotypes, qu'on appelle en dernière étape dans tous
-    les cas -- elle ne dépend jamais de locus_type elle-même).
+    """Point d'entrée unique de simulation de génotypes SNP, par type de locus.
 
-    `demography` : la démographie <A> "de base" (construite par
-    build_demography, PAS encore rescalée) -- c'est CETTE fonction qui
-    décide si/comment la rescaler selon locus_type, jamais l'appelant.
+    Choisit la bonne combinaison samples/demography-rescalée-ou-non/
+    ploidy/fonction de simulation-indépendante-ou-partagée selon
+    locus_type, puis retourne les génotypes simulés (même contrat de
+    sortie que simulate_snp_genotypes, qu'on appelle en dernière étape
+    dans tous les cas -- elle ne dépend jamais de locus_type
+    elle-même).
 
     sex_ratio n'est PAS un paramètre : il est dérivé automatiquement de
     snp_file_path via parse_sex_ratio, comme tout le reste (samples,
@@ -652,6 +759,23 @@ def simulate_genotypes_for_locus_type(
     ne redessine jamais l'arbre, seulement la mutation (voir la docstring
     de with_maf_filter_shared_ancestry, qui reproduit exactement
     particuleC.cpp:2424-2495).
+
+    Args:
+        demography: La démographie <A> "de base" (construite par
+            build_demography, PAS encore rescalée) -- c'est CETTE
+            fonction qui décide si/comment la rescaler selon
+            locus_type, jamais l'appelant.
+        snp_file_path: Chemin du fichier .snp observé.
+        locus_type: "A", "H", "X", "Y" ou "M".
+        num_loci: Le nombre de loci à simuler.
+        seed: La graine de la simulation.
+
+    Returns:
+        Un itérateur de `num_loci` dicts {nom_population:
+        [génotype, ...]}.
+
+    Raises:
+        NotImplementedError: Si locus_type est inconnu.
     """
 
     sex_ratio = parse_sex_ratio(snp_file_path)
@@ -707,23 +831,34 @@ def simulate_poolseq_reads(
     seed: int,
     population_layout: list[tuple[str | None, np.ndarray]] | None = None,
 ) -> Iterator[dict[str, tuple[int, int]]]:
-    """Simule les lectures Pool-seq pour chaque locus simulé,
-    en utilisant les génotypes simulés et le nombre de lectures observées par population.
-    `tree_sequences` : un itérateur de TreeSequence simulées pour chaque locus.
-    `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
-    `seed` : graine aléatoire pour la reproductibilité.
-    `population_layout` (voir `compute_population_layout`) : si `None` (cas d'un
-    appel unique sur tout un flux de loci, ex: chemin `mrc<=0`), calculé
-    UNE SEULE FOIS ici même, au premier locus, et réutilisé pour tous les
-    suivants -- même principe que `simulate_snp_genotypes`. Si fourni par
-    l'appelant (ex: boucle de rejet MRC de `with_mrc_filter`, qui appelle
-    cette fonction une fois PAR TENTATIVE et calcule donc son propre cache
-    à travers les tentatives), utilisé tel quel sans jamais être recalculé.
-    Retourne un itérateur de dictionnaires contenant le nombre de lectures dérivées et
-    ancestrales par population pour chaque locus.
+    """Simule les lectures PoolSeq de chaque locus.
 
-    A voir si zip pose problème, car longeur différente entre tree_sequences et observed_reads_per_locus,
-    sinon utiliser itertools.zip_longest(tree_sequence, obeserved_reads_per_locus, fillvalue=_SENTINEL)
+    Tire une mutation par locus (même algorithme de Hudson que
+    simulate_snp_genotypes), puis convertit la proportion de lignées
+    dérivées de chaque population en un tirage binomial de lectures,
+    calé sur la profondeur totale RÉELLEMENT observée à ce locus/cette
+    population (`observed_reads_per_locus`) -- seule la répartition
+    allèle1/allèle2 est simulée, jamais la couverture elle-même.
+
+    Args:
+        tree_sequences: Un itérateur de TreeSequence simulées, une par
+            locus.
+        observed_reads_per_locus: Une liste de dicts {nom_population:
+            (nreads_dérivé, nreads_total)} observés, un par locus.
+        seed: La graine du tirage de mutation.
+        population_layout: Voir `compute_population_layout`. Si
+            `None` (cas d'un appel unique sur tout un flux de loci,
+            ex: chemin `mrc<=0`), calculé UNE SEULE FOIS ici même, au
+            premier locus, et réutilisé pour tous les suivants --
+            même principe que `simulate_snp_genotypes`. Si fourni par
+            l'appelant (ex: boucle de rejet MRC de `with_mrc_filter`,
+            qui appelle cette fonction une fois PAR TENTATIVE et
+            calcule donc son propre cache à travers les tentatives),
+            utilisé tel quel sans jamais être recalculé.
+
+    Returns:
+        Un itérateur de dicts {nom_population: (nreads_dérivé,
+        nreads_total)} simulés, un par locus.
     """
 
     rng = random.Random(seed)
@@ -764,10 +899,17 @@ def _reindex_reads_by_msprime_name(
     observed_reads_per_locus: list[dict[str, tuple[int, int]]],
     snp_file_path: str,
 ) -> list[dict[str, tuple[int, int]]]:
-    """Reindexe les lectures observées par locus pour correspondre aux noms de population utilisés par msprime.
-    `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
-    `snp_file_path` : chemin vers le fichier .snp pour obtenir la correspondance des noms de population.
-    Retourne une liste de dictionnaires avec les noms de population msprime comme clés.
+    """Reindexe les lectures observées pour utiliser les noms de population msprime.
+
+    Args:
+        observed_reads_per_locus: Une liste de dicts {nom_population
+            réel: (nreads_dérivé, nreads_total)}, un par locus.
+        snp_file_path: Chemin du fichier .snp, pour obtenir la
+            correspondance des noms de population.
+
+    Returns:
+        La même liste, avec les clés remplacées par les noms de
+        population msprime ("pop1", "pop2"...).
     """
     index_to_name = population_index_to_name(
         snp_file_path
@@ -793,15 +935,12 @@ def with_mrc_filter(
     seed: int,
     ploidy: int = 2,
 ) -> Iterator[dict[str, tuple[int, int]]]:
-    """Simule des loci SNP indépendants avec filtre MRC (minimum read count).
-    Si le nombre de lectures dérivées est strictement inférieur à `mrc`, on rejette ce locus et on en resimule un nouveau.
-    Reproduit le comportement de `ParticleC::mrc_reached`.
+    """Simule des loci SNP indépendants avec filtre MRC.
 
-    `mrc` doit déjà être extrait via `parse_mrc_ratio` sur le fichier .snp observé.
-
-    `ploidy` : transmis tel quel à `simulate_independent_loci`.
-
-    `observed_reads_per_locus` : une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
+    MRC = minimum read count. Si le nombre de lectures dérivées est
+    strictement inférieur à `mrc`, on rejette ce locus et on en
+    resimule un nouveau. Reproduit le comportement de
+    `ParticleC::mrc_reached`.
 
     `mrc>0` : les tentatives sont tirées depuis un POOL PARTAGÉ ENTRE TOUS
     LES LOCI, pas un pool privé par locus -- contrairement à un batching
@@ -825,6 +964,21 @@ def with_mrc_filter(
     confirmé empiriquement le 22/07/2026) : chaque tentative, tous loci
     confondus, consomme une position distincte dans un flux continu,
     jamais réutilisée.
+
+    Args:
+        demography: La démographie msprime.
+        samples: Même contrat que simulate_independent_loci.
+        num_loci: Le nombre de loci acceptés à produire.
+        mrc: Le seuil MRC, déjà extrait via `parse_mrc_ratio` sur le
+            fichier .snp observé.
+        observed_reads_per_locus: Une liste de dicts {nom_population:
+            (nreads_dérivé, nreads_total)} observés, un par locus.
+        seed: La graine de la simulation.
+        ploidy: Transmis tel quel à `simulate_independent_loci`.
+
+    Returns:
+        Un itérateur de `num_loci` dicts {nom_population:
+        (nreads_dérivé, nreads_total)}, tous au-dessus du seuil MRC.
     """
 
     if mrc <= 0:
@@ -886,8 +1040,17 @@ def with_mrc_filter(
 def prepare_poolseq_observed_reads(
     snp_file_path: str, num_loci: int
 ) -> list[dict[str, tuple[int, int]]]:
-    """Prépare les lectures observées pour la simulation PoolSeq en lisant le fichier .snp et en tronquant aux `num_loci` premières entrées.
-    Retourne une liste de dictionnaires contenant le nombre de lectures observées par population pour chaque locus.
+    """Prépare les lectures observées pour la simulation PoolSeq.
+
+    Lit le fichier .snp et tronque aux `num_loci` premières entrées.
+
+    Args:
+        snp_file_path: Chemin du fichier .snp (doit être POOLSEQ).
+        num_loci: Le nombre de loci à conserver.
+
+    Returns:
+        Une liste de dicts {nom_population_msprime: (nreads_dérivé,
+        nreads_total)}, un par locus.
     """
     raw_reads = observed_reads(snp_file_path, num_loci=num_loci)
     reindexed_reads = _reindex_reads_by_msprime_name(raw_reads, snp_file_path)
@@ -901,17 +1064,16 @@ def simulate_poolseq_reads_with_mrc_filter(
     num_loci: int,
     observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
 ) -> Iterator[dict[str, tuple[int, int]]]:
-    """Point d'entrée unique pour un fichier PoolSeq -- pendant de
-    simulate_genotypes_for_locus_type (IndSeq), mais sans dispatch
-    multi-type : un fichier PoolSeq n'a jamais qu'un seul type de locus
-    déclaré (`<A>`, cf. `data.cpp:529` -- seule la classe de locus
-    autosomale diploïde est supportée pour PoolSeq côté DIYABC).
+    """Point d'entrée unique de simulation de lectures pour un fichier PoolSeq.
 
-    `demography` : la démographie de base, PAS encore rescalée -- comme
-    pour `<A>` en IndSeq, aucun rescale de Ne n'est nécessaire ici (même
-    `coeffcoal` que l'IndSeq `<A>` standard, cf. `data.cpp:1589-1603` --
-    PoolSeq a `type=15`, `15 % 5 == 0`, donc tombe dans exactement la
-    même branche que le cas autosomal diploïde standard).
+    Pendant de simulate_genotypes_for_locus_type (IndSeq), mais sans
+    dispatch multi-type : un fichier PoolSeq n'a jamais qu'un seul type
+    de locus déclaré (`<A>`, cf. `data.cpp:529` -- seule la classe de
+    locus autosomale diploïde est supportée pour PoolSeq côté DIYABC).
+    Aucun rescale de Ne n'est nécessaire (même `coeffcoal` que l'IndSeq
+    `<A>` standard, cf. `data.cpp:1589-1603` -- PoolSeq a `type=15`,
+    `15 % 5 == 0`, donc tombe dans exactement la même branche que le
+    cas autosomal diploïde standard).
 
     ploidy=2, PAS ploidy=1 (corrigé le 22/07/2026 -- voir
     notes/exploration.md) : DIYABC construit l'arbre de généalogie
@@ -965,6 +1127,21 @@ def simulate_poolseq_reads_with_mrc_filter(
       - `with_mrc_filter(..., ploidy=2)` -- simulation + rejet-et-
         resimule si le critère MRC (min des reads dérivés/ancestraux,
         toutes populations combinées) n'est pas atteint.
+
+    Args:
+        demography: La démographie de base (PAS encore rescalée --
+            comme pour `<A>` en IndSeq, aucun rescale n'est
+            nécessaire ici).
+        snp_file_path: Chemin du fichier .snp (doit être POOLSEQ).
+        seed: La graine de la simulation.
+        num_loci: Le nombre de loci à simuler.
+        observed_reads_per_locus: Si `None` (défaut), calculé via
+            `prepare_poolseq_observed_reads(snp_file_path, num_loci)`.
+            Sinon, utilisé tel quel.
+
+    Returns:
+        Un itérateur de `num_loci` dicts {nom_population:
+        (nreads_dérivé, nreads_total)}, tous au-dessus du seuil MRC.
     """
     mrc = parse_mrc_ratio(snp_file_path)
     haploid_pool_sizes = build_samples_argument(snp_file_path)
@@ -988,8 +1165,21 @@ def simulate_poolseq_reads_with_mrc_filter(
 def build_transition_matrix(
     name_model: str, kappas: tuple[float, float], frequences_by_locus: dict[str, float]
 ) -> np.ndarray:
-    """Calcule la matrice de transition pour un modèle donné et des fréquences de bases par locus.
-    Elle renvoie une matrice 4x4 représentant les probabilités de transition entre les bases A, C, G et T.
+    """Calcule la matrice de transition (matQ) pour un modèle donné et un locus.
+
+    Args:
+        name_model: "JK", "K2P", "HKY" ou "TN".
+        kappas: (k1, k2) -- k2 ignoré pour "JK"/"K2P"/"HKY".
+        frequences_by_locus: Dict {"pi_A": ..., "pi_C": ..., "pi_G":
+            ..., "pi_T": ...}, les fréquences de bases observées de ce
+            locus (voir observed_data.base_frequency_by_locus).
+
+    Returns:
+        La matrice 4x4 (ordre A/C/G/T) des probabilités de
+        transition, chaque ligne normalisée à somme 1, diagonale nulle.
+
+    Raises:
+        NotImplementedError: Si name_model est inconnu.
     """
     pi_A, pi_C, pi_G, pi_T = (
         frequences_by_locus["pi_A"],
@@ -1062,12 +1252,33 @@ def build_transition_matrix(
 def build_rate_map(
     mutsit: list[float], mus_rate: float, dnalength: int
 ) -> msprime.RateMap:
-    """Retourne un objet msprime.RateMap représentant des taux de mutation."""
+    """Construit le profil de taux de mutation par site d'un locus (msprime.RateMap).
+
+    `mus_rate` est un taux moyen PAR SITE (donc le taux total attendu
+    sur tout le locus est `mus_rate * dnalength`) ; `mutsit` répartit
+    ce budget total entre les sites (poids relatifs qui somment à 1,
+    voir parameter_sampling.sample_site_rates -- un site invariant a un
+    poids de 0). Le taux absolu d'un site donné est donc `mus_rate *
+    dnalength * mutsit[site]` : on distribue le taux total du locus
+    site par site, proportionnellement à son poids relatif.
+
+    Args:
+        mutsit: Le poids de mutation relatif par site, longueur
+            dnalength, normalisé à somme 1.
+        mus_rate: Le taux de mutation moyen PAR SITE du locus.
+        dnalength: La longueur du locus.
+
+    Returns:
+        La msprime.RateMap correspondante (un taux absolu par site).
+
+    Raises:
+        ValueError: Si len(mutsit) != dnalength.
+    """
     if len(mutsit) != dnalength:
         raise ValueError(
             f"Le nombre de sites de mutation ({len(mutsit)}) ne correspond pas à la longueur de la séquence ({dnalength})."
         )
-    # Crée une carte de taux avec le taux de mutation spécifié pour le site donné
+    # Crée le profil de taux (msprime.RateMap), un taux absolu par site
     rate_map = msprime.RateMap(
         position=[i for i in range(dnalength + 1)],
         rate=[mus_rate * dnalength * mutsit[i] for i in range(dnalength)],
@@ -1076,8 +1287,17 @@ def build_rate_map(
 
 
 def count_loci_per_group(list_loci: list[LociDescriptionDetailed]) -> dict[str, int]:
-    """Compte le nombre de loci par groupe dans une liste de descriptions de loci.
-    Retourne un dictionnaire avec les noms de groupes comme clés et le nombre de loci dans chaque groupe comme valeurs.
+    """Compte le nombre de loci par groupe.
+
+    Args:
+        list_loci: La liste des loci détaillés.
+
+    Returns:
+        Un dict {nom_groupe: nombre_de_loci}.
+
+    Raises:
+        ValueError: Si un même groupe mélange plusieurs types de loci
+            ("M" et "S"), non supporté.
     """
     loci_count = {}
     loci_type_per_group = {}
@@ -1101,8 +1321,22 @@ def count_loci_per_group(list_loci: list[LociDescriptionDetailed]) -> dict[str, 
 def build_group_local_param_per_locus(
     header_text: str, seed: int
 ) -> dict[str, tuple[float, float, float]]:
-    """Construit un dictionnaire des kappas et du taux de mutation par locus à partir d'une liste de descriptions de loci.
-    Retourne un dictionnaire avec les noms de loci comme clés et les tuples de paramètres (k1, k2, musrate) comme valeurs.
+    """Tire k1/k2/mus_rate par locus (hiérarchie à deux niveaux, groupe puis locus).
+
+    Pour chaque groupe `[S]` de header.txt : `draw_group_parameter_values`
+    donne la valeur moyenne par groupe (premier niveau), puis
+    `sampling_group_local_param` en dérive une valeur par locus (second
+    niveau, dispersion optionnelle autour de la moyenne du groupe).
+
+    Args:
+        header_text: Texte complet de header.txt.
+        seed: La graine du tirage.
+
+    Returns:
+        Un dict {nom_locus: (k1, k2, mus_rate)} -- triplet à arité
+        fixe pour chaque locus `[S]`, quel que soit le modèle de
+        substitution utilisé par son groupe (0.0 pour les kappas non
+        utilisés).
     """
     params_per_locus = {}
     group_priors = parse_group_priors(header_text)
@@ -1219,8 +1453,19 @@ def build_group_local_param_per_locus(
 def build_matrix_per_locus(
     header_text: str, mss_file_path: str | Path, seed: int
 ) -> dict[str, np.ndarray]:
-    """Construit un dictionnaire des matrices de transition par locus à partir d'une liste de descriptions de loci.
-    Retourne un dictionnaire avec les noms de loci comme clés et les matrices de transition comme valeurs.
+    """Construit la matrice de transition (matQ) de chaque locus [S].
+
+    Pipeline complet header.txt + .mss + seed -> {nom_locus: matQ},
+    en composant build_group_local_param_per_locus (k1/k2 par locus),
+    base_frequency_by_locus (pi par locus) et build_transition_matrix.
+
+    Args:
+        header_text: Texte complet de header.txt.
+        mss_file_path: Chemin du fichier .mss.
+        seed: La graine du tirage.
+
+    Returns:
+        Un dict {nom_locus: matQ} pour chaque locus [S].
     """
     list_loci = parse_loci_description(header_text)
     params_per_locus = build_group_local_param_per_locus(header_text, seed)
@@ -1243,8 +1488,14 @@ def build_matrix_per_locus(
 
 
 def build_rate_map_per_locus(header_text: str, seed: int) -> dict[str, msprime.RateMap]:
-    """Construit un dictionnaire des cartes de taux par locus à partir d'une liste de descriptions de loci.
-    Retourne un dictionnaire avec les noms de loci comme clés et les cartes de taux comme valeurs.
+    """Construit le profil de taux de mutation (msprime.RateMap) de chaque locus [S].
+
+    Args:
+        header_text: Texte complet de header.txt.
+        seed: La graine du tirage.
+
+    Returns:
+        Un dict {nom_locus: msprime.RateMap} pour chaque locus [S].
     """
     list_loci = parse_loci_description(header_text)
     params_per_locus = build_group_local_param_per_locus(header_text, seed)
@@ -1277,8 +1528,18 @@ def simulate_dna_mutations(
     rate_map: msprime.RateMap,
     seed: int,
 ) -> tskit.TreeSequence:
-    """Simule les mutations sur une séquence d'ADN donnée en utilisant un modèle de substitution et une carte de taux.
-    Retourne un TreeSequence avec les mutations simulées.
+    """Place les mutations sur une généalogie ADN via msprime.sim_mutations.
+
+    Args:
+        tree_sequence: La généalogie non mutée (un locus).
+        transition_matrix: La matrice de transition (matQ) du locus.
+        frequencies: Dict {"pi_A": ..., "pi_C": ..., "pi_G": ...,
+            "pi_T": ...}, distribution ancestrale à la racine.
+        rate_map: Le profil de taux de mutation par site du locus.
+        seed: La graine du tirage de mutation.
+
+    Returns:
+        La TreeSequence mutée.
     """
     alleles = ["A", "C", "G", "T"]
     list_frequencies = [
@@ -1306,21 +1567,33 @@ def simulate_dna_mutations(
 def dna_ancestry_parameters_for_heritage(
     heritage: str, demography: msprime.Demography, sex_ratio: float
 ) -> tuple[msprime.Demography, int]:
-    """Détermine la démographie (rescalée ou non) et la ploïdie à utiliser
-    pour un locus ADN selon son type d'héritage, en reproduisant le même
-    dispatch que `simulate_genotypes_for_locus_type` côté SNP : "A" utilise
-    la démographie <A> telle quelle en ploidy=2 ; "H"/"M" la rescalent par
-    `coalescence_coefficient(heritage, sex_ratio) / 2` en ploidy=1 (mêmes
-    coefficients, mêmes formules, aucune raison structurelle qu'ils
-    diffèrent entre SNP et séquences ADN -- comp_matQ/put_mutations opèrent
-    sur le même arbre msprime que le Hudson SNP, seule la mutation diffère).
+    """Détermine la démographie (rescalée ou non) et la ploïdie pour un locus ADN.
 
-    "X"/"Y" ne sont PAS supportés ici : contrairement au .snp (colonnes
-    IND/SEX/POP), le format .mss (genepop) ne porte aucun sexe par
-    individu -- `build_sex_stratified_samples_argument`/
-    `build_male_only_samples_argument` n'ont pas d'équivalent exploitable
-    sur ce format, et on ne devine pas un sexe par individu qui n'existe
-    pas dans le fichier observé.
+    Reproduit le même dispatch que `simulate_genotypes_for_locus_type`
+    côté SNP : "A" utilise la démographie <A> telle quelle en
+    ploidy=2 ; "H"/"M" la rescalent par
+    `coalescence_coefficient(heritage, sex_ratio) / 2` en ploidy=1
+    (mêmes coefficients, mêmes formules, aucune raison structurelle
+    qu'ils diffèrent entre SNP et séquences ADN -- comp_matQ/
+    put_mutations opèrent sur le même arbre msprime que le Hudson SNP,
+    seule la mutation diffère).
+
+    Args:
+        heritage: "A", "H", "M", "X" ou "Y".
+        demography: La démographie <A> de base (PAS encore rescalée).
+        sex_ratio: Fraction de mâles (voir observed_data.parse_sex_ratio).
+
+    Returns:
+        Le tuple (demography, ploidy) à utiliser pour ce locus.
+
+    Raises:
+        NotImplementedError: Pour "X"/"Y" -- contrairement au .snp
+            (colonnes IND/SEX/POP), le format .mss (genepop) ne porte
+            aucun sexe par individu -- `build_sex_stratified_samples_
+            argument`/`build_male_only_samples_argument` n'ont pas
+            d'équivalent exploitable sur ce format, et on ne devine
+            pas un sexe par individu qui n'existe pas dans le fichier
+            observé. Et pour tout autre type d'héritage inconnu.
     """
     if heritage == "A":
         return demography, 2
@@ -1347,8 +1620,11 @@ def dna_mutation_simulation_per_locus(
     demography: msprime.Demography,
     seed: int,
 ) -> dict[str, tskit.TreeSequence]:
-    """Simule les mutations pour chaque locus d'ADN en utilisant les matrices de transition et les cartes de taux correspondantes.
-    Retourne un dictionnaire avec les noms de loci comme clés et les TreeSequences mutés comme valeurs.
+    """Assemble le pipeline complet de simulation ADN, par locus.
+
+    Pour chaque locus [S] : généalogie (msprime.sim_ancestry direct,
+    pas simulate_independent_loci -- sequence_length variable par
+    locus) + mutation (matQ/RateMap déjà construits).
 
     La démographie et la ploïdie utilisées pour l'arbre de coalescence de
     chaque locus dépendent de son type d'héritage (<A>/<H>/<M>, voir
@@ -1356,6 +1632,15 @@ def dna_mutation_simulation_per_locus(
     loci de types différents (ex. toy_example2_ms_dna : G2 <A>, G3 <M>),
     donc ce dispatch se fait par locus, jamais une fois pour tout le
     dataset.
+
+    Args:
+        header_text: Texte complet de header.txt.
+        mss_file_path: Chemin du fichier .mss.
+        demography: La démographie <A> de base (PAS encore rescalée).
+        seed: La graine de la simulation.
+
+    Returns:
+        Un dict {nom_locus: TreeSequence mutée} pour chaque locus [S].
     """
     rate_map_per_locus = build_rate_map_per_locus(header_text, seed)
     matrix_per_locus = build_matrix_per_locus(header_text, mss_file_path, seed)
@@ -1401,8 +1686,24 @@ def dna_mutation_simulation_per_locus(
 def _group_prior_values_from_columns(
     group_priors_values: dict[str, float], group_priors: dict
 ) -> dict[str, dict[str, float]]:
-    """Construit un dictionnaire des valeurs de paramètres par groupe à partir des colonnes du fichier .priors.
-    Retourne un dictionnaire avec les noms de groupes comme clés et les dictionnaires de valeurs de paramètres comme valeurs.
+    """Reconstruit le dict nested {groupe: {prior: valeur}} depuis les colonnes du reftable réel.
+
+    Reshape les colonnes plates du vrai reftable DIYABC (ex:
+    "µseq_2", "k1seq_2") dans la forme nested que
+    draw_group_parameter_values produit normalement, pour que
+    build_group_local_param_per_locus_from_values puisse réutiliser
+    tel quel le corps de build_group_local_param_per_locus.
+
+    Args:
+        group_priors_values: Dict {nom_colonne: valeur} tel que lu
+            dans le vrai reftable (voir
+            reftable_loop.parse_real_reftable_params_with_group_priors).
+        group_priors: Dict {nom_groupe: [GroupPrior, ...]} (voir
+            prior_parser.parse_group_priors).
+
+    Returns:
+        Un dict {nom_groupe: {nom_prior: valeur}}, pour les groupes de
+        loci ADN ([S]) uniquement -- les groupes MicroSat sont ignorés.
     """
     group_values = {}
     for group, priors in group_priors.items():
@@ -1435,9 +1736,24 @@ def _group_prior_values_from_columns(
 def build_group_local_param_per_locus_from_values(
     header_text: str, group_priors_values: dict[str, float], seed: int
 ) -> dict[str, tuple[float, float, float]]:
-    """Construit un dictionnaire des kappas et du taux de mutation par locus à partir d'une liste de descriptions de loci et des
-    valeurs de priors identiques à ceux d'une simulation diyabc.
-    Retourne un dictionnaire avec les noms de loci comme clés et les tuples de kappas (k1, k2, musrate) comme valeurs.
+    """Variante replay de build_group_local_param_per_locus (tier 1 = valeurs réelles).
+
+    Le tirage par-groupe (premier niveau) est remplacé par les valeurs
+    réellement tirées par DIYABC (`group_priors_values`, via
+    `_group_prior_values_from_columns`) ; le tirage par-locus (second
+    niveau, dispersion autour de la moyenne) N'EST PAS remplacé -- il
+    continue de dépendre de `seed`, car DIYABC n'enregistre pas cette
+    dispersion dans le reftable, il n'y a donc rien à rejouer pour elle.
+
+    Args:
+        header_text: Texte complet de header.txt.
+        group_priors_values: Dict {nom_colonne: valeur} tel que lu
+            dans le vrai reftable.
+        seed: La graine du tirage par-locus (second niveau).
+
+    Returns:
+        Un dict {nom_locus: (k1, k2, mus_rate)}, même contrat que
+        build_group_local_param_per_locus.
     """
     params_per_locus = {}
     group_priors = parse_group_priors(header_text)
@@ -1553,16 +1869,18 @@ def build_matrix_per_locus_from_values(
     group_priors_values: dict[str, float],
     seed: int,
 ) -> dict[str, np.ndarray]:
-    """Variante de build_matrix_per_locus qui NE TIRE PAS les k1/k2 moyens
-    par groupe (étage 1, voir build_group_local_param_per_locus_from_values)
-    : elle réutilise des valeurs déjà connues, typiquement les tirages
-    RÉELS d'un reftable DIYABC existant (voir reftable_loop.
+    """Variante replay de build_matrix_per_locus (premier niveau = valeurs réelles).
+
+    Ne tire PAS les k1/k2 moyens par groupe (premier niveau, voir
+    build_group_local_param_per_locus_from_values) : elle réutilise des
+    valeurs déjà connues, typiquement les tirages RÉELS d'un reftable
+    DIYABC existant (voir reftable_loop.
     parse_real_reftable_params_with_group_priors) -- pour comparer DIYABC
     et msprime sur EXACTEMENT les mêmes valeurs de k1/k2 par groupe, sans
     le biais possible de deux tirages indépendants.
 
-    Le tirage par-locus (étage 2, la dispersion de k1/k2 autour de la
-    moyenne du groupe, via sampling_group_local_param à l'intérieur de
+    Le tirage par-locus (second niveau, la dispersion de k1/k2 autour de
+    la moyenne du groupe, via sampling_group_local_param à l'intérieur de
     build_group_local_param_per_locus_from_values) N'EST PAS remplacé --
     il continue d'être tiré depuis `seed`, car cette valeur par-locus
     n'est jamais enregistrée dans le vrai reftable DIYABC (seule la
@@ -1571,6 +1889,17 @@ def build_matrix_per_locus_from_values(
     Sinon identique à build_matrix_per_locus (même construction de
     matrice de transition via build_transition_matrix, mêmes fréquences
     de bases observées).
+
+    Args:
+        header_text: Texte complet de header.txt.
+        mss_file_path: Chemin du fichier .mss.
+        group_priors_values: Dict {nom_colonne: valeur} tel que lu
+            dans le vrai reftable.
+        seed: La graine du tirage par-locus (second niveau).
+
+    Returns:
+        Un dict {nom_locus: matQ} pour chaque locus [S], même contrat
+        que build_matrix_per_locus.
     """
     list_loci = parse_loci_description(header_text)
     params_per_locus = build_group_local_param_per_locus_from_values(
@@ -1597,8 +1926,10 @@ def build_matrix_per_locus_from_values(
 def build_rate_map_per_locus_from_values(
     header_text: str, group_priors_values: dict[str, float], seed: int
 ) -> dict[str, msprime.RateMap]:
-    """Variante de build_rate_map_per_locus qui NE TIRE PAS le mus_rate
-    moyen par groupe (étage 1) : réutilise group_priors_values, comme
+    """Variante replay de build_rate_map_per_locus (premier niveau = valeurs réelles).
+
+    Ne tire PAS le mus_rate moyen par groupe (premier niveau) :
+    réutilise group_priors_values, comme
     build_matrix_per_locus_from_values -- même principe, voir sa
     docstring pour le détail complet.
 
@@ -1608,6 +1939,17 @@ def build_rate_map_per_locus_from_values(
     _SITE_RATE_SEED_OFFSET)), pour la même raison que le tirage
     par-locus de k1/k2 : `mutsit` n'est jamais enregistré dans le vrai
     reftable DIYABC, il n'y a donc rien à rejouer pour lui non plus.
+
+    Args:
+        header_text: Texte complet de header.txt.
+        group_priors_values: Dict {nom_colonne: valeur} tel que lu
+            dans le vrai reftable.
+        seed: La graine du tirage par-locus (second niveau) et de
+            `mutsit`.
+
+    Returns:
+        Un dict {nom_locus: msprime.RateMap} pour chaque locus [S],
+        même contrat que build_rate_map_per_locus.
     """
     list_loci = parse_loci_description(header_text)
     params_per_locus = build_group_local_param_per_locus_from_values(
@@ -1642,9 +1984,10 @@ def dna_mutation_simulation_per_locus_from_values(
     group_priors_values: dict[str, float],
     seed: int,
 ) -> dict[str, tskit.TreeSequence]:
-    """Variante de dna_mutation_simulation_per_locus pour le rejeu apparié
-    DIYABC/msprime (voir build_matrix_per_locus_from_values pour le
-    principe général) : appelle build_rate_map_per_locus_from_values/
+    """Variante replay de dna_mutation_simulation_per_locus (rejeu apparié DIYABC/msprime).
+
+    Voir build_matrix_per_locus_from_values pour le principe général :
+    appelle build_rate_map_per_locus_from_values/
     build_matrix_per_locus_from_values au lieu des originales, pour que
     les k1/k2/mus_rate moyens par groupe soient ceux RÉELLEMENT tirés
     par DIYABC (group_priors_values) plutôt que tirés à nouveau depuis
@@ -1661,12 +2004,19 @@ def dna_mutation_simulation_per_locus_from_values(
     OFFSET + i par locus, dispatch ploïdie/démographie par type
     d'héritage) est identique à dna_mutation_simulation_per_locus.
 
-    La démographie et la ploïdie utilisées pour l'arbre de coalescence de
-    chaque locus dépendent de son type d'héritage (<A>/<H>/<M>, voir
-    `dna_ancestry_parameters_for_heritage`) -- un groupe peut mélanger des
-    loci de types différents (ex. toy_example2_ms_dna : G2 <A>, G3 <M>),
-    donc ce dispatch se fait par locus, jamais une fois pour tout le
-    dataset.
+    Args:
+        header_text: Texte complet de header.txt.
+        mss_file_path: Chemin du fichier .mss.
+        demography: La démographie <A> de base (déjà construite par
+            l'appelant à partir des valeurs historiques réelles).
+        group_priors_values: Dict {nom_colonne: valeur} tel que lu
+            dans le vrai reftable.
+        seed: La graine du tirage par-locus (second niveau), de la
+            généalogie et de la mutation.
+
+    Returns:
+        Un dict {nom_locus: TreeSequence mutée} pour chaque locus [S],
+        même contrat que dna_mutation_simulation_per_locus.
     """
     rate_map_per_locus = build_rate_map_per_locus_from_values(
         header_text, group_priors_values, seed
