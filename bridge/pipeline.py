@@ -72,11 +72,19 @@ LOCUS_TYPE_SEED_OFFSET = {
 
 
 def read_header_text(directory: Path) -> str:
-    """Lit header.txt si présent, sinon headerRF.txt en repli -- les deux
-    noms coexistent selon les jeux de données (header.txt = config
-    initiale fournie par l'utilisateur, headerRF.txt = variante produite
-    par un run DIYABC réel ; nos sous-dossiers de test n'auront au
-    départ que l'un des deux)."""
+    """Lit header.txt si présent, sinon headerRF.txt en repli.
+
+    Les deux noms coexistent selon les jeux de données (header.txt =
+    config initiale fournie par l'utilisateur, headerRF.txt = variante
+    produite par un run DIYABC réel ; nos sous-dossiers de test n'auront
+    au départ que l'un des deux).
+
+    Args:
+        directory: Le dossier contenant header.txt/headerRF.txt.
+
+    Returns:
+        Le texte complet du fichier trouvé.
+    """
     header_path = directory / "header.txt"
     if not header_path.exists():
         header_path = directory / "headerRF.txt"
@@ -91,12 +99,12 @@ def _simulate_genotypes_for_all_locus_types(
     num_loci: int | None = None,
     seed: int,
 ) -> Iterator[dict[str, list[int]]]:
-    """Boucle sur TOUS les types de locus déclarés dans la section 'loci
-    description' de header_text (parse_loci_description(header_text).
-    loci_counts_by_heritage -- dict[str, int], ex: {"A": 5000} pour
-    human, {"A": 70, "X": 10, "M": 10, "Y": 10} pour toy_example5), et
-    concatène les génotypes simulés pour chacun via
-    simulate_genotypes_for_locus_type.
+    """Simule les génotypes de TOUS les types de locus déclarés dans header_text.
+
+    Boucle sur `parse_loci_description(header_text).loci_counts_by_heritage`
+    (dict[str, int], ex: {"A": 5000} pour human, {"A": 70, "X": 10,
+    "M": 10, "Y": 10} pour toy_example5), et concatène les génotypes
+    simulés pour chacun via simulate_genotypes_for_locus_type.
 
     IMPORTANT -- num_loci est un compte PAR TYPE, pas un total : pour un
     dataset <A>-only comme human (un seul type déclaré), c'est
@@ -116,9 +124,20 @@ def _simulate_genotypes_for_all_locus_types(
     simulate_genotypes_for_locus_type avec la même seed brute pour
     plusieurs types dans cette boucle.
 
-    Retourne un itérateur (pas une liste) : voir simulate_independent_loci
-    pour la justification (ne pas matérialiser 51250 TreeSequence en
-    mémoire simultanément).
+    Args:
+        demography: La démographie <A> de base.
+        header_text: Texte complet de header.txt.
+        snp_path: Chemin du fichier .snp observé.
+        num_loci: Si None (défaut), simule le nombre exact de loci
+            déclaré dans header.txt pour chaque type. Sinon, ce nombre
+            de loci pour CHAQUE type déclaré (voir IMPORTANT ci-dessus).
+        seed: La graine de base (décalée par type de locus).
+
+    Returns:
+        Un itérateur des génotypes simulés, tous types de locus
+        concaténés -- pas une liste (voir simulate_independent_loci
+        pour la justification : ne pas matérialiser 51250 TreeSequence
+        en mémoire simultanément).
     """
 
     loci_counts_by_heritage = parse_loci_description(
@@ -141,15 +160,26 @@ def _simulate_genotypes_for_all_locus_types(
 def _population_names(
     genotypes_list: list[dict[str, list[int]]], snp_path: Path
 ) -> list[str]:
-    """Noms de population ("pop1", "pop2"...) dans le même ordre que
-    build_samples_argument -- dérivés GRATUITEMENT des clés du premier
-    locus déjà simulé (simulate_snp_genotypes construit ce dict avec
-    exactement les mêmes noms, voir ancestry_simulation._population_layout)
-    plutôt que de rescanner le fichier .snp une deuxième fois par
-    particule (mesuré : ~4% du temps d'une particule sur human, voir
-    notes/exploration.md, entrée du 20/07/2026). Repli sur
-    build_samples_argument si genotypes_list est vide (num_loci=0, cas
-    dégénéré qui n'arrive pas en pratique)."""
+    """Noms de population ("pop1", "pop2"...), dans le même ordre que build_samples_argument.
+
+    Dérivés GRATUITEMENT des clés du premier locus déjà simulé
+    (simulate_snp_genotypes construit ce dict avec exactement les mêmes
+    noms, voir ancestry_simulation.compute_population_layout) plutôt
+    que de rescanner le fichier .snp une deuxième fois par particule
+    (mesuré : ~4% du temps d'une particule sur human, voir
+    notes/exploration.md, entrée du 20/07/2026).
+
+    Args:
+        genotypes_list: Les génotypes déjà simulés (voir
+            simulate_snp_genotypes), au moins un locus.
+        snp_path: Chemin du fichier .snp observé -- utilisé seulement
+            en repli si genotypes_list est vide.
+
+    Returns:
+        La liste des noms de population, dans l'ordre. Repli sur
+        build_samples_argument si genotypes_list est vide (num_loci=0,
+        cas dégénéré qui n'arrive pas en pratique).
+    """
     if genotypes_list:
         return list(genotypes_list[0].keys())
     return list(build_samples_argument(snp_path).keys())
@@ -160,10 +190,29 @@ def _filter_statistics(
     header_text: str,
     stats_filter: str,
 ) -> dict[str, float]:
-    """Applique stats_filter ('ALL' ou 'HEADER') à un dict de statistiques
-    déjà calculé -- factorisé entre compute_summary_statistics et
+    """Applique stats_filter ('ALL' ou 'HEADER') à un dict de statistiques déjà calculé.
+
+    Factorisé entre compute_summary_statistics et
     compute_summary_statistics_from_values (même logique de filtrage,
-    seule la source des valeurs de paramètres diffère entre les deux)."""
+    seule la source des valeurs de paramètres diffère entre les deux).
+
+    Args:
+        summary_stats: Le dict {nom_colonne: valeur} déjà calculé.
+        header_text: Texte complet de header.txt.
+        stats_filter: "ALL" (retourne summary_stats tel quel) ou
+            "HEADER" (ne garde que les statistiques déclarées dans la
+            section 'group summary statistics' de header.txt, dans
+            leur ordre de déclaration).
+
+    Returns:
+        Le dict filtré.
+
+    Raises:
+        ValueError: Si stats_filter="HEADER" et que header.txt déclare
+            une statistique absente de summary_stats (vocabulaire
+            obsolète ou non implémenté).
+        NotImplementedError: Si stats_filter n'est ni "ALL" ni "HEADER".
+    """
     if stats_filter == "ALL":
         return summary_stats
     elif stats_filter == "HEADER":
@@ -191,18 +240,23 @@ def build_random_demography(
     header_text: str,
     seed: int,
 ) -> tuple[msprime.Demography, dict[str, float]]:
-    """Tire des valeurs de paramètres à partir des priors déclarés dans
-    header_text, puis construit la Demography msprime correspondant à
-    scenario avec ces valeurs.
+    """Tire les valeurs de priors puis construit la Demography correspondante.
 
     Toutes les valeurs de priors du fichier sont tirées (pas seulement
     celles utilisées par ce scenario précis) : plus simple, et évite de
     casser des contraintes d'ordre qui pourraient porter sur des
     paramètres d'autres scénarios.
 
-    Retourne (demography, values) -- les valeurs tirées sont renvoyées en
-    plus de la Demography, car elles seront nécessaires plus tard pour
-    écrire le reftable.bin (colonnes de paramètres).
+    Args:
+        scenario: Le scénario parsé (header_dataclasses.Scenario).
+        header_text: Texte complet de header.txt.
+        seed: La graine du tirage.
+
+    Returns:
+        Le tuple (demography, values) -- les valeurs tirées sont
+        renvoyées en plus de la Demography, car elles seront
+        nécessaires plus tard pour écrire le reftable.bin (colonnes de
+        paramètres).
     """
     priors, constraints = parse_priors(header_text)
     values = draw_parameter_values(priors, constraints, seed)
@@ -215,9 +269,24 @@ def build_random_demography_for_scenario_index(
     scenario_index: int,
     seed: int,
 ) -> tuple[msprime.Demography, dict[str, float]]:
-    """Variante pratique : sélectionne le scénario par son index (1-indexed,
-    comme dans header.txt) plutôt que de demander un objet Scenario déjà
-    parsé. Utile pour les tests et l'utilisation interactive.
+    """Variante de build_random_demography qui sélectionne le scénario par son index.
+
+    1-indexed, comme dans header.txt, plutôt que de demander un objet
+    Scenario déjà parsé. Utile pour les tests et l'utilisation
+    interactive.
+
+    Args:
+        header_text: Texte complet de header.txt.
+        scenario_index: L'index 1-based du scénario à utiliser.
+        seed: La graine du tirage.
+
+    Returns:
+        Le tuple (demography, values), même contrat que
+        build_random_demography.
+
+    Raises:
+        ValueError: Si scenario_index ne correspond à aucun scénario
+            parsé.
     """
     scenarios = parse_header_scenarios(header_text)
     scenario = next((s for s in scenarios if s.index == scenario_index), None)
@@ -239,16 +308,24 @@ def run_poc_for_directory(
     """Point d'entrée de haut niveau : équivalent du `-p ./` de DIYABC.
 
     Prend un dossier contenant header.txt et le fichier de données
-    observées (.snp), et produit num_loci TreeSequence mutées, simulées
-    sous le scénario demandé.
+    observées (.snp), et produit les génotypes simulés sous le scénario
+    demandé, pour tous les types de locus déclarés.
 
     Le nom du fichier de données est lu sur la PREMIÈRE LIGNE de
     header.txt (ex: "human_snp_all22chr_maf5.snp"), pas deviné par
     extension -- c'est le contrat du format DIYABC.
 
-    Retourne (mutated_tree_sequences, values) : l'itérateur des
-    TreeSequence mutées, et le dict des valeurs de paramètres tirées
-    (nécessaires plus tard pour écrire le reftable.bin).
+    Args:
+        directory: Le dossier contenant header.txt et le fichier .snp.
+        scenario_index: L'index 1-based du scénario à utiliser.
+        num_loci: Voir _simulate_genotypes_for_all_locus_types (compte
+            par type, pas un total ; None = comptes réels de header.txt).
+        seed: La graine de la simulation.
+
+    Returns:
+        Le tuple (mutated_tree_sequences, values) : l'itérateur des
+        génotypes simulés, et le dict des valeurs de paramètres tirées
+        (nécessaires plus tard pour écrire le reftable.bin).
     """
     directory = Path(directory)
     header_text = read_header_text(directory)
@@ -278,27 +355,46 @@ def compute_summary_statistics(
     stats_filter: str = "ALL",
     observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
 ) -> tuple[dict[str, float], dict[str, float]]:
-    """Calcule les statistiques résumées sur des données SIMULÉES par
-    notre pipeline, en utilisant nos formules Python validées
-    (summary_statistics.py) -- remplace la délégation au binaire C++
-    (subprocess + fichier .snp intermédiaire).
+    """Calcule les statistiques résumées SNP/PoolSeq sur des données SIMULÉES.
 
-    stats_filter :
-      - "ALL" (défaut) : retourne toutes les statistiques implémentées
-        (compute_all_statistics), sans filtrage.
-      - "HEADER" : ne garde, dans l'ordre de déclaration, que les
-        statistiques listées dans la section 'group summary statistics'
-        de header.txt (voir stats_group_parser.
-        parse_requested_statistic_names) -- nécessaire pour que
-        reftable_msprime.txt/.bin aient EXACTEMENT les mêmes colonnes
-        que le vrai reftable DIYABC (sinon toute comparaison
-        colonne-par-nom entre les deux pipelines est faussée, comme
-        découvert sur toy_example5_modif : 'ML3p_1.2.3' calculé par
-        nous mais absent du vrai DIYABC). Lève ValueError si header.txt
-        déclare une statistique qu'on ne sait pas calculer (vocabulaire
-        obsolète, ex: human/header.txt -- voir notes/exploration.md).
+    Utilise nos formules Python validées (summary_statistics.py) --
+    remplace la délégation au binaire C++ (subprocess + fichier .snp
+    intermédiaire). Dispatche automatiquement entre le chemin IndSeq
+    (`run_poc_for_directory` + `compute_all_statistics`) et le chemin
+    PoolSeq (`simulate_poolseq_reads_with_mrc_filter` +
+    `compute_all_statistics_poolseq`) selon `detect_snp_file_type`.
 
-    Retourne (summary_statistics, parameter_values).
+    Args:
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .snp observé.
+        scenario_index: L'index 1-based du scénario à utiliser.
+        num_loci: Voir _simulate_genotypes_for_all_locus_types (IndSeq
+            uniquement -- ignoré pour PoolSeq, qui simule toujours tous
+            les loci `<A>` déclarés dans header.txt).
+        seed: La graine de la simulation.
+        work_directory: Gardé pour compatibilité, ignoré.
+        general_binary_path: Gardé pour compatibilité, ignoré.
+        stats_filter: "ALL" (défaut) : retourne toutes les statistiques
+            implémentées (compute_all_statistics), sans filtrage.
+            "HEADER" : ne garde, dans l'ordre de déclaration, que les
+            statistiques listées dans la section 'group summary
+            statistics' de header.txt (voir stats_group_parser.
+            parse_requested_statistic_names) -- nécessaire pour que
+            reftable_msprime.txt/.bin aient EXACTEMENT les mêmes
+            colonnes que le vrai reftable DIYABC (sinon toute
+            comparaison colonne-par-nom entre les deux pipelines est
+            faussée, comme découvert sur toy_example5_modif :
+            'ML3p_1.2.3' calculé par nous mais absent du vrai DIYABC).
+        observed_reads_per_locus: PoolSeq uniquement, voir
+            simulate_poolseq_reads_with_mrc_filter.
+
+    Returns:
+        Le tuple (summary_statistics, parameter_values).
+
+    Raises:
+        ValueError: Si stats_filter="HEADER" et que header.txt déclare
+            une statistique qu'on ne sait pas calculer (vocabulaire
+            obsolète, ex: human/header.txt -- voir notes/exploration.md).
     """
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
@@ -351,10 +447,24 @@ def build_demography_for_scenario_index(
     scenario_index: int,
     values: dict[str, float],
 ) -> msprime.Demography:
-    """Variante de build_random_demography_for_scenario_index qui NE TIRE
-    AUCUNE valeur : construit la Demography directement à partir de
-    valeurs de paramètres déjà connues (ex: reprises telles quelles d'un
-    reftable DIYABC réel pour servir d'oracle-- voir reftable_loop.replay_reftable_simulation).
+    """Variante de build_random_demography_for_scenario_index qui NE TIRE AUCUNE valeur.
+
+    Construit la Demography directement à partir de valeurs de
+    paramètres déjà connues (ex: reprises telles quelles d'un reftable
+    DIYABC réel pour servir d'oracle -- voir
+    reftable_loop.replay_reftable_simulation).
+
+    Args:
+        header_text: Texte complet de header.txt.
+        scenario_index: L'index 1-based du scénario à utiliser.
+        values: Les valeurs de paramètres déjà connues, {nom: valeur}.
+
+    Returns:
+        La Demography correspondante.
+
+    Raises:
+        ValueError: Si scenario_index ne correspond à aucun scénario
+            parsé.
     """
     scenarios = parse_header_scenarios(header_text)
     scenario = next((s for s in scenarios if s.index == scenario_index), None)
@@ -374,10 +484,24 @@ def run_poc_for_directory_with_values(
     num_loci: int | None = None,
     seed: int,
 ):
-    """Variante de run_poc_for_directory qui prend des valeurs de
-    paramètres déjà connues au lieu d'en tirer de nouvelles -- même
-    contrat par ailleurs (lecture du nom de fichier .snp sur la première
-    ligne de header.txt, échantillonnage, simulation)."""
+    """Variante de run_poc_for_directory qui prend des valeurs de paramètres déjà connues.
+
+    Au lieu d'en tirer de nouvelles -- même contrat par ailleurs
+    (lecture du nom de fichier .snp sur la première ligne de header.txt,
+    échantillonnage, simulation).
+
+    Args:
+        directory: Le dossier contenant header.txt et le fichier .snp.
+        scenario_index: L'index 1-based du scénario à utiliser.
+        values: Les valeurs de paramètres déjà connues, {nom: valeur}.
+        num_loci: Voir _simulate_genotypes_for_all_locus_types.
+        seed: La graine de la simulation.
+
+    Returns:
+        L'itérateur des génotypes simulés (même contrat que
+        run_poc_for_directory, sans le dict `values` en plus puisqu'il
+        est déjà connu de l'appelant).
+    """
     directory = Path(directory)
     header_text = read_header_text(directory)
 
@@ -403,12 +527,29 @@ def compute_summary_statistics_from_values(
     stats_filter: str = "ALL",
     observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
 ) -> dict[str, float]:
-    """Variante de compute_summary_statistics qui NE TIRE AUCUNE valeur de
-    prior : reprend telles quelles des valeurs de paramètres déjà
-    connues, typiquement les tirages RÉELS d'un reftable DIYABC existant
-    (voir reftable_loop.replay_reftable_simulation) -- permet de comparer
+    """Variante de compute_summary_statistics qui NE TIRE AUCUNE valeur de prior.
+
+    Reprend telles quelles des valeurs de paramètres déjà connues,
+    typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
+    reftable_loop.replay_reftable_simulation) -- permet de comparer
     DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
     biais possible de deux tirages indépendants.
+
+    Args:
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .snp observé.
+        scenario_index: L'index 1-based du scénario à utiliser.
+        values: Les valeurs de paramètres déjà connues, {nom: valeur}.
+        num_loci: Voir _simulate_genotypes_for_all_locus_types (IndSeq
+            uniquement -- ignoré pour PoolSeq).
+        seed: La graine de la simulation.
+        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics.
+        observed_reads_per_locus: PoolSeq uniquement, voir
+            simulate_poolseq_reads_with_mrc_filter.
+
+    Returns:
+        Le dict summary_statistics (pas de `values` en retour,
+        puisqu'il est déjà connu de l'appelant).
     """
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
@@ -531,18 +672,34 @@ def compute_summary_statistics_dna_from_values(
     seed: int,
     stats_filter: str = "ALL",
 ) -> dict[str, float]:
-    """Variante de compute_summary_statistics_dna qui ne tire AUCUNE valeur
-    de prior : reprend telles quelles des valeurs de paramètres déjà
-    connues, typiquement les tirages RÉELS d'un reftable DIYABC existant
-    (voir reftable_loop.replay_reftable_simulation) -- permet de comparer
+    """Variante de compute_summary_statistics_dna qui ne tire AUCUNE valeur de prior.
+
+    Reprend telles quelles des valeurs de paramètres déjà connues,
+    typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
+    reftable_loop.replay_reftable_simulation) -- permet de comparer
     DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
     biais possible de deux tirages indépendants.
 
-    group_priors_values : dict[str, float] -- {nom_param: valeur}
-    pour tous les groupes ADN déclaré dans header.txt. Ces valeurs sont celles que dna_mutation
-    simulation_per_locus aurait tirées en interne si on avait appelé la
-    variante "random" (compute_summary_statistics_dna) -- elles ne sont
-    pas capturées par le dict `values` retourné par cette fonction.
+    Args:
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        scenario_index: L'index 1-based du scénario à utiliser.
+        values: Les valeurs de paramètres historiques déjà connues,
+            {nom: valeur}.
+        group_priors_values: Dict {nom_param: valeur} pour tous les
+            groupes ADN déclarés dans header.txt. Ce sont les valeurs
+            que dna_mutation_simulation_per_locus aurait tirées en
+            interne si on avait appelé la variante "random"
+            (compute_summary_statistics_dna) -- elles ne sont pas
+            capturées par le dict `values` retourné par cette fonction
+            (voir compute_summary_statistics_dna).
+        seed: La graine du tirage par-locus (second niveau, généalogie,
+            mutation).
+        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics.
+
+    Returns:
+        Le dict summary_statistics (pas de `values` en retour,
+        puisqu'ils sont déjà connus de l'appelant).
     """
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
