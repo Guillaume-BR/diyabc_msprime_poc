@@ -2028,33 +2028,6 @@ def compute_MP2(
 # ---------------------------------------------------------------------------
 
 
-def _mean_pairwise_differences_between_per_locus(
-    genotype_matrices: dict[str, np.ndarray], pop_a: str, pop_b: str
-) -> float:
-    """Calcule la moyenne des différences par paire (MPB) entre deux populations pour un locus.
-
-    Args:
-        genotype_matrices: Dict {nom_population: matrice}, au moins
-            pop_a et pop_b.
-        pop_a: Nom de la première population.
-        pop_b: Nom de la seconde population.
-
-    Returns:
-        La moyenne des distances de Hamming entre chaque échantillon de
-        pop_a et chaque échantillon de pop_b.
-
-    Raises:
-        KeyError: Si pop_a ou pop_b n'est pas dans genotype_matrices.
-    """
-    if pop_a not in genotype_matrices or pop_b not in genotype_matrices:
-        raise KeyError(
-            "L'une des populations n'est pas présente dans les matrices de génotypes."
-        )
-    return _pairwise_hamming_distances_between(
-        genotype_matrices[pop_a], genotype_matrices[pop_b]
-    ).mean()
-
-
 def _pairwise_hamming_distances_between(
     matrix_a: np.ndarray, matrix_b: np.ndarray
 ) -> np.ndarray:
@@ -2086,6 +2059,33 @@ def _pairwise_hamming_distances_between(
     # Calculer les distances de Hamming entre toutes les paires d'échantillons
     distances = (matrix_a[:, :, None] != matrix_b[:, None, :]).sum(axis=0)
     return distances
+
+
+def _mean_pairwise_differences_between_per_locus(
+    genotype_matrices: dict[str, np.ndarray], pop_a: str, pop_b: str
+) -> float:
+    """Calcule la moyenne des différences par paire (MPB) entre deux populations pour un locus.
+
+    Args:
+        genotype_matrices: Dict {nom_population: matrice}, au moins
+            pop_a et pop_b.
+        pop_a: Nom de la première population.
+        pop_b: Nom de la seconde population.
+
+    Returns:
+        La moyenne des distances de Hamming entre chaque échantillon de
+        pop_a et chaque échantillon de pop_b.
+
+    Raises:
+        KeyError: Si pop_a ou pop_b n'est pas dans genotype_matrices.
+    """
+    if pop_a not in genotype_matrices or pop_b not in genotype_matrices:
+        raise KeyError(
+            "L'une des populations n'est pas présente dans les matrices de génotypes."
+        )
+    return _pairwise_hamming_distances_between(
+        genotype_matrices[pop_a], genotype_matrices[pop_b]
+    ).mean()
 
 
 def compute_MPB(

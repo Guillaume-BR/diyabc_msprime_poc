@@ -70,13 +70,27 @@ _SCENARIO_DRAW_SEED_OFFSET = 50_000_000
 
 @dataclass
 class ParticleResult:
-    """Le résultat d'une particule : une future ligne du reftable.bin."""
+    """Le résultat d'une particule : une future ligne du reftable.bin.
+
+    Attributes:
+        particle_index: L'index de la particule (0-based).
+        scenario_index: L'index 1-based du scénario tiré pour cette
+            particule.
+        parameter_values: Les valeurs de paramètres historiques tirées,
+            {nom: valeur}.
+        summary_statistics: Les statistiques résumées calculées,
+            {nom_colonne: valeur}.
+    """
 
     particle_index: int
     scenario_index: int
     parameter_values: dict[str, float]
     summary_statistics: dict[str, float]
 
+
+# ----------------------------------------------------------------------------
+# Pour les fichiers .snp DIYABC : lecture, écriture, rejeux de tirages réels
+# ----------------------------------------------------------------------------
 
 # ── Tirage indépendant de scénario + paramètres, par particule ────────────
 
@@ -90,8 +104,10 @@ def _run_single_particle(
     observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
     stats_filter: str,
 ) -> ParticleResult:
-    """Calcule une seule particule -- fonction top-level (picklable),
-    appelée par chaque worker du ProcessPoolExecutor.
+    """Calcule une seule particule.
+
+    Fonction top-level (picklable), appelée par chaque worker du
+    ProcessPoolExecutor.
 
     La seed utilisée est dérivée de particle_index, garantissant un
     tirage distinct et reproductible par particule (même particle_index
@@ -102,6 +118,21 @@ def _run_single_particle(
     must be greater than 0 and less than 2^32") -- vérifié empiriquement.
     Donc particle_index=0 (le cas le plus probable, première particule)
     utilise seed=1, pas seed=0.
+
+    Args:
+        particle_index: L'index de la particule (0-based).
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .snp observé.
+        scenarios: Les scénarios candidats (chaque particule tire le
+            sien).
+        num_loci: Voir pipeline.compute_summary_statistics.
+        observed_reads_per_locus: PoolSeq uniquement, pré-calculé une
+            fois pour toute la boucle (voir run_reftable_simulation).
+        stats_filter: "ALL" ou "HEADER", voir
+            pipeline.compute_summary_statistics.
+
+    Returns:
+        Le ParticleResult de cette particule.
     """
     seed = particle_index + 1
     drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
@@ -133,25 +164,34 @@ def run_reftable_simulation(
 ) -> list[ParticleResult]:
     """Produit nrec particules (lignes de reftable.bin) en parallèle.
 
-    `scenarios` est la liste des scénarios candidats (typiquement TOUS
-    les scénarios déclarés dans header.txt) : chaque particule tire le
-    SIEN au hasard, pondéré par son `weight` (voir
-    parameter_sampling.draw_scenario, sémantique vérifiée contre
-    particuleC.cpp::ParticleC::drawscenario) -- une même particule peut
-    donc finir sur n'importe lequel des scénarios de la liste, pas
-    forcément le même pour toutes.
-
     N'écrit rien sur disque par particule (compute_summary_statistics
-    est 100% Python, en mémoire) -- pas de dossier de travail à créer
-    ni à nettoyer, contrairement à l'ancienne architecture par
-    subprocess+.snp intermédiaire.
+    est 100% Python, en mémoire).
 
     Les résultats sont retournés DANS L'ORDRE de particle_index (0 à
     nrec-1), pas dans l'ordre de complétion des workers -- important
     pour la reproductibilité de l'ordre des lignes du reftable final.
 
-    max_workers : nombre de process en parallèle (défaut : laissé à
-    ProcessPoolExecutor, généralement le nombre de cœurs disponibles).
+    Args:
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .snp observé.
+        scenarios: La liste des scénarios candidats (typiquement TOUS
+            les scénarios déclarés dans header.txt) : chaque particule
+            tire le SIEN au hasard, pondéré par son `weight` (voir
+            parameter_sampling.draw_scenario, sémantique vérifiée
+            contre particuleC.cpp::ParticleC::drawscenario) -- une même
+            particule peut donc finir sur n'importe lequel des
+            scénarios de la liste, pas forcément le même pour toutes.
+        num_loci: Voir pipeline.compute_summary_statistics.
+        nrec: Le nombre de particules à produire.
+        stats_filter: "ALL" ou "HEADER", voir
+            pipeline.compute_summary_statistics.
+        max_workers: Le nombre de process en parallèle (défaut : laissé
+            à ProcessPoolExecutor, généralement le nombre de cœurs
+            disponibles).
+
+    Returns:
+        La liste des ParticleResult, dans l'ordre de particle_index (0
+        à nrec-1).
     """
     reference_directory = Path(reference_directory)
 
@@ -194,12 +234,22 @@ def run_reftable_simulation(
 def _kept_param_names_by_scenario(
     priors: list, scenarios: list[Scenario]
 ) -> dict[int, list[str]]:
-    """Pour chaque scénario, la liste (dans l'ordre de déclaration des
+    """Calcule les noms de paramètres à garder, par scénario.
+
+    Pour chaque scénario, la liste (dans l'ordre de déclaration des
     priors) des noms de paramètres à garder : non constants
     (is_constant_prior) ET référencés par CE scénario précis
     (get_parameter_names_used_by_scenario) -- même filtre à deux
     critères que l'ancienne version single-scenario, appliqué
-    séparément par scénario."""
+    séparément par scénario.
+
+    Args:
+        priors: Les priors déclarés dans header.txt.
+        scenarios: Les scénarios candidats.
+
+    Returns:
+        Un dict {scenario_index: [nom_paramètre, ...]}.
+    """
     result = {}
     for scenario in scenarios:
         used_param_names = get_parameter_names_used_by_scenario(scenario)
@@ -211,312 +261,6 @@ def _kept_param_names_by_scenario(
     return result
 
 
-# ── Rejeu des tirages RÉELS de DIYABC (comparaison appariée) ──────────────
-
-
-def group_prior_column_names(header_text: str) -> list[str]:
-    """Liste ordonnée des noms de colonnes "priors de groupe" réellement
-    présentes dans un vrai reftable DIYABC (ex: `µseq_2`, `k1seq_2`),
-    juste après les paramètres historiques et avant les colonnes de
-    statistiques sur chaque ligne -- vérifiée caractère pour caractère
-    contre la vraie sortie DIYABC de `toy_example2_ms_dna` (`µmic_1
-    pmic_1 snimic_1 µseq_2 k1seq_2 µseq_3 k1seq_3`, `nparamut=7`).
-
-    Contrairement aux paramètres historiques (`_kept_param_names_by_
-    scenario`), ces colonnes NE DÉPENDENT PAS du scénario tiré par la
-    particule -- toujours les mêmes colonnes, dans l'ordre de
-    déclaration des groupes (`G1`, `G2`, `G3`...) du header, un `mus_rate`
-    toujours en premier dans chaque groupe.
-
-    Pour un groupe `[S]` (séquence ADN) : `mus_rate` puis `k1`/`k2` SI ET
-    SEULEMENT SI utilisés par le modèle du groupe (`get_parameter_used_
-    by_model` -- ex: K2P/HKY n'ont que `k1`, pas de colonne `k2seq_N`).
-    Pour un groupe `[M]` (microsat) : `mus_rate` puis `P` puis `SNI`,
-    TOUJOURS les trois -- hypothèse basée sur ce qui est observé dans la
-    vraie sortie de ce dataset précis, pas sur une règle générale
-    vérifiée dans le C++ (MicroSat n'a pas de simulation-side code dans
-    ce projet, seulement besoin de savoir COMBIEN de colonnes sauter
-    pour atteindre celles des groupes ADN qui suivent).
-    """
-    group_priors = parse_group_priors(header_text)
-
-    names = []
-    for group_name, entries in group_priors.items():
-        ms_or_seq = entries[0].ms_or_seq
-        type_suffix = "seq" if ms_or_seq == "S" else "mic"
-        group_number = group_name[1:]  # "G2" -> "2"
-
-        names.append(f"µ{type_suffix}_{group_number}")  # mus_rate, toujours présent
-
-        if ms_or_seq == "S":
-            model_entry = next(e for e in entries if e.model)
-            k1_used, k2_used = get_parameter_used_by_model(model_entry)
-            if k1_used:
-                names.append(f"k1{type_suffix}_{group_number}")
-            if k2_used:
-                names.append(f"k2{type_suffix}_{group_number}")
-        else:
-            names.append(f"p{type_suffix}_{group_number}")
-            names.append(f"sni{type_suffix}_{group_number}")
-
-    return names
-
-
-def parse_real_reftable_params(
-    path: str | Path, priors: list, scenarios: list[Scenario]
-) -> list[tuple[int, dict[str, float]]]:
-    """Lit un reftable RÉEL produit par DIYABC (ex:
-    first_records_of_the_reference_table_0.txt) et en extrait, ligne par
-    ligne, le scénario tiré et les valeurs de paramètres RÉELLEMENT
-    tirées par DIYABC -- pour les rejouer ensuite côté msprime (voir
-    replay_reftable_simulation), afin de comparer les deux simulateurs
-    sur EXACTEMENT les mêmes tirages de priors, sans le biais de deux
-    tirages indépendants.
-
-    Le nombre de colonnes de paramètres RÉELLEMENT présentes sur une
-    ligne dépend du SCÉNARIO de CETTE ligne précise, pas d'un total fixe
-    pour tout le fichier : DIYABC (particleset.cpp, écriture de
-    first_records_of_the_reference_table_N.txt) parcourt l'UNION de tous
-    les noms de paramètres déclarés et, pour un nom NON utilisé par le
-    scénario de la ligne courante, écrit une CASE VIDE (aucune valeur,
-    juste des espaces) au lieu d'une valeur ou d'un NA -- un parseur par
-    espaces ne produit alors AUCUN token pour cette case, ce qui décale
-    silencieusement toutes les colonnes suivantes si on suppose un
-    nombre de colonnes fixe (union) pour toutes les lignes. Repéré en
-    testant un reftable réellement multi-scénario (voir aussi le même
-    principe côté écriture dans write_reftable_txt, qui l'évite en
-    n'écrivant jamais de case vide).
-
-    On lit donc, pour CHAQUE ligne, le nombre de tokens de paramètres
-    correspondant SPÉCIFIQUEMENT au scénario de cette ligne
-    (kept_by_scenario[scenario_index], même filtre non-constant +
-    utilisé-par-ce-scénario que write_reftable_txt/write_reftable_bin),
-    pas une union appliquée uniformément -- ce qui gère aussi, en
-    particulier, le cas single-scénario où certains priors sont devenus
-    constants (is_constant_prior) et donc absents des colonnes de
-    sortie.
-    """
-    priors_kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
-
-    lines = [line for line in Path(path).read_text().splitlines() if line.strip()]
-    data_lines = lines[1:]  # ligne 0 = en-tête
-
-    rows = []
-    for line in data_lines:
-        tokens = line.split()
-        scenario_index = int(tokens[0])
-        param_names = priors_kept_by_scenario[scenario_index]
-        values = {name: float(tokens[1 + i]) for i, name in enumerate(param_names)}
-        rows.append((scenario_index, values))
-    return rows
-
-
-def parse_real_reftable_params_with_group_priors(
-    path: str | Path, priors: list, scenarios: list[Scenario], group_priors_names: list
-) -> list[tuple[int, dict[str, float], dict[str, float]]]:
-    """Variante de parse_real_reftable_params qui lit AUSSI les colonnes
-    de priors de groupe (`µseq_2`, `k1seq_2`...) d'un vrai reftable
-    DIYABC -- une fonction séparée plutôt qu'une extension en place, pour
-    ne rien risquer sur parse_real_reftable_params et ses appelants SNP
-    déjà validés (même choix que _run_single_particle/_run_single_
-    particle_from_values : deux fonctions distinctes plutôt qu'une seule
-    avec des branches conditionnelles).
-
-    Sur chaque ligne, les colonnes de priors de groupe suivent
-    IMMÉDIATEMENT les colonnes de paramètres historiques (elles-mêmes
-    variables en nombre selon le scénario tiré par cette ligne -- voir
-    priors_kept_by_scenario) et précèdent les colonnes de statistiques.
-
-    Contrairement aux paramètres historiques, les priors de groupe NE
-    SONT JAMAIS filtrées par scénario : `group_priors_names` (voir
-    group_prior_column_names) est utilisé TEL QUEL pour toutes les
-    lignes, quel que soit leur scénario -- vérifié empiriquement sur le
-    vrai reftable de toy_example2_ms_dna (`nparamut=7`, un compte
-    constant, contrairement à `nparam` qui varie par scénario). Appeler
-    `_kept_param_names_by_scenario(group_priors_names, scenarios)` ici
-    serait doublement faux : elle attend des objets `Prior` (pas des
-    strings -- `is_constant_prior` plante sur `.min`/`.max`), et son filtre
-    `get_parameter_names_used_by_scenario` ne reconnaît de toute façon
-    que des noms de paramètres historiques, jamais de priors de groupe.
-
-    Retourne une liste de triplets (scenario_index, priors_values,
-    group_priors_values) -- les deux dicts de valeurs restent SÉPARÉS
-    (pas fusionnés en un seul) car ils alimentent deux étapes différentes
-    en aval : priors_values sert à construire la démographie, group_
-    priors_values au modèle de mutation ADN (k1/k2/mus_rate).
-    """
-    priors_kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
-
-    lines = [line for line in Path(path).read_text().splitlines() if line.strip()]
-    data_lines = lines[1:]  # ligne 0 = en-tête
-
-    rows = []
-    for line in data_lines:
-        tokens = line.split()
-        scenario_index = int(tokens[0])
-        priors_param_names = priors_kept_by_scenario[scenario_index]
-        priors_values = {
-            name: float(tokens[1 + i]) for i, name in enumerate(priors_param_names)
-        }
-        group_priors_values = {
-            name: float(tokens[1 + len(priors_param_names) + i])
-            for i, name in enumerate(group_priors_names)
-        }
-        rows.append((scenario_index, priors_values, group_priors_values))
-    return rows
-
-
-def rewrite_real_reftable_txt(
-    input_path: str | Path,
-    output_path: str | Path,
-    priors: list,
-    scenarios: list[Scenario],
-) -> None:
-    """Réécrit un reftable RÉEL de DIYABC (ex:
-    first_records_of_the_reference_table_0.txt) en un texte à colonnes
-    de largeur FIXE, en remplaçant les cases vides de DIYABC (paramètre
-    non utilisé par le scénario de la ligne, voir parse_real_reftable_
-    params) par `nan` -- jamais une case vide.
-
-    Nécessaire pour toute lecture EXTERNE du fichier DIYABC brut avec un
-    parseur par espaces générique (ex: `pandas.read_csv(sep=r'\\s+')`,
-    utilisé dans les notebooks de comparaison) : sans cette réécriture,
-    une ligne dont le scénario n'utilise pas tous les paramètres
-    déclarés a MOINS de tokens que la ligne d'en-tête ne le laisse
-    penser, ce qui décale silencieusement toutes les colonnes
-    suivantes (statistiques comprises) sur cette ligne -- même piège
-    que documenté dans parse_real_reftable_params/write_reftable_txt,
-    mais ici côté fichier DIYABC lui-même plutôt que côté notre pipeline.
-
-    Le fichier réécrit a EXACTEMENT le même format que celui produit par
-    write_reftable_txt (mêmes colonnes de paramètres -- union dans
-    l'ordre de déclaration des priors --, dans le même ordre), donc
-    directement comparable colonne à colonne avec un reftable_msprime
-    généré par run_reftable_simulation/replay_reftable_simulation.
-    """
-    kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
-    used_by_any = {name for names in kept_by_scenario.values() for name in names}
-    all_param_names = [p.name for p in priors if p.name in used_by_any]
-
-    lines = [line for line in Path(input_path).read_text().splitlines() if line.strip()]
-    header_tokens = lines[0].split()
-    stat_names = header_tokens[1 + len(all_param_names) :]
-    data_lines = lines[1:]
-
-    def _centre(s: str, width: int = 14) -> str:
-        return s.center(width)
-
-    with open(output_path, "w", encoding="utf-8") as f:
-        header = (
-            _centre("scenario")
-            + "".join(_centre(n) for n in all_param_names)
-            + "".join(_centre(n) for n in stat_names)
-        )
-        f.write(header + "\n")
-
-        for line in data_lines:
-            tokens = line.split()
-            scenario_index = int(tokens[0])
-            param_names = kept_by_scenario[scenario_index]
-            n_params = len(param_names)
-            param_values = dict(zip(param_names, tokens[1 : 1 + n_params], strict=True))
-            stat_values = dict(zip(stat_names, tokens[1 + n_params :], strict=True))
-
-            out_line = f"{scenario_index:3d}  "
-            for name in all_param_names:
-                value = (
-                    float(param_values[name]) if name in param_values else float("nan")
-                )
-                out_line += f"  {value:12.6f}"
-            for name in stat_names:
-                out_line += f"  {float(stat_values[name]):12.6f}"
-            f.write(out_line + "\n")
-
-
-def _run_single_particle_from_values(
-    particle_index: int,
-    reference_directory: Path,
-    scenario_index: int,
-    values: dict[str, float],
-    *,
-    num_loci: int | None = None,
-    observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
-    stats_filter: str,
-) -> ParticleResult:
-    """Variante de _run_single_particle qui NE TIRE AUCUN paramètre :
-    rejoue (scenario_index, values) tels que fournis -- typiquement issus
-    de parse_real_reftable_params."""
-    seed = particle_index + 1
-    summary_statistics = compute_summary_statistics_from_values(
-        reference_directory=reference_directory,
-        scenario_index=scenario_index,
-        values=values,
-        num_loci=num_loci,
-        seed=seed,
-        stats_filter=stats_filter,
-        observed_reads_per_locus=observed_reads_per_locus,
-    )
-    return ParticleResult(
-        particle_index=particle_index,
-        scenario_index=scenario_index,
-        parameter_values=values,
-        summary_statistics=summary_statistics,
-    )
-
-
-def replay_reftable_simulation(
-    reference_directory: str | Path,
-    priors: list,
-    scenarios: list[Scenario],
-    real_reftable_path: str | Path,
-    num_loci: int | None = None,
-    stats_filter: str = "ALL",
-    max_workers: int | None = None,
-) -> list[ParticleResult]:
-    """Rejoue, particule par particule, les tirages de paramètres
-    RÉELLEMENT effectués par DIYABC dans un reftable existant (ex:
-    first_records_of_the_reference_table_0.txt) -- au lieu d'en tirer de
-    nouveaux indépendamment comme run_reftable_simulation.
-
-    Chaque particule msprime utilise EXACTEMENT le même (N1,N2,N3,ta,
-    ts,...) que la particule DIYABC de même particle_index (même ordre
-    que les lignes du fichier réel) : tout écart entre les deux résulte
-    donc uniquement du moteur de simulation, jamais d'un tirage de prior
-    différent -- permet une comparaison appariée ligne à ligne, pas
-    seulement une comparaison de distributions agrégées.
-
-    Retourne les ParticleResult dans le MÊME ORDRE que les lignes du
-    fichier réel -- réutilisable tel quel par write_reftable_txt/
-    write_reftable_bin (même type que run_reftable_simulation).
-    """
-    reference_directory = Path(reference_directory)
-
-    # On lit les sorties de diyabc (scénario tiré + valeurs de paramètres RÉELLEMENT tirées) pour
-    # les rejouer ensuite côté msprime, afin de comparer les deux simulateurs sur EXACTEMENT
-    # les mêmes tirages de priors.
-    rows = parse_real_reftable_params(real_reftable_path, priors, scenarios)
-
-    results_by_index: dict[int, ParticleResult] = {}
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(
-                _run_single_particle_from_values,
-                particle_index,
-                reference_directory,
-                scenario_index,
-                values,
-                num_loci=num_loci,
-                stats_filter=stats_filter,
-            ): particle_index
-            for particle_index, (scenario_index, values) in enumerate(rows)
-        }
-
-        for future in as_completed(futures):
-            particle_index = futures[future]
-            results_by_index[particle_index] = future.result()
-    return [results_by_index[i] for i in range(len(rows))]
-
-
 # ── Écriture du reftable (formats binaire et texte) ────────────────────────
 
 
@@ -526,16 +270,10 @@ def write_reftable_bin(
     scenarios: list[Scenario],
     output_path: str | Path,
 ) -> None:
-    """Écrit un reftable.bin au format binaire DIYABC (vérifié contre
-    reftable.cpp et un vrai reftableRF.bin multi-scénario -- voir
-    docs/synthese_diyabc_msprime.docx section 5).
+    """Écrit un reftable.bin au format binaire DIYABC.
 
-    `scenarios` est la liste de TOUS les scénarios candidats déclarés
-    dans header.txt (pas seulement ceux effectivement tirés dans
-    `results`) : nscen = len(scenarios), et le numéro de scénario écrit
-    par ligne est le numéro 1-indexed du header.txt (scenario.index),
-    jamais renuméroté localement -- vérifié dans particuleC.cpp::
-    drawscenario et reftable.cpp.
+    Vérifié contre reftable.cpp et un vrai reftableRF.bin
+    multi-scénario -- voir docs/synthese_diyabc_msprime.docx section 5.
 
     IMPORTANT -- format à LONGUEUR VARIABLE par ligne, PAS d'union de
     colonnes ni de valeur NA écrite sur disque : chaque ligne écrit
@@ -548,14 +286,29 @@ def write_reftable_bin(
     LECTEUR (readReftable.R), jamais de l'écrivain -- ne PAS essayer de
     remplir les colonnes manquantes ici.
 
-    nparam[i] : nombre de paramètres (non constants, référencés) du
-    i-ème scénario de `scenarios` -- pilote directement la taille de
-    chaque enregistrement, comme dans reftable.cpp.
-
     Ne gère PAS les paramètres de mutation (absents de human) -- à
     ajouter (toujours en dernière position, après les paramètres
     démographiques -- voir readReftable.R) si un dataset avec
     microsatellites/séquences est traité plus tard.
+
+    Args:
+        results: Les ParticleResult à écrire, une ligne par résultat.
+        priors: Les priors déclarés dans header.txt.
+        scenarios: La liste de TOUS les scénarios candidats déclarés
+            dans header.txt (pas seulement ceux effectivement tirés
+            dans `results`) : nscen = len(scenarios), et le numéro de
+            scénario écrit par ligne est le numéro 1-indexed du
+            header.txt (scenario.index), jamais renuméroté localement
+            -- vérifié dans particuleC.cpp::drawscenario et
+            reftable.cpp. nparam[i] (nombre de paramètres non
+            constants, référencés, du i-ème scénario de `scenarios`)
+            pilote directement la taille de chaque enregistrement,
+            comme dans reftable.cpp.
+        output_path: Chemin où écrire le fichier binaire.
+
+    Raises:
+        ValueError: Si results est vide, ou si results contient un
+            scenario_index absent de `scenarios`.
     """
     if not results:
         raise ValueError("results est vide : au moins une particule est requise")
@@ -644,6 +397,16 @@ def write_reftable_txt(
     c'est cette case vide, relue naïvement, qui a provoqué le même
     décalage silencieux lors du premier test avec un reftable réel
     multi-scénario (voir parse_real_reftable_params).
+
+    Args:
+        results: Les ParticleResult à écrire, une ligne par résultat.
+        priors: Les priors déclarés dans header.txt.
+        scenarios: Les scénarios candidats (détermine l'union des
+            colonnes de paramètres).
+        output_path: Chemin où écrire le fichier texte.
+
+    Raises:
+        ValueError: Si results est vide.
     """
     if not results:
         raise ValueError("results est vide : au moins une particule est requise")
@@ -678,6 +441,79 @@ def write_reftable_txt(
             f.write(line + "\n")
 
 
+def rewrite_real_reftable_txt(
+    input_path: str | Path,
+    output_path: str | Path,
+    priors: list,
+    scenarios: list[Scenario],
+) -> None:
+    """Réécrit un reftable RÉEL de DIYABC en un texte à colonnes de largeur FIXE.
+
+    Ex: first_records_of_the_reference_table_0.txt. Remplace les cases
+    vides de DIYABC (paramètre non utilisé par le scénario de la ligne,
+    voir parse_real_reftable_params) par `nan` -- jamais une case vide.
+
+    Nécessaire pour toute lecture EXTERNE du fichier DIYABC brut avec un
+    parseur par espaces générique (ex: `pandas.read_csv(sep=r'\\s+')`,
+    utilisé dans les notebooks de comparaison) : sans cette réécriture,
+    une ligne dont le scénario n'utilise pas tous les paramètres
+    déclarés a MOINS de tokens que la ligne d'en-tête ne le laisse
+    penser, ce qui décale silencieusement toutes les colonnes
+    suivantes (statistiques comprises) sur cette ligne -- même piège
+    que documenté dans parse_real_reftable_params/write_reftable_txt,
+    mais ici côté fichier DIYABC lui-même plutôt que côté notre pipeline.
+
+    Le fichier réécrit a EXACTEMENT le même format que celui produit par
+    write_reftable_txt (mêmes colonnes de paramètres -- union dans
+    l'ordre de déclaration des priors --, dans le même ordre), donc
+    directement comparable colonne à colonne avec un reftable_msprime
+    généré par run_reftable_simulation/replay_reftable_simulation.
+
+    Args:
+        input_path: Chemin du reftable réel brut (format texte).
+        output_path: Chemin où écrire le fichier réécrit.
+        priors: Les priors déclarés dans header.txt.
+        scenarios: Les scénarios candidats.
+    """
+    kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
+    used_by_any = {name for names in kept_by_scenario.values() for name in names}
+    all_param_names = [p.name for p in priors if p.name in used_by_any]
+
+    lines = [line for line in Path(input_path).read_text().splitlines() if line.strip()]
+    header_tokens = lines[0].split()
+    stat_names = header_tokens[1 + len(all_param_names) :]
+    data_lines = lines[1:]
+
+    def _centre(s: str, width: int = 14) -> str:
+        return s.center(width)
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        header = (
+            _centre("scenario")
+            + "".join(_centre(n) for n in all_param_names)
+            + "".join(_centre(n) for n in stat_names)
+        )
+        f.write(header + "\n")
+
+        for line in data_lines:
+            tokens = line.split()
+            scenario_index = int(tokens[0])
+            param_names = kept_by_scenario[scenario_index]
+            n_params = len(param_names)
+            param_values = dict(zip(param_names, tokens[1 : 1 + n_params], strict=True))
+            stat_values = dict(zip(stat_names, tokens[1 + n_params :], strict=True))
+
+            out_line = f"{scenario_index:3d}  "
+            for name in all_param_names:
+                value = (
+                    float(param_values[name]) if name in param_values else float("nan")
+                )
+                out_line += f"  {value:12.6f}"
+            for name in stat_names:
+                out_line += f"  {float(stat_values[name]):12.6f}"
+            f.write(out_line + "\n")
+
+
 # ── Point d'entrée haut niveau (compose tirage indépendant + écriture) ────
 
 
@@ -689,22 +525,30 @@ def simulate_from_directory(
     stats_filter: str = "ALL",
     max_workers: int | None = None,
 ) -> list[ParticleResult]:
-    """Point d'entrée pour un sous-dossier de test sous reference/ (ex:
-    reference/mon_test/), qui ne contient au départ qu'un header.txt (ou
-    headerRF.txt, repli si absent -- voir pipeline.read_header_text) et
-    le fichier .snp observé (nommé sur la première ligne du header, pas
-    un nom fixe -- voir pipeline.run_poc_for_directory).
+    """Point d'entrée pour un sous-dossier de test sous reference/.
+
+    Ex: reference/mon_test/, qui ne contient au départ qu'un header.txt
+    (ou headerRF.txt, repli si absent -- voir pipeline.read_header_text)
+    et le fichier .snp observé (nommé sur la première ligne du header,
+    pas un nom fixe -- voir pipeline.run_poc_for_directory).
 
     Tire les scénarios candidats pondérés par leur `weight` parmi TOUS
     ceux déclarés dans le header (voir parameter_sampling.draw_scenario),
     simule nrec particules, et écrit le résultat dans
-    test_directory/reftable_msprime.txt -- jamais "reftable.txt", pour
-    ne pas être confondu avec le first_records_of_the_reference_table_0.
-    txt qu'un vrai run DIYABC produirait dans le même dossier.
+    test_directory/reftable_msprime.txt ET .bin -- jamais "reftable.txt",
+    pour ne pas être confondu avec le first_records_of_the_reference_
+    table_0.txt qu'un vrai run DIYABC produirait dans le même dossier.
 
-    Retourne les ParticleResult (utile pour appeler write_reftable_bin
-    en plus, si besoin -- pas fait ici, ce point d'entrée ne produit que
-    le texte).
+    Args:
+        test_directory: Le sous-dossier de test.
+        num_loci: Voir pipeline.compute_summary_statistics.
+        nrec: Le nombre de particules à produire.
+        stats_filter: "ALL" ou "HEADER".
+        max_workers: Le nombre de process en parallèle.
+
+    Returns:
+        Les ParticleResult (utile pour appeler write_reftable_bin en
+        plus, si besoin -- déjà fait ici aussi).
     """
     test_directory = Path(test_directory)
     header_text = read_header_text(test_directory)
@@ -739,9 +583,304 @@ def simulate_from_directory(
     return results
 
 
-# ----------------------------------------------------
-# Pour les séquences ADN
-# ---------------------------------------------------
+# ── Rejeu des tirages RÉELS de DIYABC (comparaison appariée) ──────────────
+
+
+def parse_real_reftable_params(
+    path: str | Path, priors: list, scenarios: list[Scenario]
+) -> list[tuple[int, dict[str, float]]]:
+    """Lit un reftable RÉEL produit par DIYABC.
+
+    Ex: first_records_of_the_reference_table_0.txt. Extrait, ligne par
+    ligne, le scénario tiré et les valeurs de paramètres RÉELLEMENT
+    tirées par DIYABC -- pour les rejouer ensuite côté msprime (voir
+    replay_reftable_simulation), afin de comparer les deux simulateurs
+    sur EXACTEMENT les mêmes tirages de priors, sans le biais de deux
+    tirages indépendants.
+
+    Le nombre de colonnes de paramètres RÉELLEMENT présentes sur une
+    ligne dépend du SCÉNARIO de CETTE ligne précise, pas d'un total fixe
+    pour tout le fichier : DIYABC (particleset.cpp, écriture de
+    first_records_of_the_reference_table_N.txt) parcourt l'UNION de tous
+    les noms de paramètres déclarés et, pour un nom NON utilisé par le
+    scénario de la ligne courante, écrit une CASE VIDE (aucune valeur,
+    juste des espaces) au lieu d'une valeur ou d'un NA -- un parseur par
+    espaces ne produit alors AUCUN token pour cette case, ce qui décale
+    silencieusement toutes les colonnes suivantes si on suppose un
+    nombre de colonnes fixe (union) pour toutes les lignes. Repéré en
+    testant un reftable réellement multi-scénario (voir aussi le même
+    principe côté écriture dans write_reftable_txt, qui l'évite en
+    n'écrivant jamais de case vide).
+
+    On lit donc, pour CHAQUE ligne, le nombre de tokens de paramètres
+    correspondant SPÉCIFIQUEMENT au scénario de cette ligne
+    (kept_by_scenario[scenario_index], même filtre non-constant +
+    utilisé-par-ce-scénario que write_reftable_txt/write_reftable_bin),
+    pas une union appliquée uniformément -- ce qui gère aussi, en
+    particulier, le cas single-scénario où certains priors sont devenus
+    constants (is_constant_prior) et donc absents des colonnes de
+    sortie.
+
+    Args:
+        path: Chemin du reftable réel (format texte).
+        priors: Les priors déclarés dans header.txt.
+        scenarios: Les scénarios candidats.
+
+    Returns:
+        Une liste de tuples (scenario_index, {nom_paramètre: valeur}),
+        un par ligne du reftable (dans l'ordre du fichier).
+    """
+    priors_kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
+
+    lines = [line for line in Path(path).read_text().splitlines() if line.strip()]
+    data_lines = lines[1:]  # ligne 0 = en-tête
+
+    rows = []
+    for line in data_lines:
+        tokens = line.split()
+        scenario_index = int(tokens[0])
+        param_names = priors_kept_by_scenario[scenario_index]
+        values = {name: float(tokens[1 + i]) for i, name in enumerate(param_names)}
+        rows.append((scenario_index, values))
+    return rows
+
+
+def _run_single_particle_from_values(
+    particle_index: int,
+    reference_directory: Path,
+    scenario_index: int,
+    values: dict[str, float],
+    *,
+    num_loci: int | None = None,
+    observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
+    stats_filter: str,
+) -> ParticleResult:
+    """Variante de _run_single_particle qui NE TIRE AUCUN paramètre.
+
+    Rejoue (scenario_index, values) tels que fournis -- typiquement
+    issus de parse_real_reftable_params.
+
+    Args:
+        particle_index: L'index de la particule (0-based).
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .snp observé.
+        scenario_index: L'index 1-based du scénario déjà tiré par
+            DIYABC pour cette particule.
+        values: Les valeurs de paramètres historiques déjà connues,
+            {nom: valeur}.
+        num_loci: Voir pipeline.compute_summary_statistics_from_values.
+        observed_reads_per_locus: PoolSeq uniquement.
+        stats_filter: "ALL" ou "HEADER".
+
+    Returns:
+        Le ParticleResult de cette particule.
+    """
+    seed = particle_index + 1
+    summary_statistics = compute_summary_statistics_from_values(
+        reference_directory=reference_directory,
+        scenario_index=scenario_index,
+        values=values,
+        num_loci=num_loci,
+        seed=seed,
+        stats_filter=stats_filter,
+        observed_reads_per_locus=observed_reads_per_locus,
+    )
+    return ParticleResult(
+        particle_index=particle_index,
+        scenario_index=scenario_index,
+        parameter_values=values,
+        summary_statistics=summary_statistics,
+    )
+
+
+def replay_reftable_simulation(
+    reference_directory: str | Path,
+    priors: list,
+    scenarios: list[Scenario],
+    real_reftable_path: str | Path,
+    num_loci: int | None = None,
+    stats_filter: str = "ALL",
+    max_workers: int | None = None,
+) -> list[ParticleResult]:
+    """Rejoue, particule par particule, les tirages de paramètres RÉELLEMENT effectués par DIYABC.
+
+    Lit un reftable existant (ex:
+    first_records_of_the_reference_table_0.txt) -- au lieu d'en tirer de
+    nouveaux indépendamment comme run_reftable_simulation.
+
+    Chaque particule msprime utilise EXACTEMENT le même (N1,N2,N3,ta,
+    ts,...) que la particule DIYABC de même particle_index (même ordre
+    que les lignes du fichier réel) : tout écart entre les deux résulte
+    donc uniquement du moteur de simulation, jamais d'un tirage de prior
+    différent -- permet une comparaison appariée ligne à ligne, pas
+    seulement une comparaison de distributions agrégées.
+
+    Args:
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .snp observé.
+        priors: Les priors déclarés dans header.txt.
+        scenarios: Les scénarios candidats.
+        real_reftable_path: Chemin du reftable réel à rejouer.
+        num_loci: Voir pipeline.compute_summary_statistics_from_values.
+        stats_filter: "ALL" ou "HEADER".
+        max_workers: Le nombre de process en parallèle.
+
+    Returns:
+        Les ParticleResult dans le MÊME ORDRE que les lignes du fichier
+        réel -- réutilisable tel quel par write_reftable_txt/
+        write_reftable_bin (même type que run_reftable_simulation).
+    """
+    reference_directory = Path(reference_directory)
+
+    # On lit les sorties de diyabc (scénario tiré + valeurs de paramètres RÉELLEMENT tirées) pour
+    # les rejouer ensuite côté msprime, afin de comparer les deux simulateurs sur EXACTEMENT
+    # les mêmes tirages de priors.
+    rows = parse_real_reftable_params(real_reftable_path, priors, scenarios)
+
+    results_by_index: dict[int, ParticleResult] = {}
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _run_single_particle_from_values,
+                particle_index,
+                reference_directory,
+                scenario_index,
+                values,
+                num_loci=num_loci,
+                stats_filter=stats_filter,
+            ): particle_index
+            for particle_index, (scenario_index, values) in enumerate(rows)
+        }
+
+        for future in as_completed(futures):
+            particle_index = futures[future]
+            results_by_index[particle_index] = future.result()
+    return [results_by_index[i] for i in range(len(rows))]
+
+
+# ----------------------------------------------------------------------------
+# Pour les séquences ADN : lecture, écriture, rejeux de tirages réels
+# ---------------------------------------------------------------------------
+
+
+def group_prior_column_names(header_text: str) -> list[str]:
+    """Liste ordonnée des noms de colonnes "priors de groupe" d'un vrai reftable DIYABC.
+
+    Ex: `µseq_2`, `k1seq_2`, juste après les paramètres historiques et
+    avant les colonnes de statistiques sur chaque ligne -- vérifiée
+    caractère pour caractère contre la vraie sortie DIYABC de
+    `toy_example2_ms_dna` (`µmic_1 pmic_1 snimic_1 µseq_2 k1seq_2
+    µseq_3 k1seq_3`, `nparamut=7`).
+
+    Contrairement aux paramètres historiques (`_kept_param_names_by_
+    scenario`), ces colonnes NE DÉPENDENT PAS du scénario tiré par la
+    particule -- toujours les mêmes colonnes, dans l'ordre de
+    déclaration des groupes (`G1`, `G2`, `G3`...) du header, un `mus_rate`
+    toujours en premier dans chaque groupe.
+
+    Pour un groupe `[S]` (séquence ADN) : `mus_rate` puis `k1`/`k2` SI ET
+    SEULEMENT SI utilisés par le modèle du groupe (`get_parameter_used_
+    by_model` -- ex: K2P/HKY n'ont que `k1`, pas de colonne `k2seq_N`).
+    Pour un groupe `[M]` (microsat) : `mus_rate` puis `P` puis `SNI`,
+    TOUJOURS les trois -- hypothèse basée sur ce qui est observé dans la
+    vraie sortie de ce dataset précis, pas sur une règle générale
+    vérifiée dans le C++ (MicroSat n'a pas de simulation-side code dans
+    ce projet, seulement besoin de savoir COMBIEN de colonnes sauter
+    pour atteindre celles des groupes ADN qui suivent).
+
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Returns:
+        La liste ordonnée des noms de colonnes de priors de groupe.
+    """
+    group_priors = parse_group_priors(header_text)
+
+    names = []
+    for group_name, entries in group_priors.items():
+        ms_or_seq = entries[0].ms_or_seq
+        type_suffix = "seq" if ms_or_seq == "S" else "mic"
+        group_number = group_name[1:]  # "G2" -> "2"
+
+        names.append(f"µ{type_suffix}_{group_number}")  # mus_rate, toujours présent
+
+        if ms_or_seq == "S":
+            model_entry = next(e for e in entries if e.model)
+            k1_used, k2_used = get_parameter_used_by_model(model_entry)
+            if k1_used:
+                names.append(f"k1{type_suffix}_{group_number}")
+            if k2_used:
+                names.append(f"k2{type_suffix}_{group_number}")
+        else:
+            names.append(f"p{type_suffix}_{group_number}")
+            names.append(f"sni{type_suffix}_{group_number}")
+
+    return names
+
+
+def parse_real_reftable_params_with_group_priors(
+    path: str | Path, priors: list, scenarios: list[Scenario], group_priors_names: list
+) -> list[tuple[int, dict[str, float], dict[str, float]]]:
+    """Variante de parse_real_reftable_params qui lit AUSSI les priors de groupe.
+
+    Colonnes `µseq_2`, `k1seq_2`... d'un vrai reftable DIYABC -- une
+    fonction séparée plutôt qu'une extension en place, pour ne rien
+    risquer sur parse_real_reftable_params et ses appelants SNP déjà
+    validés (même choix que _run_single_particle/_run_single_
+    particle_from_values : deux fonctions distinctes plutôt qu'une seule
+    avec des branches conditionnelles).
+
+    Sur chaque ligne, les colonnes de priors de groupe suivent
+    IMMÉDIATEMENT les colonnes de paramètres historiques (elles-mêmes
+    variables en nombre selon le scénario tiré par cette ligne -- voir
+    priors_kept_by_scenario) et précèdent les colonnes de statistiques.
+
+    Contrairement aux paramètres historiques, les priors de groupe NE
+    SONT JAMAIS filtrées par scénario : `group_priors_names` (voir
+    group_prior_column_names) est utilisé TEL QUEL pour toutes les
+    lignes, quel que soit leur scénario -- vérifié empiriquement sur le
+    vrai reftable de toy_example2_ms_dna (`nparamut=7`, un compte
+    constant, contrairement à `nparam` qui varie par scénario). Appeler
+    `_kept_param_names_by_scenario(group_priors_names, scenarios)` ici
+    serait doublement faux : elle attend des objets `Prior` (pas des
+    strings -- `is_constant_prior` plante sur `.min`/`.max`), et son filtre
+    `get_parameter_names_used_by_scenario` ne reconnaît de toute façon
+    que des noms de paramètres historiques, jamais de priors de groupe.
+
+    Args:
+        path: Chemin du reftable réel (format texte).
+        priors: Les priors déclarés dans header.txt.
+        scenarios: Les scénarios candidats.
+        group_priors_names: Les noms de colonnes de priors de groupe
+            (voir group_prior_column_names).
+
+    Returns:
+        Une liste de triplets (scenario_index, priors_values,
+        group_priors_values) -- les deux dicts de valeurs restent
+        SÉPARÉS (pas fusionnés en un seul) car ils alimentent deux
+        étapes différentes en aval : priors_values sert à construire la
+        démographie, group_priors_values au modèle de mutation ADN
+        (k1/k2/mus_rate).
+    """
+    priors_kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
+
+    lines = [line for line in Path(path).read_text().splitlines() if line.strip()]
+    data_lines = lines[1:]  # ligne 0 = en-tête
+
+    rows = []
+    for line in data_lines:
+        tokens = line.split()
+        scenario_index = int(tokens[0])
+        priors_param_names = priors_kept_by_scenario[scenario_index]
+        priors_values = {
+            name: float(tokens[1 + i]) for i, name in enumerate(priors_param_names)
+        }
+        group_priors_values = {
+            name: float(tokens[1 + len(priors_param_names) + i])
+            for i, name in enumerate(group_priors_names)
+        }
+        rows.append((scenario_index, priors_values, group_priors_values))
+    return rows
 
 
 def _run_single_particle_dna(
@@ -751,8 +890,10 @@ def _run_single_particle_dna(
     *,
     stats_filter: str,
 ) -> ParticleResult:
-    """Calcule une seule particule -- fonction top-level (picklable),
-    appelée par chaque worker du ProcessPoolExecutor.
+    """Calcule une seule particule ADN (équivalent DNA de _run_single_particle).
+
+    Fonction top-level (picklable), appelée par chaque worker du
+    ProcessPoolExecutor.
 
     La seed utilisée est dérivée de particle_index, garantissant un
     tirage distinct et reproductible par particule (même particle_index
@@ -763,6 +904,17 @@ def _run_single_particle_dna(
     must be greater than 0 and less than 2^32") -- vérifié empiriquement.
     Donc particle_index=0 (le cas le plus probable, première particule)
     utilise seed=1, pas seed=0.
+
+    Args:
+        particle_index: L'index de la particule (0-based).
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        scenarios: Les scénarios candidats (chaque particule tire le
+            sien).
+        stats_filter: "ALL" ou "HEADER".
+
+    Returns:
+        Le ParticleResult de cette particule.
     """
     seed = particle_index + 1
     drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
@@ -790,9 +942,28 @@ def _run_single_particle_dna_from_values(
     *,
     stats_filter: str,
 ) -> ParticleResult:
-    """Variante de _run_single_particle_dna qui NE TIRE AUCUN paramètre :
-    rejoue (scenario_index, values) tels que fournis -- typiquement issus
-    de parse_real_reftable_params."""
+    """Variante de _run_single_particle_dna qui NE TIRE AUCUN paramètre.
+
+    Rejoue (scenario_index, values, group_priors_values) tels que
+    fournis -- typiquement issus de
+    parse_real_reftable_params_with_group_priors.
+
+    Args:
+        particle_index: L'index de la particule (0-based).
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        scenario_index: L'index 1-based du scénario déjà tiré par
+            DIYABC pour cette particule.
+        values: Les valeurs de paramètres historiques déjà connues,
+            {nom: valeur}.
+        group_priors_values: Les valeurs de priors de groupe déjà
+            connues, {nom_colonne: valeur} (voir
+            compute_summary_statistics_dna_from_values).
+        stats_filter: "ALL" ou "HEADER".
+
+    Returns:
+        Le ParticleResult de cette particule.
+    """
     seed = particle_index + 1
     summary_statistics = compute_summary_statistics_dna_from_values(
         reference_directory=reference_directory,
@@ -819,7 +990,29 @@ def replay_reftable_simulation_dna(
     stats_filter: str = "ALL",
     max_workers: int | None = None,
 ) -> list[ParticleResult]:
+    """Rejoue, particule par particule, les tirages RÉELS de DIYABC (équivalent ADN de replay_reftable_simulation).
 
+    Lit un reftable réel existant (scénario, paramètres historiques ET
+    priors de groupe RÉELLEMENT tirés par DIYABC) et rejoue chaque
+    particule côté msprime avec EXACTEMENT les mêmes valeurs -- permet
+    une comparaison appariée ligne à ligne, pas seulement une
+    comparaison de distributions agrégées.
+
+    Args:
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        priors: Les priors historiques déclarés dans header.txt.
+        group_priors_names: Les noms de colonnes de priors de groupe
+            (voir group_prior_column_names).
+        scenarios: Les scénarios candidats.
+        real_reftable_path: Chemin du reftable réel à rejouer.
+        stats_filter: "ALL" ou "HEADER".
+        max_workers: Le nombre de process en parallèle.
+
+    Returns:
+        Les ParticleResult dans le MÊME ORDRE que les lignes du fichier
+        réel.
+    """
     reference_directory = Path(reference_directory)
 
     # On lit les sorties de diyabc (scénario tiré + valeurs de paramètres RÉELLEMENT tirées) pour
