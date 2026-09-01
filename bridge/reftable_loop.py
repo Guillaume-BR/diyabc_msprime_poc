@@ -813,6 +813,65 @@ def _run_single_particle_dna(
     )
 
 
+def run_reftable_simulation_dna(
+    reference_directory: str | Path,
+    scenarios: list[Scenario],
+    *,
+    nrec: int,
+    stats_filter: str = "ALL",
+    max_workers: int | None = None,
+) -> list[ParticleResult]:
+    """Produit nrec particules ADN (lignes de reftable.bin) en parallèle.
+
+    N'écrit rien sur disque par particule (compute_summary_statistics_dna
+    est 100% Python, en mémoire).
+
+    Les résultats sont retournés DANS L'ORDRE de particle_index (0 à
+    nrec-1), pas dans l'ordre de complétion des workers -- important
+    pour la reproductibilité de l'ordre des lignes du reftable final.
+
+    Args:
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        scenarios: La liste des scénarios candidats (typiquement TOUS
+            les scénarios déclarés dans header.txt) : chaque particule
+            tire le SIEN au hasard, pondéré par son `weight` (voir
+            parameter_sampling.draw_scenario, sémantique vérifiée
+            contre particuleC.cpp::ParticleC::drawscenario) -- une même
+            particule peut donc finir sur n'importe lequel des
+            scénarios de la liste, pas forcément le même pour toutes.
+        nrec: Le nombre de particules à produire.
+        stats_filter: "ALL" ou "HEADER".
+        max_workers: Le nombre de process en parallèle (défaut : laissé
+            à ProcessPoolExecutor, généralement le nombre de cœurs
+            disponibles).
+
+    Returns:
+        La liste des ParticleResult, dans l'ordre de particle_index (0
+        à nrec-1).
+    """
+    reference_directory = Path(reference_directory)
+
+    results_by_index: dict[int, ParticleResult] = {}
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _run_single_particle_dna,
+                particle_index,
+                reference_directory,
+                scenarios,
+                stats_filter=stats_filter,
+            ): particle_index
+            for particle_index in range(nrec)
+        }
+
+        for future in as_completed(futures):
+            particle_index = futures[future]
+            results_by_index[particle_index] = future.result()
+
+    return [results_by_index[i] for i in range(nrec)]
+
+
 # Rejeu des tirages réels de DIYABC pour les séquences ADN (comparaison appariée)
 
 

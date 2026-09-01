@@ -20,6 +20,7 @@ from bridge.reftable_loop import (
     group_prior_column_names,
     parse_real_reftable_params_with_group_priors,
     run_reftable_simulation,
+    run_reftable_simulation_dna,
     simulate_from_directory,
     write_reftable_bin,
     write_reftable_txt,
@@ -320,3 +321,62 @@ def test_parse_real_reftable_params_with_group_priors(header_text_te2):
     result_scenario_1 = next(result[i] for i in range(len(result)) if result[i][0] == 1)
     result_scenario_2 = next(result[i] for i in range(len(result)) if result[i][0] == 2)
     assert len(result_scenario_1[1]) != len(result_scenario_2[1])
+
+
+def test_run_reftable_simulation_dna_scenario1(header_text_te2):
+    """Vérifie que run_reftable_simulation produit bien nrec particules
+    distinctes (tirages de paramètres différents), chacune avec ses 42
+    statistiques résumées calculées. Un seul scénario candidat ([scenario1])
+    force toutes les particules dessus, isolant ce test du tirage pondéré
+    (voir test_run_reftable_simulation_draws_multiple_scenarios pour ça)."""
+
+    scenarios = parse_header_scenarios(header_text_te2)
+    scenario1 = next(s for s in scenarios if s.index == 1)
+
+    nrec = 4
+    results = run_reftable_simulation_dna(
+        reference_directory=REFERENCE_DIR.parent / "toy_example2_ms_dna",
+        scenarios=[scenario1],
+        nrec=nrec,
+        stats_filter="ALL",
+    )
+
+    assert len(results) == nrec
+
+    # Les résultats doivent être dans l'ordre des indices de particule
+    assert [r.particle_index for r in results] == list(range(nrec))
+
+    # Un seul scénario candidat -> toutes les particules dessus
+    assert {r.scenario_index for r in results} == {1}
+
+    # Chaque particule doit avoir ses 42 stats et tous les paramètres
+    for result in results:
+        assert len(result.summary_statistics) == 42
+        assert "N1" in result.parameter_values
+
+    # Les tirages de paramètres doivent être DIFFÉRENTS entre particules
+    # (preuve que chaque particule a bien sa propre seed)
+    n1_values = [r.parameter_values["N1"] for r in results]
+    assert len(set(n1_values)) == nrec  # 4 valeurs distinctes
+
+
+def test_run_reftable_simulation_dna_draws_multiple_scenarios(header_text_te2):
+    """Avec les 2 scénarios de toy_example2 en candidats, les particules doivent
+    se répartir sur PLUSIEURS scénarios différents (pas toutes sur le
+    même) -- preuve que le tirage pondéré par `weight` est bien exercé
+    de bout en bout. Répartition exacte pré-calculée pour seed=1..6 :
+    scénarios [1, 1, 2, 1, 1, 1] (voir draw_scenario, déterministe --
+    séquence recalculée après correction du bug de seed partagée entre
+    draw_scenario et draw_parameter_values, voir
+    _SCENARIO_DRAW_SEED_OFFSET dans reftable_loop.py)."""
+    scenarios = parse_header_scenarios(header_text_te2)
+
+    nrec = 6
+    results = run_reftable_simulation_dna(
+        reference_directory=REFERENCE_DIR.parent / "toy_example2_ms_dna",
+        scenarios=scenarios,
+        nrec=nrec,
+        stats_filter="ALL",
+    )
+
+    assert [r.scenario_index for r in results] == [1, 1, 2, 1, 1, 1]
