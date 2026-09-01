@@ -98,6 +98,14 @@ _SITE_RATE_SEED_OFFSET = 90_000_000
 _MUTATION_SEED_OFFSET = 100_000_000
 _ANCESTRY_SEED_OFFSET = 110_000_000
 
+# graine FIXE (pas de +i) pour la généalogie partagée des loci ADN <M> --
+# voir dna_mutation_simulation_per_locus : contrairement à <A>/<H>, <M>
+# est non-recombinant (transmission uniparentale), tous les loci <M> du
+# dataset doivent partager LA MÊME généalogie pour une particule donnée
+# (seule la mutation diffère), comme simulate_shared_ancestry_loci le
+# fait déjà côté SNP pour <Y>/<M> (particuleC.cpp:2422-2435, GeneTreeM).
+_SHARED_M_ANCESTRY_SEED_OFFSET = 120_000_000
+
 
 # ── Construction de l'argument samples (un builder par type de locus) ──────
 
@@ -1633,6 +1641,31 @@ def dna_mutation_simulation_per_locus(
     donc ce dispatch se fait par locus, jamais une fois pour tout le
     dataset.
 
+    Généalogie PARTAGÉE pour <M> (trouvé et corrigé 2026-09-01, "Debug
+    M G3") : <M> (mitochondrial) est non-recombinant et à transmission
+    uniparentale -- TOUS les loci <M> du dataset (peu importe leur
+    groupe déclaré) retracent la MÊME généalogie réelle, seule la
+    mutation diffère d'un locus à l'autre (particuleC.cpp:2422-2435,
+    GeneTreeM -- déjà répliqué côté SNP par
+    simulate_shared_ancestry_loci). Ici, obtenu en donnant à TOUS les
+    loci <M> la MÊME graine d'ancestrie, fixe (`seed +
+    _SHARED_M_ANCESTRY_SEED_OFFSET`, sans `+i`) -- pas en réutilisant un
+    seul objet TreeSequence comme côté SNP, parce que `sequence_length`
+    (donc le RateMap de mutation) varie d'un locus <M> à l'autre alors
+    que côté SNP il vaut toujours 1. Ça marche car, sans recombinaison
+    (le défaut), msprime.sim_ancestry produit exactement la même
+    topologie/mêmes temps de nœuds quelle que soit `sequence_length`, à
+    graine égale -- vérifié empiriquement avant d'écrire ce code (même
+    démographie/samples/ploidy, `sequence_length` variée entre 1 et
+    1000 : nœuds internes identiques bit à bit). Absent avant ce fix :
+    chaque locus <M> tirait sa PROPRE généalogie indépendante
+    (`seed + _ANCESTRY_SEED_OFFSET + i`, comme <A>/<H>), ce qui
+    moyennait artificiellement le bruit inter-locus sur les stats de
+    groupe (DTA/VNS/MNS/VPD) et sous-estimait leur variance
+    inter-particule par rapport au vrai DIYABC -- voir
+    `notes/exploration.md`, entrée du 27/08-31/08-01/09 ("écart de
+    variance sur les stats ADN séquence du groupe G3").
+
     Args:
         header_text: Texte complet de header.txt.
         mss_file_path: Chemin du fichier .mss.
@@ -1659,11 +1692,16 @@ def dna_mutation_simulation_per_locus(
             locus_demography, ploidy = dna_ancestry_parameters_for_heritage(
                 locus.heritage, demography, sex_ratio
             )
+            ancestry_seed = (
+                seed + _SHARED_M_ANCESTRY_SEED_OFFSET
+                if locus.heritage == "M"
+                else seed + _ANCESTRY_SEED_OFFSET + i
+            )
             tree_sequences = msprime.sim_ancestry(
                 samples=samples,
                 demography=locus_demography,
                 sequence_length=locus.dnalength,
-                random_seed=seed + _ANCESTRY_SEED_OFFSET + i,
+                random_seed=ancestry_seed,
                 ploidy=ploidy,
             )
             transition_matrix = matrix_per_locus[locus.name]
@@ -2002,7 +2040,10 @@ def dna_mutation_simulation_per_locus_from_values(
     Tout le reste (tirage de la généalogie par locus via msprime.sim_
     ancestry, seed + _ANCESTRY_SEED_OFFSET + i / seed + _MUTATION_SEED_
     OFFSET + i par locus, dispatch ploïdie/démographie par type
-    d'héritage) est identique à dna_mutation_simulation_per_locus.
+    d'héritage, généalogie PARTAGÉE pour <M> via seed +
+    _SHARED_M_ANCESTRY_SEED_OFFSET sans +i) est identique à
+    dna_mutation_simulation_per_locus -- voir sa docstring pour le
+    détail et la justification de ce dernier point.
 
     Args:
         header_text: Texte complet de header.txt.
@@ -2039,11 +2080,16 @@ def dna_mutation_simulation_per_locus_from_values(
             locus_demography, ploidy = dna_ancestry_parameters_for_heritage(
                 locus.heritage, demography, sex_ratio
             )
+            ancestry_seed = (
+                seed + _SHARED_M_ANCESTRY_SEED_OFFSET
+                if locus.heritage == "M"
+                else seed + _ANCESTRY_SEED_OFFSET + i
+            )
             tree_sequences = msprime.sim_ancestry(
                 samples=samples,
                 demography=locus_demography,
                 sequence_length=locus.dnalength,
-                random_seed=seed + _ANCESTRY_SEED_OFFSET + i,
+                random_seed=ancestry_seed,
                 ploidy=ploidy,
             )
             transition_matrix = matrix_per_locus[locus.name]

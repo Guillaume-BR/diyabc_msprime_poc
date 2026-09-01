@@ -602,3 +602,522 @@ mesurable isolément (bruit système ±10-15% > gain attendu ~5%, confirmé
 par un test en double aveugle à charge égale) -- gardé pour sa
 cohérence avec le reste du code, pas pour un gain chiffrable. 73/73
 tests verts.
+
+## Note du 24/07
+Mesure de temps d'exécution pour un PoolSeq avec 100 loci : toy_example4:
+- Avec un mrc = 1 : diyabc : 34s et msprime : 133s (x3.9)
+- Avec un mrc = 5 : diyabc : 80s et msprime : 282s (x3.5)
+
+Mesure de temps d'execution pour un IndSeq avec 5000 loci d'un seul type autosomaux : human
+- Sans maf : diyabc : 114s et msprime : 243s (x2.13) 
+
+Mesure de temps d'execution pour un IndSeq avec 100 loci de type autosomal : toy_example3
+- Avec maf = 0.05 : diyabc : 2s et msprime : 224s (x112) !!!!!!!!!!!!!!!!
+- 500 loci et maf = 0.05 : 5s et msprime : 1126s (x225) !!!!!!!!!!!!!!!!!
+
+Mesure de temps d'execution pour un IndSeq avec 100 loci  : toy_example5
+- multitype 70 A ; 10 X ; 10 M ; 10 Y : diyabc : 0.6s et msprime : 4.3 (x7)
+- multitype 350 A ; 50 X ; 50 M ; 50 Y : diyabc : 2.7s et msprime : 13.7 (x5)
+
+Après sur le temps avec maf, on est 2.4s par particules pour les deux benchmarks. On a une progression linéaire du temps de simulation. Mais on peut faire un appel msprime.sim_ancestry par petit batch au lieu de faire un appel pour chaque tentive et chaque rejet.via num_replicates 
+
+après modification du code de with_maf_filter et with_mrc_filter : 
+
+Mesure de temps d'exécution pour un PoolSeq avec 100 loci : toy_example4:
+- Avec un mrc = 1 : diyabc : 34s et msprime : 105s (x3.1)
+- Avec un mrc = 5 : diyabc : 80s et msprime : 114s (x1.4)
+
+Mesure de temps d'execution pour un IndSeq avec 100 loci de type autosomal : toy_example3
+- Avec maf = 0.05 : diyabc : 2s et msprime : 15s (x7.5) 
+- 500 loci et maf = 0.05 : diyabc : 5s et msprime : 65s (x13)
+
+On essaie d'améliorer encore les choses en optimisant le nombre de batch pour le maf. On garde 20 pour les petits nombres de loci et nb_loci/4 sinon. 
+
+Mesure de temps d'execution pour un IndSeq avec 100 loci de type autosomal : toy_example3
+- Avec maf = 0.05 : diyabc : 2s et msprime : 13s (x6.5) 
+- 500 loci et maf = 0.05 : diyabc : 5s et msprime : 40s (x8)
+
+Pour le mrc, on va faire un pool partagé sur tous les locus car avant la boucle recrée un lot à chaque locus même si le locus n'avait besoin que d'une tentative pour passer le mrc.
+
+Mesure de temps d'exécution pour un PoolSeq avec 100 loci : toy_example4:
+- Avec un mrc = 1 : diyabc : 34s et msprime : 22s (x0.6)
+- Avec un mrc = 5 : diyabc : 80s et msprime : 44s (x0.55)
+
+Possibilité de jouer encore sur la taille du batch en mrc pour gagner encore un peu de temps, compromis vitess/mémoire à trouver. Pourrait dépendre à terme de la valeur du mrc.
+
+## Note du 28/07
+Attaque des microsat
+- parsing du header : loci, priors, stats
+- parameter_sampling : 
+ * implémentation des différentes lois selon le mécanisme de diyabc
+ * gestion des priors dépendants dans le tirage des valeurs selon les lois de groupe
+
+## Note du 29/07 — modèle de mutation microsat/séquences, msprime vs DIYABC
+
+Recherche (pas d'implémentation) pour préparer la suite du chantier
+microsat/sequences-mut : est-ce que les modèles de mutation déjà
+intégrés à msprime (`msprime.SMM`, `msprime.JC69`/`HKY`/`GTR`) peuvent
+remplacer un algorithme écrit à la main, comme on l'a fait pour Hudson
+côté SNP ?
+
+**Microsat : `msprime.SMM` NE correspond PAS au modèle DIYABC** (vérifié
+dans `particuleC.cpp::ParticleC::mute`, branche `type<5`,
+lignes ~1682-1699). `SMM` (doc msprime) est un stepwise strict : ±1
+avec proba 50/50, et une mutation qui sortirait de `[lo,hi]` n'a
+simplement aucun effet (bornes absorbantes). Le vrai modèle DIYABC est
+plus riche sur trois points :
+1. Deux processus mélangés par événement de mutation : "SNI" (toujours
+   exactement ±1, taux `sni_rate`) vs "GSM" (taux `mut_rate`), choisis
+   avec probabilité `sni_rate/(sni_rate+mut_rate)`.
+2. Le GSM autorise des sauts de plus d'un pas : taille `d` tirée d'une
+   loi **géométrique** de paramètre `Pgeom` (= la valeur tirée du prior
+   `MEANP`/`GAMP` du groupe) — `d = 1 + floor(log(ra)/log(Pgeom))`,
+   `d=1` si `Pgeom<=0.001` — puis déplacement `± d * motif_size`.
+3. Bornes `[kmin,kmax]` (dérivées de `motif_size`/`motif_range`, voir
+   `header.cpp:2014-2017`) **clampées**, pas absorbantes : la mutation a
+   quand même lieu, juste plafonnée, contrairement à `SMM` qui annule
+   la mutation entière si elle sort de l'intervalle.
+
+Conclusion : `msprime.SMM` ne peut représenter ni le mélange SNI/GSM, ni
+`Pgeom`, ni le clamping — pas un problème de paramétrage, un modèle
+structurellement plus pauvre. Il faudra écrire l'algorithme à la main
+(même esprit que `_draw_single_mutation_edge_child`/Hudson pour le SNP),
+pas s'appuyer sur `msprime.SMM`. Le nombre d'événements de mutation par
+branche reste un processus de Poisson standard (`put_mutations`,
+`mutrate = mut_rate + sni_rate`, taux constant), c'est la mécanique de
+CHAQUE événement qui diverge de `SMM`.
+
+**Séquences ADN : les modèles msprime correspondent bien, cette fois.**
+`comp_matQ` (`particuleC.cpp:1121-1166`) construit une matrice de
+transition 4×4 (choix du nouveau nucléotide, CONDITIONNEL à un événement
+de mutation déjà survenu via un Poisson séparé sur `mus_rate *
+dnalength`) selon `grouplist[gr].mutmod` :
+- `mutmod=0` (JK/Jukes-Cantor) : matrice non modifiée (taux/fréquences
+  égaux après normalisation ligne par ligne) → `msprime.JC69()` exact,
+  aucun paramètre.
+- `mutmod=1` (K2P) : transitions (A↔G, C↔T) pondérées par `k1`, pas de
+  `pi_X` → `msprime.HKY(kappa=k1, equilibrium_frequencies=[0.25]*4)`
+  (msprime n'a pas de classe `K2P` dédiée, mais K2P = HKY à fréquences
+  égales).
+- `mutmod=2` (HKY) : `matQ[i][j] = pi_j * (k1 si transition sinon 1)` —
+  construction HKY85 standard → `msprime.HKY(kappa=k1,
+  equilibrium_frequencies=[pi_A,pi_C,pi_G,pi_T])` terme à terme.
+- `mutmod=3` (TN/Tamura-Nei) : comme HKY mais deux kappas différents
+  (`k1`/`k2` selon la paire de transition) → pas de classe `TN93`
+  dédiée dans msprime, mais représentable via `msprime.GTR(relative_
+  rates=..., equilibrium_frequencies=[pi_A,pi_C,pi_G,pi_T])` en
+  construisant la matrice de taux relatifs à la main.
+Classes msprime vérifiées disponibles (introspection directe,
+`diyabc_msprime` env, msprime 1.4.2) : `JC69`, `HKY(kappa,
+equilibrium_frequencies)`, `F84`, `GTR(relative_rates,
+equilibrium_frequencies)` — pas de `K2P`/`TN93` nommées, d'où les
+équivalences ci-dessus.
+
+**Origine de `pi_A`/`pi_C`/`pi_G`/`pi_T`** (vérifié `data.cpp:1533-1568`) :
+fréquence EMPIRIQUE, calculée PAR LOCUS (`this->locus[loc].pi_A`, pas
+une valeur globale partagée entre loci) en comptant les bases sur
+TOUTES les séquences observées de ce locus (toutes populations/individus
+confondus) au chargement du `.mss` observé — jamais tirées d'un prior,
+jamais recalculées par particule. Implique un nouveau module de lecture
+des séquences ADN observées (même famille que `observed_data.py` pour
+le SNP/PoolSeq : `count_samples_per_population`/`observed_reads`), pas
+encore écrit.
+
+**Reste ouvert, à reprendre dans une prochaine session** :
+- `gams`/`p_fixe` (les deux valeurs de la ligne `MODEL K2P 10 2.00` du
+  header) : proportion de sites invariants + hétérogénéité de taux
+  entre sites (looks like une loi Gamma, terminologie phylogénétique
+  standard) — pas encore tracé dans le C++, pas géré par `comp_matQ`
+  lui-même. À voir si `msprime.sim_mutations` supporte nativement un
+  taux variable par site, ou s'il faut simuler les sites invariants à
+  part.
+- Le module de lecture des séquences ADN observées (pour `pi_A..T`) —
+  pas commencé.
+- L'algorithme de mutation microsat lui-même (SNI/GSM/Pgeom) — pas
+  commencé, à écrire à la main.
+
+## Note du 27/08/26 — écart de variance sur les stats ADN séquence du groupe G3 (<M>) : investigation complète, du dataset stress-test jusqu'au code source C++
+
+Contexte : la validation appariée DIYABC/msprime sur `toy_example2_ms_dna`
+(5 loci `<A>` + 5 loci `<M>`, 1000 particules réelles rejouées via
+`scripts/replay_diyabc_priors_dna.py`) avait montré 11/42 colonnes de
+stats ADN avec un écart KS significatif (p<0.05), concentrées presque
+exclusivement sur `MNS`/`VNS`/`DTA`/`VPD` (les stats dérivées de la
+variance des différences par paire), et nettement pires sur le groupe
+G3 (`<M>`, mitochondrial/haploïde) que sur G2 (`<A>`, autosomal
+diploïde). Cette note documente l'investigation complète menée pour
+comprendre cet écart, en trois étapes.
+
+### Étape 1 — tester l'hypothèse "pas assez de loci" (réfutée)
+
+Précédent connu côté SNP (voir note du 17/07 ci-dessus) : un écart
+"décevant" en KS s'était résorbé en passant de 10 à 650 loci par type.
+Hypothèse testée ici : le même phénomène pourrait expliquer l'écart
+ADN, vu qu'on n'a que 5 loci par groupe (contre 5000 loci SNP sur
+human).
+
+Construction d'un dataset étendu `reference/toy_example2_ms_dna_50loci/`
+(jamais modifié l'original) : les 5 loci `<A>` et 5 loci `<M>` dupliqués
+jusqu'à 50+50, sous de nouveaux noms continuant la numérotation globale
+existante (`Locus_S_A_21_` à `_65_`, `Locus_S_M_66_` à `_110_` — un
+premier essai avait redémarré la numérotation à 6, ce qui entrait en
+collision avec les noms originaux `S_A_11..15`/`S_M_16..20`, détecté et
+corrigé avant de lancer quoi que ce soit). Vrai run DIYABC relancé
+dessus (1000 particules, `-R ALL -r 1000 -g 1000 -m -t 16`, après
+réinitialisation du RNG via `-n "t:16;c:1;s:1;f:"` — l'option `-n 1`
+seule ne suffit pas, il faut la chaîne complète), puis rejeu msprime via
+une copie paramétrée du script de replay.
+
+Résultat : **17/47 colonnes significatives, contre 11/42 à 5+5 loci —
+la proportion n'a PAS diminué**, ce qui réfute l'hypothèse. Une première
+comparaison avait donné un résultat alarmant (39/47, écarts de -96%)
+mais c'était un artefact de parsing : les lignes du vrai reftable ont
+une largeur variable selon le scénario de la ligne (colonnes de
+paramètres/group-priors différentes), et un parseur `pandas.read_csv
+(sep=r'\s+')` naïf décale silencieusement toutes les colonnes sur les
+lignes plus courtes. Corrigé en réutilisant `_kept_param_names_by_scenario`/
+`group_prior_column_names` (déjà dans `bridge/reftable_loop.py`) pour
+aligner chaque ligne par son propre scénario.
+
+Le résultat corrigé affine le diagnostic plutôt que de le confirmer
+platement : G2 colle très bien à DIYABC (ratio écart-type sim/réel
+0.94–1.04 sur les 8 stats, écarts de moyenne négligeables) ; G3
+concentre presque tous les écarts significatifs, et c'est un **déficit
+de variance**, pas un décalage de moyenne : ratio écart-type sim/réel
+de 0.65 à 0.94 selon la stat, et **0.26 pour `DTA`**. Les `rdiff%`
+énormes sur `DTA` (jusqu'à +139%) sont un leurre : sa vraie moyenne est
+proche de 0 (0.001 à 0.09), donc un tout petit écart absolu explose en
+pourcentage — le ratio d'écart-type est le vrai signal.
+
+### Étape 2 — isoler ancestrie vs mutation (les deux étages sont mis hors de cause)
+
+Deux diagnostics jetables, mesurant le coefficient de variation
+(écart-type/moyenne, invariant d'échelle) entre les 50 loci d'un même
+groupe, au sein de particules réellement rejouées :
+
+1. **Ancestrie seule** (`msprime.sim_ancestry` sans mutation,
+   `ts.first().total_branch_length` comme proxy) : ratio
+   CV(G3)/CV(G2) = **1.05**.
+2. **Pipeline mutation complet** (`dna_mutation_simulation_per_locus_
+   from_values` avec les vraies moyennes de groupe rejouées,
+   `ts.num_mutations` comme proxy) : ratio CV(G3)/CV(G2) = **1.02**.
+
+Les deux ratios sont proches de 1 : dans NOTRE simulation, G2 et G3 ont
+une variance relative quasi identique, à chaque étage. Le déficit n'est
+donc PAS dans le mécanisme de dispersion par locus, ni dans le
+rééchelonnage `coalescence_coefficient`/`ploidy`, ni dans le modèle de
+mutation — tout ça est cohérent en interne. Le problème, c'est
+spécifiquement que le G3 RÉEL de DIYABC porte PLUS de variance
+(relativement à sa propre moyenne) que son G2, alors que notre
+simulation garde un ratio ~1 entre les deux.
+
+### Étape 3 — lecture directe du code source C++ (`~/Documents/Github/diyabc`)
+
+Plutôt que de continuer à théoriser côté Python, lecture de
+`particuleC.cpp` (`ParticleC::coal_pop`) pour vérifier la fidélité de
+notre traduction du mécanisme de coalescence.
+
+**Formule des temps de coalescence** (`particuleC.cpp:1329-1341`, mode
+"approximation continue") :
+```
+start -= (coeffcoal * N / nLineages / (nLineages-1)) * log(ra)
+```
+En comparant à la formule standard du coalescent (temps d'attente moyen
+= `2·Ne/(k(k-1))`), ceci implique `Ne_effectif = coeffcoal * N / 2` —
+**exactement** notre `rescale_demography(factor=coeffcoal/2)`. La
+formule des moyennes qu'on a portée est donc fidèle au bit près.
+
+**Deux régimes de coalescence** (`ParticleC::evalcriterium`,
+`particuleC.cpp:1251-1275`) : en plus de l'approximation continue
+ci-dessus, DIYABC a un mode "génération par génération" (Wright-Fisher
+discret : tirage d'un parent uniforme parmi `Ne` par lignée à chaque
+génération, détection de collision) qu'on ne réplique pas du tout côté
+msprime. Vérifié empiriquement en instrumentant temporairement
+`coal_pop` avec une trace conditionnelle (`bool trace = (loc==10) or
+(loc==15);`, recompilation via le `CMakeLists.txt` existant du repo,
+puis reverti après coup — build propre, `cmake --build . --target
+general`) : sur les N1 typiques de ce dataset (1000-10000), `ra =
+nLineages/N` reste bien en dessous de tous les seuils d'`evalcriterium`,
+pour `<A>` ET `<M>` — ce mode discret ne se déclenche jamais ici, écarté
+comme cause.
+
+**L'admixture par tirage de Bernoulli indépendant par lignée**
+(`ParticleC::split_pop`, `particuleC.cpp:1513-1524`) :
+```cpp
+if (this->mw.random() < this->seqlist[iseq].admixrate)
+    this->gt[loc].nodes[i].pop = this->seqlist[iseq].pop1;
+else
+    this->gt[loc].nodes[i].pop = this->seqlist[iseq].pop2;
+```
+Chaque lignée survivante au moment du split `ta` reçoit un tirage
+indépendant. En traçant 4 particules réelles de scénario 1 (le seul
+avec un événement `ta split`), le nombre de lignées entrant dans ce
+split est très différent entre groupes :
+
+| particule (Ne) | lignées `<A>` (pop3+pop4) | lignées `<M>` (pop3+pop4) |
+|---|---|---|
+| Ne=9977  | 1+12 = 13 | 0+4 = 4 |
+| Ne=4442  | 9+3 = 12  | 6+0 = 6 |
+| Ne=5445  | 1+6 = 7   | 0+1 = 1 |
+| Ne=9138  | 2+3 = 5   | 1+0 = 1 |
+
+Ratio moyen `<M>`/`<A>` ≈ 0.29-0.33 (cohérent avec un diagnostic Python
+équivalent sur 30 particules : nb moyen de lignées à `ta` = 6.88 pour
+G2, 2.28 pour G3). Plus parlant que le ratio : **`<M>` a un côté
+(pop3 OU pop4) à ZÉRO lignée dans 3 cas sur 4** ci-dessus, alors que
+`<A>` ne l'a jamais. Avec si peu de lignées survivantes, le partage de
+l'admixture devient quasiment binaire (tout d'un côté par pur hasard),
+un régime qualitativement différent de `<A>`, qui se répartit presque
+toujours des deux côtés.
+
+**Pourquoi le diagnostic "ancestrie seule" (étape 2) n'avait rien vu** :
+`total_branch_length` est une quantité continue qui lisse cet effet
+tout-ou-rien ; `DTA` et les stats de différences par paire sont
+justement sensibles à CE type de structuration en sous-populations, pas
+la longueur totale d'arbre.
+
+**Vérification finale : notre propre msprime reproduit-il cet effet ?**
+Script diagnostic utilisant `msprime.sim_ancestry(...,
+record_migrations=True)` puis inspection de `ts.tables.migrations`
+(population `dest` au temps `ta`) pour compter, par locus, combien de
+lignées partent vers pop3 vs pop4 — l'équivalent exact côté msprime de
+ce qu'on a tracé côté `split_pop`. Sur 30 particules réelles de
+scénario 1 (1332 loci G2, 968 loci G3) :
+
+| | % de loci avec un côté à 0 lignée | ratio moyen (côté minoritaire/total) |
+|---|---|---|
+| G2 (`<A>`) | 30.6% | 0.206 |
+| G3 (`<M>`) | **55.6%** | 0.171 |
+
+**Notre propre simulation reproduit bien l'effet quasi-binaire** : G3 a
+un côté à 0 lignée près de deux fois plus souvent que G2, dans le même
+sens que la trace réelle DIYABC. Ça réfute l'hypothèse "notre portage
+msprime ignore/sous-produit cet effet" — `msprime.add_admixture` fait
+le même tirage indépendant par lignée que `split_pop`.
+
+### Conclusion (provisoire — RÉFUTÉE partiellement, voir mise à jour du 31/08 ci-dessous)
+
+Chaîne complète vérifiée, étape par étape, source à l'appui :
+1. Formule de moyenne du coalescent → identique entre C++ et notre
+   `rescale_demography`.
+2. Mode discret Wright-Fisher → jamais déclenché sur ce dataset, ni
+   pour `<A>` ni pour `<M>`.
+3. Effet d'admixture quasi-binaire sur peu de lignées → réel côté
+   DIYABC (tracé) ET reproduit qualitativement par notre msprime
+   (vérifié via les tables de migration).
+
+**Aucun bug de portage trouvé** (ce point reste vrai). L'écart résiduel
+de variance sur `DTA`/`VNS`/`VPD`/`MNS` pour `<M>` avait été attribué à
+un mécanisme combinatoire réel (peu de lignées survivantes → partage
+d'admixture quasi tout-ou-rien à l'événement `ta split`), présent et
+correctement répliqué des deux côtés. **Cette attribution s'est avérée
+incomplète — voir la mise à jour du 31/08/26** : l'admixture n'explique
+pas, à elle seule, l'ampleur du déficit observé.
+
+### Mise à jour du 31/08/26 — contre-test scénario sans admixture (réfute l'admixture comme cause PRINCIPALE)
+
+Test de falsification direct de la conclusion ci-dessus : si le
+mécanisme "peu de lignées → partage d'admixture quasi-binaire à `ta`"
+est bien LA cause du déficit de variance sur G3, alors ce déficit
+devrait disparaître (ou fortement diminuer) pour les particules qui
+n'ont PAS tiré d'admixture. Or `toy_example2_ms_dna` a justement 2
+scénarios candidats tirés à poids égal (`[0.5]`/`[0.5]`) :
+- **scénario 1** : `pop1`+`pop2` fusionnent à `t1`, PUIS admixture
+  (`ta split`) vers `pop3`/`pop4`, PUIS refusion à `t2` — celui étudié
+  ci-dessus.
+- **scénario 2** : `pop1`+`pop2` fusionnent à `t1`, point final. Aucun
+  `split`, aucune admixture.
+
+Pas besoin de relancer DIYABC : le reftable réel de 1000 particules
+déjà rejoué (`scripts/replay_diyabc_priors_dna.py`,
+`reference/toy_example2_ms_dna/{first_records_of_the_reference_table_0.txt,
+reftable_msprime_replay.txt}`) mélange déjà les deux scénarios (tirage
+pondéré par particule). Filtré les 1000 particules par
+`scenario_index` (colonne déjà présente, alignement ligne à ligne
+réel/simulé vérifié : 0 désaccord de scénario entre les deux fichiers),
+puis recalculé le ratio d'écart-type sim/réel séparément pour G2 et G3,
+séparément par scénario (488 particules scénario 1, 512 scénario 2) :
+
+| stat | G2 scén.1 (admixture) | G3 scén.1 (admixture) | G2 scén.2 (SANS admixture) | G3 scén.2 (SANS admixture) |
+|---|---|---|---|---|
+| DTA | 1.027 | 0.609 | 0.975 | 0.627 |
+| VNS | 0.996 | 0.830 | 1.014 | 0.778 |
+| VPD | 1.246 | 0.909 | 1.250 | 0.714 |
+| MNS | 0.984 | 0.791 | 0.985 | 0.825 |
+
+(moyenne globale sur les 21 colonnes G2/G3 : écart moyen G3-G2 =
+-0.177 en scénario 1, **-0.165 en scénario 2** — quasi identique)
+
+**Le déficit persiste à une magnitude quasi identique SANS aucune
+admixture**, et sur `VPD`/`VNS` il est même **plus marqué** en
+l'absence d'admixture (0.714/0.778 vs 0.909/0.830 avec admixture).
+Vérifié cohérent sur les 13 types de statistiques individuellement, pas
+seulement en moyenne globale.
+
+**Conclusion révisée** : le mécanisme d'admixture quasi-binaire
+(étape 3 ci-dessus) est réel et correctement reproduit par notre port
+— mais ce n'est PAS la cause principale (ni même une cause nécessaire)
+du déficit de variance sur G3, puisque celui-ci survit intact dans un
+scénario qui n'a aucun événement d'admixture. La vraie cause est donc
+plus générale, probablement liée à `<M>` lui-même (Nₑ réduit → moins de
+lignées survivantes à *tout* moment de son histoire, pas seulement à un
+événement de split précis — potentiellement moins d'événements de
+coalescence indépendants sur lesquels les statistiques peuvent
+moyenner/lisser dans l'ensemble de l'arbre, pas seulement au niveau
+d'un point de partition discret). **Pas encore investiguée** : cette
+piste plus générale (ex: comparer directement le nombre d'événements de
+coalescence, ou leur distribution temporelle, entre G2 et G3, à
+n'importe quel point de l'arbre, pas seulement à `ta`).
+
+**Statut de l'investigation : ROUVERTE** (n'est plus "close" comme
+indiqué le 27/08) — le but du POC (prouver la faisabilité
+`header.txt` → msprime) reste atteint indépendamment de cet écart
+résiduel, mais l'explication documentée précédemment était incomplète
+et ne doit plus être citée comme la cause établie.
+
+**Bug réel trouvé et corrigé en cours de route** (indépendant de ce qui
+précède) : `build_group_local_param_per_locus`/son jumeau `_from_values`
+(`bridge/ancestry_simulation.py`) recréaient `random.Random(seed +
+_KAPPA1_SEED_OFFSET)` (et `_KAPPA2_`/`_MUS_RATE_SEED_OFFSET`) à chaque
+itération de la boucle `for group in nloc_per_group`, avec un offset
+indépendant du groupe — donc G2 et G3 (tous deux modèle K2P, tous deux
+utilisateurs de kappa1) rejouaient exactement la même séquence de
+tirages, juste recentrée sur un `k_moy` différent. Invisible à 5+5 loci
+(les deux groupes déclarent le même `GAMK1` shape=2, donc la dispersion
+relative semblait cohérente par coïncidence) ; révélé seulement en
+construisant un dataset multi-groupes de même modèle pour cette
+investigation. Corrigé en construisant chaque `rng` UNE SEULE FOIS
+avant la boucle sur les groupes (même motif que `build_rate_map_per_
+locus`, déjà correct). 128/128 tests verts après régénération des 15
+valeurs golden qui en dépendaient (toutes G3/pairwise, aucune G2-seule
+touchée — signature exacte confirmant que le fix est bien scopé).
+
+### Mise à jour du 01/09/26 — cause trouvée et corrigée : généalogie <M> non partagée entre loci (investigation CLOSE)
+
+Reprise directement là où la mise à jour du 31/08 s'était arrêtée
+("piste plus générale... pas encore investiguée") — via une série de
+diagnostics jetables (non committés, tous décrits ci-dessous) puis une
+instrumentation temporaire du vrai binaire `general` (`sumstat.cpp`,
+revertée après coup), suivie d'un correctif effectif dans `bridge/`.
+
+**Étape 1 (réfutée) — dépendance au régime `t1/N1`.** Hypothèse testée :
+`<M>` (Ne effectif 4x plus petit, `coalescence_coefficient("M",
+0.5)/2 = 0.25` contre `1.0` pour `<A>` avec ploidy=2 — confirmé fidèle
+à `particuleC.cpp::cal_coeffcoal` et déjà validé le 27/08) coalesce
+tellement plus vite qu'un nombre variable de lignées atteint même les
+événements démographiques les plus anciens, gonflant la variance
+inter-locus. Diagnostic : sur les 512 particules réelles de scénario 2
+(sans admixture) déjà rejouées, 200 répliques msprime par particule,
+comptage des lignées survivantes juste avant `t1` (le seul événement
+démographique de ce scénario), binné par `t1/N1`. Résultat : le ratio
+interne `CV(M)/CV(A)` varie fortement selon le bin (1.34 dans
+`[0,0.5)`, ~0 dans `[5,10)`/`[10,∞)` où `<M>` atteint une variance
+nulle — exactement 1 lignée par population — bien avant `<A>`) mais de
+façon **non monotone** (positif dans les bins superficiels, négatif
+dans les bins profonds — `<M>` "en avance" sur sa propre horloge
+coalescente traverse plus vite le pic de la courbe de variance en
+cloche). Stratifier le VRAI écart-type réel/simulé (`DTA_3_1` etc.) par
+le même binning `t1/N1` montre un déficit **uniforme** (~0.5-0.85)
+across tous les bins, y compris ceux où le mécanisme interne prédit un
+ratio proche de 1 — **pas de corrélation avec le régime**, hypothèse
+réfutée comme cause de l'écart observé (le mécanisme lui-même est réel
+et vérifié, juste pas responsable).
+
+**Étape 2 (réfutée) — relecture attentive de `sumstat.cpp`.** Vérifié
+terme à terme : `DataC::calcule_ss` (définition de `ssize`, `data.cpp:
+966-999`) donne bien `n=20` copies de gène pour `<M>` (tous les
+individus, +1 chacun, aucune distinction de sexe) et `n=40` pour `<A>`
+(+2 chacun) — identique à `observed_count_population`/notre ploidy.
+Les constantes de Tajima's D (`a1,a2,b1,b2,c1,c2,e1,e2`,
+`cal_dta1pl:1566-1579`) sont identiques à `_tajima_constants`.
+`ParticleC::cal_numvar` (`dnavar`/`haplodnavar`) restreint le calcul aux
+sites variables **groupés sur toutes les populations du dataset**, pas
+par population — vérifié sans impact numérique (chaque stat "1p" refait
+son propre test d'identité localement). Aucune divergence de formule
+trouvée.
+
+**Étape 3 (LA cause) — instrumentation temporaire de `cal_dta1pl`
+(`~/Documents/Github/diyabc/src-JMC-C++/sumstat.cpp`), rebuild via le
+`CMakeLists.txt` du dépôt, run réel (`general -p ./ -R "ALL" -r 30
+-g 30 -m -t 1` sur une copie de `toy_example2_ms_dna`), instrumentation
+retirée et binaire reconstruit propre ensuite.** Trace de `n`/`S`/`pi`
+par locus × population × particule pour les 10 loci ADN (`kloc` 10-14 =
+`<A>`, 15-19 = `<M>`). Calcul de la corrélation de `pi` entre paires de
+loci **au sein d'une même particule** :
+
+| paire de loci | type | corrélation de `pi` |
+|---|---|---|
+| 10 vs 11 | `<A>` | -0.249 |
+| 11 vs 12 | `<A>` | 0.319 |
+| 15 vs 16 | `<M>` | 0.569 |
+| 16 vs 17 | `<M>` | 0.753 |
+| 17 vs 18 | `<M>` | 0.333 |
+| 18 vs 19 | `<M>` | 0.657 |
+
+Les loci `<A>` d'une même particule sont quasi indépendants (corrélation
+moyenne 0.153, proche du bruit) ; les loci `<M>` d'une même particule
+sont FORTEMENT corrélés (moyenne 0.552, jusqu'à 0.75-0.9). C'est exactement
+ce que prédit la biologie de l'ADNmt (non-recombinant, transmission
+uniparentale) et exactement le mécanisme déjà documenté et implémenté
+côté SNP (`simulate_shared_ancestry_loci`, `ancestry_simulation.py:305`,
+qui cite `particuleC.cpp:2422-2435` `GeneTreeY`/`GeneTreeM` : le premier
+locus `<Y>`/`<M>` tire une généalogie, tous les suivants COPIENT cette
+même généalogie, seule la mutation diffère) — **mais jamais porté côté
+séquences ADN**. `dna_mutation_simulation_per_locus`/`_from_values`
+appelaient `msprime.sim_ancestry` indépendamment pour CHAQUE locus, avec
+un seed qui varie par locus (`seed + _ANCESTRY_SEED_OFFSET + i`), y
+compris pour `<M>`.
+
+**Conséquence** : en tirant 5 généalogies indépendantes au lieu d'une
+seule partagée et répétée, le pipeline moyennait artificiellement le
+bruit inter-locus sur les stats de groupe (`DTA_3`/`VNS_3`/`MNS_3`/
+`VPD_3`, moyennées sur `nl=5` loci) — exactement le sens du déficit
+observé depuis le 27/08, et ça explique du même coup pourquoi G2 (`<A>`,
+correctement indépendant des deux côtés) n'a jamais montré d'écart, et
+pourquoi le déficit était resté constant à travers tous les régimes
+`t1/N1`/scénarios testés aux étapes précédentes : la cause n'a jamais
+été démographique, elle était architecturale (un mécanisme de partage
+de généalogie non porté), donc invariante à tout ce qu'on pouvait faire
+varier côté paramètres.
+
+**Correctif** (`bridge/ancestry_simulation.py`) : nouvelle constante
+`_SHARED_M_ANCESTRY_SEED_OFFSET = 120_000_000`. Dans
+`dna_mutation_simulation_per_locus`/`_from_values`, la graine
+d'ancestrie pour un locus `<M>` est désormais **fixe**
+(`seed + _SHARED_M_ANCESTRY_SEED_OFFSET`, sans `+i`) au lieu de varier
+par locus — tous les loci `<M>` du dataset (peu importe leur groupe
+déclaré, comme côté SNP) partagent donc la même généalogie tirée par
+`msprime.sim_ancestry`. Approche différente de
+`simulate_shared_ancestry_loci` (qui réutilise littéralement le MÊME
+objet `TreeSequence`) parce que `sequence_length` (donc le `RateMap` de
+mutation) varie d'un locus `<M>` à l'autre côté séquences ADN, alors
+qu'il vaut toujours 1 côté SNP — resimuler avec la même graine mais un
+`sequence_length` différent par locus fonctionne car, sans
+recombinaison (le défaut), `msprime.sim_ancestry` produit exactement la
+même topologie/mêmes temps de nœuds quelle que soit `sequence_length`
+à graine égale (vérifié empiriquement avant d'écrire le correctif :
+mêmes démographie/samples/ploidy, `sequence_length` variée entre 1 et
+1000, nœuds internes identiques bit à bit). `<A>`/`<H>` restent
+inchangés (généalogie indépendante par locus, comme avant).
+
+**Validation** : 15 valeurs golden régénérées dans
+`tests/test_summary_statistics.py`/`test_pipeline.py` — uniquement des
+valeurs G3, AUCUNE valeur G2 n'a bougé (signature exacte confirmant que
+le fix est bien scopé à `<M>`, même méthode de vérification que le bug
+de seed du 31/08). 130/130 tests verts. Rejeu complet du reftable réel
+(`scripts/replay_diyabc_priors_dna.py`, 1000 particules,
+`toy_example2_ms_dna`) : le test KS colonne par colonne passe de
+**11/42 à 2/42 colonnes significatives** (p<0.05), et les 2 restantes
+(`MPD_2_2`, `VPD_2_2`) sont sur G2 (`<A>`, jamais concerné par ce bug)
+avec un écart dans le sens inverse (ratio std sim/réel >1, pas de
+déficit) — cohérent avec du bruit résiduel à cet effectif de
+particules, pas un biais systématique. Le ratio std(sim)/std(réel) sur
+les colonnes G3 anciennement déficitaires est passé de 0.6-0.85 à
+0.97-1.10 (`DTA_3_1` : 0.649→1.056, `VNS_3_1` : 0.776→1.014, `MNS_3_1` :
+0.853→1.044, `VPD_3_1` : 0.617→1.099).
+
+**Statut de l'investigation : CLOSE.** Cause identifiée, corrigée, et
+validée par KS sur un reftable réel complet — contrairement à la
+clôture prématurée du 27/08, celle-ci survit à un contre-test direct
+(comparaison avant/après correctif sur les mêmes données). Aucun autre
+gap connu sur la pipeline ADN séquence à ce jour.

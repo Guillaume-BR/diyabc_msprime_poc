@@ -39,11 +39,18 @@ see "DIYABC-replay pipeline for DNA sequences" below. A 2026-08-27
 follow-up investigation (50+50-loci stress dataset, then direct
 `particuleC.cpp` source reading) identified a residual, narrow
 statistical gap on mitochondrial (`<M>`) loci and initially attributed
-it to a combinatorial admixture effect — not a port bug either way, but
-a 2026-08-31 falsification test (no-admixture control scenario) showed
-that attribution was incomplete and reopened the investigation; see
-"Known gap: G3 (`<M>`) variance deficit" below for the current status.
-MicroSat itself (stepwise mutation model, `NAL`/`HET`-style summary
+it to a combinatorial admixture effect; a 2026-08-31 falsification test
+(no-admixture control scenario) showed that attribution was incomplete
+and reopened the investigation. **Resolved 2026-09-01**: `<M>` DNA
+sequence loci were each drawing their own independent genealogy instead
+of sharing one (mtDNA is non-recombining — the SNP side already got
+this right via `simulate_shared_ancestry_loci`, the DNA-sequence side
+never did) — fixed in `dna_mutation_simulation_per_locus`/
+`_from_values`, dropping the real-vs-simulated KS mismatch from 11/42
+to 2/42 stat columns on a full 1000-particle replay; see "RESOLVED
+2026-09-01: G3 (`<M>`) variance deficit" below for the full
+investigation and fix. MicroSat itself (stepwise mutation model,
+`NAL`/`HET`-style summary
 statistics) has no simulation-side code at all yet, only header
 parsing. The goal is to demonstrate that a
 `header.txt` → `msprime.Demography` → coalescent+mutation → summary
@@ -1050,7 +1057,7 @@ confirms the replay plumbing itself is correct). Of the 42 DNA stat
 columns, 11 show KS `p<0.05` — see the next section for the full
 investigation of that gap.
 
-### Known gap: G3 (`<M>`) variance deficit in DNA-sequence stats (investigated 2026-08-27, REOPENED 2026-08-31 — not a port bug, cause still open)
+### RESOLVED 2026-09-01: G3 (`<M>`) variance deficit in DNA-sequence stats (investigated 2026-08-27, reopened 2026-08-31, fixed 2026-09-01)
 
 On the 5+5-loci validation above, 11/42 DNA stat columns show a
 significant KS difference, concentrated almost entirely in `MNS`/`VNS`/
@@ -1167,14 +1174,91 @@ yet investigated**. Full methodology and per-stat breakdown in
 `notes/exploration.md`'s 2026-08-31 update (appended to the 2026-08-27
 entry).
 
-**Investigation status: REOPENED as of 2026-08-31** (no longer closed).
-The POC's own goal (prove `header.txt`→msprime feasibility) remains met
-independently of this gap, and the gap is still narrow in scope (a
-stat-family subset, one heritage type, surfaced only by a synthetic
-stress dataset built specifically to find it) — but the previously
-documented explanation should no longer be cited as established. Don't
-re-close this without a cause that also survives a no-admixture
-control, the way the admixture explanation didn't.
+**Investigation status (as of 2026-08-31, before the fix below): REOPENED**
+(no longer closed). The POC's own goal (prove `header.txt`→msprime
+feasibility) remains met independently of this gap, and the gap is
+still narrow in scope (a stat-family subset, one heritage type,
+surfaced only by a synthetic stress dataset built specifically to find
+it) — but the previously documented explanation should no longer be
+cited as established. Don't re-close this without a cause that also
+survives a no-admixture control, the way the admixture explanation
+didn't.
+
+**Update 2026-09-01 — cause found and fixed: `<M>` DNA sequence loci
+were not sharing a genealogy.** Picked up exactly where the 2026-08-31
+update left off ("something general to `<M>` itself... not yet
+investigated"). Two more hypotheses tested and refuted first (full
+detail in `notes/exploration.md`'s 2026-09-01 entry): (1) dependence on
+the `t1/N1` depth regime — real, measurable inside our own simulation
+(binned lineages-surviving-at-`t1` diagnostic on scenario-2 particles
+shows `CV(M)/CV(A)` swinging from 1.34 to ~0 across bins, non-
+monotonically), but stratifying the REAL/simulated std-ratio gap by the
+same bins shows it is flat (~0.5–0.85) across all regimes — no
+correlation with where the internal mechanism predicts one, so refuted
+as the cause; (2) a `sumstat.cpp` sample-size or formula mismatch for
+haploid loci — read `DataC::calcule_ss`/`cal_dta1pl`/`cal_numvar` term
+by term against our own `_tajima_constants`/`ssize` handling, found
+none.
+
+The actual cause, found via temporary `cout` instrumentation of
+`cal_dta1pl` in the real `~/Documents/Github/diyabc` binary (rebuilt
+via its `CMakeLists.txt`, reverted after) on a small real run: the 5
+`<M>` loci of a single simulated particle are **strongly correlated**
+with each other in real DIYABC (pairwise correlation of per-locus `pi`:
+0.33–0.75, mean 0.55), while `<A>` loci are essentially independent
+(mean 0.15, noise level). This is exactly the documented, already-
+implemented-for-SNP behavior of non-recombining, uniparentally-
+inherited mtDNA (`simulate_shared_ancestry_loci`,
+`ancestry_simulation.py:305`, citing `particuleC.cpp:2422-2435`
+`GeneTreeY`/`GeneTreeM`: the first `<Y>`/`<M>` locus draws a genealogy,
+every subsequent one COPIES it, only mutation differs) — **but this
+sharing was never ported to the DNA-sequence pipeline**.
+`dna_mutation_simulation_per_locus`/`_from_values` called
+`msprime.sim_ancestry` independently for every locus, with a
+per-locus-varying seed (`seed + _ANCESTRY_SEED_OFFSET + i`), for `<M>`
+exactly like `<A>`/`<H>`. Drawing 5 independent genealogies instead of
+1 shared one artificially averaged down the inter-locus noise on
+group-mean stats (`DTA_3`/`VNS_3`/`MNS_3`/`VPD_3`, each a mean over
+`nl=5` loci) — precisely the direction and magnitude of the deficit
+chased since 2026-08-27, and it explains for free why G2 (correctly
+independent on both sides) never showed a gap, and why the deficit was
+invariant to every demographic/scenario condition tested at every
+earlier step: the cause was architectural (an unported sharing
+mechanism), never demographic.
+
+**Fix** (`bridge/ancestry_simulation.py`): new constant
+`_SHARED_M_ANCESTRY_SEED_OFFSET = 120_000_000`. For a `<M>` locus, the
+ancestry `random_seed` is now fixed (`seed +
+_SHARED_M_ANCESTRY_SEED_OFFSET`, no `+i`) instead of varying per locus
+— every `<M>` locus in the dataset (regardless of its declared group,
+matching the SNP side) now draws the identical genealogy. Deliberately
+NOT implemented by reusing the same `TreeSequence` object
+(`simulate_shared_ancestry_loci`'s approach) because `sequence_length`
+(hence the mutation `RateMap`) varies per `<M>` locus on the DNA-
+sequence side, unlike SNP where it is always 1 — re-simulating with the
+same seed but a different `sequence_length` per locus works because,
+verified empirically before writing the fix, `msprime.sim_ancestry`
+produces bit-identical topology/node times regardless of
+`sequence_length` when there is no recombination (the default),
+same seed. `<A>`/`<H>` are unaffected (still independent per locus).
+
+**Validation**: 15 golden test values regenerated in
+`tests/test_summary_statistics.py`/`test_pipeline.py` — G3/pairwise
+only, zero G2-only assertions changed (same fingerprint-check pattern
+as the 2026-08-31 seed-reuse fix). 130/130 tests green. Full real-
+reftable replay regenerated (`scripts/replay_diyabc_priors_dna.py`,
+1000 particles): column-by-column KS test drops from **11/42 to 2/42**
+significant columns, and the 2 remaining (`MPD_2_2`, `VPD_2_2`) are G2
+columns with the ratio the *other* way (sim std > real, not a deficit)
+— consistent with ordinary sampling noise at this particle count, not
+a systematic bias. Std ratio sim/real on the previously-deficient G3
+columns: `DTA_3_1` 0.649→1.056, `VNS_3_1` 0.776→1.014, `MNS_3_1`
+0.853→1.044, `VPD_3_1` 0.617→1.099.
+
+**Investigation status: CLOSED (2026-09-01)**, this time surviving a
+real before/after validation on the same data — unlike the premature
+2026-08-27 closure. No other known gap in the DNA-sequence pipeline as
+of this date.
 
 **One separate, real bug found and fixed along the way** (unrelated to
 the above — ruled out as its cause): `ancestry_simulation.build_group_
