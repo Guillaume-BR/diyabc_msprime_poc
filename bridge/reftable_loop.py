@@ -763,6 +763,59 @@ def replay_reftable_simulation(
 # ---------------------------------------------------------------------------
 
 
+def _run_single_particle_dna(
+    particle_index: int,
+    reference_directory: Path,
+    scenarios: list[Scenario],
+    *,
+    stats_filter: str,
+) -> ParticleResult:
+    """Calcule une seule particule ADN (équivalent DNA de _run_single_particle).
+
+    Fonction top-level (picklable), appelée par chaque worker du
+    ProcessPoolExecutor.
+
+    La seed utilisée est dérivée de particle_index, garantissant un
+    tirage distinct et reproductible par particule (même particle_index
+    -> même résultat, peu importe l'ordre d'exécution des workers).
+
+    IMPORTANT : seed = particle_index + 1, jamais particle_index seul.
+    msprime.sim_ancestry rejette explicitement seed=0 (ValueError "seeds
+    must be greater than 0 and less than 2^32") -- vérifié empiriquement.
+    Donc particle_index=0 (le cas le plus probable, première particule)
+    utilise seed=1, pas seed=0.
+
+    Args:
+        particle_index: L'index de la particule (0-based).
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        scenarios: Les scénarios candidats (chaque particule tire le
+            sien).
+        stats_filter: "ALL" ou "HEADER".
+
+    Returns:
+        Le ParticleResult de cette particule.
+    """
+    seed = particle_index + 1
+    drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
+
+    summary_statistics, parameter_values = compute_summary_statistics_dna(
+        reference_directory=reference_directory,
+        scenario_index=drawn_scenario.index,
+        seed=seed,
+        stats_filter=stats_filter,
+    )
+    return ParticleResult(
+        particle_index=particle_index,
+        scenario_index=drawn_scenario.index,
+        parameter_values=parameter_values,
+        summary_statistics=summary_statistics,
+    )
+
+
+# Rejeu des tirages réels de DIYABC pour les séquences ADN (comparaison appariée)
+
+
 def group_prior_column_names(header_text: str) -> list[str]:
     """Liste ordonnée des noms de colonnes "priors de groupe" d'un vrai reftable DIYABC.
 
@@ -881,56 +934,6 @@ def parse_real_reftable_params_with_group_priors(
         }
         rows.append((scenario_index, priors_values, group_priors_values))
     return rows
-
-
-def _run_single_particle_dna(
-    particle_index: int,
-    reference_directory: Path,
-    scenarios: list[Scenario],
-    *,
-    stats_filter: str,
-) -> ParticleResult:
-    """Calcule une seule particule ADN (équivalent DNA de _run_single_particle).
-
-    Fonction top-level (picklable), appelée par chaque worker du
-    ProcessPoolExecutor.
-
-    La seed utilisée est dérivée de particle_index, garantissant un
-    tirage distinct et reproductible par particule (même particle_index
-    -> même résultat, peu importe l'ordre d'exécution des workers).
-
-    IMPORTANT : seed = particle_index + 1, jamais particle_index seul.
-    msprime.sim_ancestry rejette explicitement seed=0 (ValueError "seeds
-    must be greater than 0 and less than 2^32") -- vérifié empiriquement.
-    Donc particle_index=0 (le cas le plus probable, première particule)
-    utilise seed=1, pas seed=0.
-
-    Args:
-        particle_index: L'index de la particule (0-based).
-        reference_directory: Le dossier contenant header.txt et le
-            fichier .mss observé.
-        scenarios: Les scénarios candidats (chaque particule tire le
-            sien).
-        stats_filter: "ALL" ou "HEADER".
-
-    Returns:
-        Le ParticleResult de cette particule.
-    """
-    seed = particle_index + 1
-    drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
-
-    summary_statistics, parameter_values = compute_summary_statistics_dna(
-        reference_directory=reference_directory,
-        scenario_index=drawn_scenario.index,
-        seed=seed,
-        stats_filter=stats_filter,
-    )
-    return ParticleResult(
-        particle_index=particle_index,
-        scenario_index=drawn_scenario.index,
-        parameter_values=parameter_values,
-        summary_statistics=summary_statistics,
-    )
 
 
 def _run_single_particle_dna_from_values(
