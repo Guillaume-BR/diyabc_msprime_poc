@@ -37,9 +37,12 @@ architecture as the SNP side) is wired end-to-end for DNA sequences too
 against a real 1000-particle DIYABC reftable on `toy_example2_ms_dna` —
 see "DIYABC-replay pipeline for DNA sequences" below. A 2026-08-27
 follow-up investigation (50+50-loci stress dataset, then direct
-`particuleC.cpp` source reading) explains a residual, narrow
-statistical gap on mitochondrial (`<M>`) loci — not a port bug, see
-"Known gap: G3 (`<M>`) variance deficit" below.
+`particuleC.cpp` source reading) identified a residual, narrow
+statistical gap on mitochondrial (`<M>`) loci and initially attributed
+it to a combinatorial admixture effect — not a port bug either way, but
+a 2026-08-31 falsification test (no-admixture control scenario) showed
+that attribution was incomplete and reopened the investigation; see
+"Known gap: G3 (`<M>`) variance deficit" below for the current status.
 MicroSat itself (stepwise mutation model, `NAL`/`HET`-style summary
 statistics) has no simulation-side code at all yet, only header
 parsing. The goal is to demonstrate that a
@@ -87,6 +90,15 @@ Regenerate `notes/tree.md`, `notes/commits.md`, `notes/api.md`, and
 ```bash
 python3 tools/generate_report.py
 ```
+
+## Code style
+
+Docstrings are written in **Google style** (`Args:`/`Returns:`/`Raises:`
+sections, one-line summary first) — converted throughout `bridge/` on
+2026-08-31/2026-09-01 (see `loci_parser.py` for a reference example).
+Write any new or edited docstring the same way; don't reintroduce the
+old free-prose style (no `Args:`/`Returns:` headers) even for small
+functions.
 
 ## Architecture
 
@@ -139,7 +151,7 @@ module with no cross-cutting logic:
 4. **`loci_parser.py`** — parses the `loci description` section: the
    condensed format (single- or multi-heritage-type line, e.g.
    `"5000 <A> G1 from 1"` or `"70 <A> 10 <X> 10 <M> 10 <Y> G1 from 1"`,
-   → one `LociDescription` with `total_loci: dict[heritage_type, count]`)
+   → one `LociDescription` with `loci_counts_by_heritage: dict[heritage_type, count]`)
    **and**, since 2026-07-28, the detailed one-locus-per-line format used
    by MicroSat/sequences-mut datasets (e.g. `"Locus_M_A_1_ <A> [M] G1 2
    40"` for a microsatellite locus, `"Locus_S_A_11_ <A> [S] G2 100"` for
@@ -1038,7 +1050,7 @@ confirms the replay plumbing itself is correct). Of the 42 DNA stat
 columns, 11 show KS `p<0.05` — see the next section for the full
 investigation of that gap.
 
-### Known gap: G3 (`<M>`) variance deficit in DNA-sequence stats (investigated 2026-08-27 — not a port bug)
+### Known gap: G3 (`<M>`) variance deficit in DNA-sequence stats (investigated 2026-08-27, REOPENED 2026-08-31 — not a port bug, cause still open)
 
 On the 5+5-loci validation above, 11/42 DNA stat columns show a
 significant KS difference, concentrated almost entirely in `MNS`/`VNS`/
@@ -1118,17 +1130,51 @@ entry (source citations, tables, code excerpts); summary:
     `split_pop`) — this is NOT a missing/underproduced effect in the
     port.
 
-**Conclusion: no bug found in the port.** The residual variance gap on
-G3 is explained by a real, source-confirmed combinatorial effect
-(few surviving lineages at the admixture event → near-binary partition)
-that's present and correctly reproduced on both sides. An exact
-magnitude match would require replaying the literal same randomness
-DIYABC used locus-by-locus (i.e. instrumenting DIYABC to export raw
-per-locus genealogies, not just summary statistics) — out of scope for
-this POC. Investigation closed 2026-08-27: the POC's goal (prove
-`header.txt`→msprime feasibility) is already met, and the gap is narrow
-(a stat-family subset, one heritage type, surfaced only by a synthetic
-stress dataset built specifically to find it).
+**Conclusion (2026-08-27, SUPERSEDED — see 2026-08-31 update below): no
+bug found in the port.** The residual variance gap on G3 was attributed
+to a real, source-confirmed combinatorial effect (few surviving
+lineages at the admixture event → near-binary partition) present and
+correctly reproduced on both sides. Investigation closed 2026-08-27.
+**This attribution turned out to be incomplete** — the admixture
+mechanism is real and correctly ported, but is NOT the (sole) cause of
+the gap, see below.
+
+**Update 2026-08-31 — falsification test reopens the investigation**:
+`toy_example2_ms_dna` has 2 candidate scenarios drawn at equal weight
+(`[0.5]`/`[0.5]`) — scenario 1 (the one studied above: merge, THEN `ta
+split` admixture, THEN remerge) and scenario 2 (just a merge at `t1`,
+**no admixture event at all**). If the admixture near-binary-partition
+mechanism were the (main) cause, the G3 variance deficit should shrink
+or vanish for particles that drew scenario 2. Tested directly on the
+already-replayed 1000-particle real reftable (no new DIYABC run
+needed): split the 1000 particles by their own `scenario_index` (488
+scenario 1, 512 scenario 2, 0 scenario mismatches between the real and
+replayed files — confirms row-by-row pairing is intact), recomputed the
+std-ratio sim/real separately per scenario. Result: the deficit is
+**essentially unchanged** between the two (mean G3-G2 std-ratio gap:
+-0.177 with admixture vs. **-0.165 without**), and on `VPD`/`VNS` it is
+actually **slightly worse without admixture** (0.714/0.778 vs.
+0.909/0.830 with) — checked consistent across all 13 individual stat
+families, not just an aggregate average. **This refutes admixture as
+the main driver**: a mechanism tied specifically to the `ta split` event
+cannot explain a deficit that survives intact in a scenario with no
+such event. The true cause is more likely something general to `<M>`
+itself (its reduced `Nₑ` means fewer surviving lineages at ANY point in
+its history, not just at a discrete admixture event — plausibly fewer
+independent coalescence events overall to average/smooth statistics
+over, everywhere in the tree, not only at one partition point) — **not
+yet investigated**. Full methodology and per-stat breakdown in
+`notes/exploration.md`'s 2026-08-31 update (appended to the 2026-08-27
+entry).
+
+**Investigation status: REOPENED as of 2026-08-31** (no longer closed).
+The POC's own goal (prove `header.txt`→msprime feasibility) remains met
+independently of this gap, and the gap is still narrow in scope (a
+stat-family subset, one heritage type, surfaced only by a synthetic
+stress dataset built specifically to find it) — but the previously
+documented explanation should no longer be cited as established. Don't
+re-close this without a cause that also survives a no-admixture
+control, the way the admixture explanation didn't.
 
 **One separate, real bug found and fixed along the way** (unrelated to
 the above — ruled out as its cause): `ancestry_simulation.build_group_
