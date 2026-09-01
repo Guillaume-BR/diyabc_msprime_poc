@@ -20,14 +20,21 @@ from pathlib import Path
 
 
 def _genotypes_to_diploid(haploid_genotypes: list[int]) -> list[int]:
-    """Agrège une liste de génotypes haploïdes (une valeur par lignée) en
-    génotypes diploïdes (0/1/2), en sommant les paires de lignées
-    consécutives [2i, 2i+1] -- correspondant aux deux copies
-    chromosomiques d'un même individu (vérifié empiriquement avec
-    ts.individuals()[i].nodes).
+    """Agrège des génotypes haploïdes en génotypes diploïdes.
 
-    Lève ValueError si le nombre de lignées est impair (incohérent avec
-    une simulation en ploidy=2).
+    Somme les paires de lignées consécutives [2i, 2i+1] --
+    correspondant aux deux copies chromosomiques d'un même individu
+    (vérifié empiriquement avec ts.individuals()[i].nodes).
+
+    Args:
+        haploid_genotypes: Une valeur (0/1) par lignée.
+
+    Returns:
+        Les génotypes diploïdes (0/1/2), un par individu.
+
+    Raises:
+        ValueError: Si le nombre de lignées est impair (incohérent
+            avec une simulation en ploidy=2).
     """
     if len(haploid_genotypes) % 2 != 0:
         raise ValueError(
@@ -44,9 +51,7 @@ def write_snp_file(
     genotypes_per_locus: list[dict[str, list[int]]],
     output_path: str | Path,
 ) -> None:
-    """Écrit un fichier .snp DIYABC à partir de num_loci dicts
-    {nom_population: [génotypes haploïdes...]}, un par locus (la forme
-    produite par ancestry_simulation.simulate_snp_genotypes).
+    """Écrit un fichier .snp DIYABC à partir de génotypes simulés.
 
     Le nom de chaque individu simulé est généré comme "sim_<pop>_<n>"
     (ex: "sim_pop1_1", "sim_pop1_2"...). La colonne SEX est fixée à "9"
@@ -54,10 +59,18 @@ def write_snp_file(
     sans impact pour des loci autosomaux <A> (voir notes/exploration.md
     pour la justification de cette hypothèse).
 
-    genotypes_per_locus doit contenir AU MOINS un locus, et toutes les
-    populations doivent être présentes et avoir le même nombre de lignées
-    à chaque locus (cohérence vérifiée par la simulation elle-même, pas
-    revérifiée ici).
+    Args:
+        genotypes_per_locus: num_loci dicts {nom_population:
+            [génotypes haploïdes...]}, un par locus (la forme produite
+            par ancestry_simulation.simulate_snp_genotypes). Doit
+            contenir AU MOINS un locus, et toutes les populations
+            doivent être présentes et avoir le même nombre de lignées
+            à chaque locus (cohérence vérifiée par la simulation
+            elle-même, pas revérifiée ici).
+        output_path: Chemin où écrire le fichier .snp.
+
+    Raises:
+        ValueError: Si genotypes_per_locus est vide.
     """
     if not genotypes_per_locus:
         raise ValueError("genotypes_per_locus est vide : au moins un locus est requis")
