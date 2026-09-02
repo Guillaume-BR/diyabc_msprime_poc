@@ -41,8 +41,9 @@ follow-up investigation (50+50-loci stress dataset, then direct
 statistical gap on mitochondrial (`<M>`) loci and initially attributed
 it to a combinatorial admixture effect — not a port bug either way, but
 a 2026-08-31 falsification test (no-admixture control scenario) showed
-that attribution was incomplete and reopened the investigation; see
-"Known gap: G3 (`<M>`) variance deficit" below for the current status.
+that attribution was incomplete and reopened the investigation. Fixed
+2026-09-02: `<M>` loci weren't sharing a genealogy — see "RESOLVED
+2026-09-02: G3 (`<M>`) variance deficit" below.
 MicroSat itself (stepwise mutation model, `NAL`/`HET`-style summary
 statistics) has no simulation-side code at all yet, only header
 parsing. The goal is to demonstrate that a
@@ -1050,7 +1051,7 @@ confirms the replay plumbing itself is correct). Of the 42 DNA stat
 columns, 11 show KS `p<0.05` — see the next section for the full
 investigation of that gap.
 
-### Known gap: G3 (`<M>`) variance deficit in DNA-sequence stats (investigated 2026-08-27, REOPENED 2026-08-31 — not a port bug, cause still open)
+### RESOLVED 2026-09-02: G3 (`<M>`) variance deficit in DNA-sequence stats (investigated 2026-08-27, reopened 2026-08-31, fixed by the user 2026-09-02)
 
 On the 5+5-loci validation above, 11/42 DNA stat columns show a
 significant KS difference, concentrated almost entirely in `MNS`/`VNS`/
@@ -1167,14 +1168,30 @@ yet investigated**. Full methodology and per-stat breakdown in
 `notes/exploration.md`'s 2026-08-31 update (appended to the 2026-08-27
 entry).
 
-**Investigation status: REOPENED as of 2026-08-31** (no longer closed).
-The POC's own goal (prove `header.txt`→msprime feasibility) remains met
-independently of this gap, and the gap is still narrow in scope (a
-stat-family subset, one heritage type, surfaced only by a synthetic
-stress dataset built specifically to find it) — but the previously
-documented explanation should no longer be cited as established. Don't
-re-close this without a cause that also survives a no-admixture
-control, the way the admixture explanation didn't.
+**Investigation status (as of 2026-08-31, before the fix below): REOPENED.**
+The previously documented admixture explanation was incomplete.
+
+**Fixed 2026-09-02.** Cause: `<M>` DNA-sequence loci (mitochondrial,
+non-recombining) were each drawing their own independent genealogy in
+`dna_mutation_simulation_per_locus`/`_from_values`
+(`bridge/ancestry_simulation.py`), instead of sharing one — the SNP
+side already got this right (`simulate_shared_ancestry_loci`, citing
+`particuleC.cpp:2422-2435` `GeneTreeY`/`GeneTreeM`), the DNA-sequence
+side never did. Averaging over 5 independently-drawn genealogies
+instead of 1 shared one artificially shrank the inter-locus noise on
+group-mean stats (`DTA_3`/`VNS_3`/`MNS_3`/`VPD_3`) — exactly the
+deficit chased since 2026-08-27. Fix: new constant
+`_SHARED_M_ANCESTRY_SEED_OFFSET`; a `<M>` locus now draws its ancestry
+with a FIXED seed (`seed + _SHARED_M_ANCESTRY_SEED_OFFSET`, no `+i`),
+so every `<M>` locus in the dataset shares the identical genealogy
+(topology/node-times are seed-deterministic regardless of
+`sequence_length` when there's no recombination, verified empirically).
+`<A>`/`<H>` unaffected. Validated on a full 1000-particle real-reftable
+replay: KS-significant columns dropped from 11/42 to 2/42, and the 2
+remaining (`MPD_2_2`, `VPD_2_2`) are G2 columns with the ratio the
+*other* way — ordinary sampling noise, not a deficit. Full
+investigation writeup in `notes/exploration.md`. This fix was written
+by the user (mentor mode), not the assistant.
 
 **One separate, real bug found and fixed along the way** (unrelated to
 the above — ruled out as its cause): `ancestry_simulation.build_group_

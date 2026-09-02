@@ -97,6 +97,7 @@ _MUS_RATE_SEED_OFFSET = 80_000_000
 _SITE_RATE_SEED_OFFSET = 90_000_000
 _MUTATION_SEED_OFFSET = 100_000_000
 _ANCESTRY_SEED_OFFSET = 110_000_000
+_SHARED_M_ANCESTRY_SEED_OFFSET = 120_000_000
 
 
 # ── Construction de l'argument samples (un builder par type de locus) ──────
@@ -1633,6 +1634,14 @@ def dna_mutation_simulation_per_locus(
     donc ce dispatch se fait par locus, jamais une fois pour tout le
     dataset.
 
+    Pour les loci [S] de type <A>, on tire une graine différente pour chaque
+    locus (seed + _ANCESTRY_SEED_OFFSET + i),     pour que chaque locus <A>
+    ait sa propre généalogie indépendante tandis que pour les loci mitochondriaux,
+    on utilise la graine (seed + _SHARED_M_ANCESTRY_SEED_OFFSET) pour que tous les
+    loci mitochondriaux partagent la même généalogie.
+    Il n'y pas pour l'instant de support pour les loci X/Y, car le format .mss
+    ne porte pas de sexe par individu et donc ne permet pas de stratification par sexe.
+
     Args:
         header_text: Texte complet de header.txt.
         mss_file_path: Chemin du fichier .mss.
@@ -1659,11 +1668,16 @@ def dna_mutation_simulation_per_locus(
             locus_demography, ploidy = dna_ancestry_parameters_for_heritage(
                 locus.heritage, demography, sex_ratio
             )
+            seed_offset = (
+                seed + _SHARED_M_ANCESTRY_SEED_OFFSET
+                if locus.heritage == "M"
+                else seed + _ANCESTRY_SEED_OFFSET + i
+            )
             tree_sequences = msprime.sim_ancestry(
                 samples=samples,
                 demography=locus_demography,
                 sequence_length=locus.dnalength,
-                random_seed=seed + _ANCESTRY_SEED_OFFSET + i,
+                random_seed=seed_offset,
                 ploidy=ploidy,
             )
             transition_matrix = matrix_per_locus[locus.name]
@@ -1999,10 +2013,14 @@ def dna_mutation_simulation_per_locus_from_values(
     en amont par pipeline.build_demography_for_scenario_index, réutilisée
     telle quelle (générique, ne sait rien de SNP vs ADN).
 
-    Tout le reste (tirage de la généalogie par locus via msprime.sim_
-    ancestry, seed + _ANCESTRY_SEED_OFFSET + i / seed + _MUTATION_SEED_
-    OFFSET + i par locus, dispatch ploïdie/démographie par type
-    d'héritage) est identique à dna_mutation_simulation_per_locus.
+    Pour les loci [S] de type <A>, on tire une graine différente pour chaque
+    locus (seed + _ANCESTRY_SEED_OFFSET + i), pour que chaque locus <A>
+    ait sa propre généalogie indépendante tandis que pour les loci mitochondriaux,
+    on utilise la graine (seed + _SHARED_M_ANCESTRY_SEED_OFFSET) pour que tous
+    les loci mitochondriaux partagent la même généalogie.
+    Il n'y pas pour l'instant de support pour les loci X/Y, car le format
+    .mss ne porte pas de sexe par individu et donc ne permet pas de stratification
+    par sexe.
 
     Args:
         header_text: Texte complet de header.txt.
@@ -2039,11 +2057,16 @@ def dna_mutation_simulation_per_locus_from_values(
             locus_demography, ploidy = dna_ancestry_parameters_for_heritage(
                 locus.heritage, demography, sex_ratio
             )
+            seed_offset = (
+                seed + _SHARED_M_ANCESTRY_SEED_OFFSET
+                if locus.heritage == "M"
+                else seed + _ANCESTRY_SEED_OFFSET + i
+            )
             tree_sequences = msprime.sim_ancestry(
                 samples=samples,
                 demography=locus_demography,
                 sequence_length=locus.dnalength,
-                random_seed=seed + _ANCESTRY_SEED_OFFSET + i,
+                random_seed=seed_offset,
                 ploidy=ploidy,
             )
             transition_matrix = matrix_per_locus[locus.name]
