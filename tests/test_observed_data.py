@@ -20,6 +20,7 @@ from bridge.observed_data import (
     detect_snp_file_type,
     individual_sexes_per_population,
     observed_count_population,
+    observed_microsatellites,
     observed_reads,
     observed_sequences,
     parse_maf_ratio,
@@ -213,3 +214,19 @@ def test_base_frequency_by_locus_invalid_base():
     }
     with pytest.raises(ValueError, match="Base inattendue"):
         base_frequency_by_locus(sequence_test_invalid)
+
+
+def test_observed_microsatellites(header_text_te2):
+    """Vérifie que le parsing du fichier snp renvoie bien les microsatellites
+    observés par individu, pour le fichier toy_example2 (dataset <A>+<M>
+    avec 3 populations)."""
+    list_loci = parse_loci_description(header_text_te2)
+    microsatellites_te2 = observed_microsatellites(OBSERVED_SNP_FILE_TE2, list_loci)
+    for _, alleles_list in microsatellites_te2.items():
+        assert len(alleles_list) == 40  # 80 individus au total
+        for alleles in alleles_list:
+            assert len(alleles) == 2  # Chaque individu a deux allèles
+            assert all(
+                isinstance(allele, int) for allele in alleles
+            )  # Les allèles sont des entiers
+    assert microsatellites_te2[list(microsatellites_te2.keys())[0]][0] == [191, 187]

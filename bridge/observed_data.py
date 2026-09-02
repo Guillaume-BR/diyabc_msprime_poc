@@ -641,3 +641,73 @@ def base_frequency_by_locus(
                 }
             )
     return base_frequencies_by_locus
+
+
+# --------------------------------------------------------------
+# Pour les Microsatellites
+# --------------------------------------------------------------
+
+
+def observed_microsatellites(
+    mss_file_path: str | Path, list_loci: list[LociDescriptionDetailed]
+) -> dict[str, list[list[int]]]:
+    """Lit les microsatellites observés dans un fichier .mss.
+
+    Args:
+        mss_file_path: Chemin du fichier .mss.
+        list_loci: La description détaillée des loci (voir
+            loci_parser.parse_loci_description), utilisée pour
+            distinguer les loci séquentiels ([S]) des loci
+            microsatellites ([M]) et pour nommer les entrées du
+            dictionnaire retourné.
+
+    Returns:
+        Un dict {nom_locus: [[allèle1, allèle2], ...]}.
+        Chaque entrée est une liste de listes représentant les
+        allèles observés pour chaque individu ou pool -- un locus
+        diploïde (<A>) produit 2 entrées par individu, un locus
+        haploïde (<M>) en produit 1.
+
+    Raises:
+        ValueError: Si le fichier ne contient aucune ligne 'POP', ou
+            si le nombre de microsatellites observés sur une ligne ne
+            correspond pas au nombre de loci microsatellites attendu.
+        ValueError: Si un microsatellite n'est pas au format attendu (3 ou 6 chiffres, ex: '000' ou 'NNNNNN').
+    """
+    lines = Path(mss_file_path).read_text().splitlines()
+
+    g = (i for i, line in enumerate(lines) if line.startswith("POP"))
+    first_POP_line_index = next(g, None)
+
+    if first_POP_line_index is None:
+        raise ValueError(
+            f"Le fichier {mss_file_path} ne contient aucune ligne 'POP'. "
+            f"Format de fichier .mss invalide."
+        )
+    nb_microsat = len([locus for locus in list_loci if locus.ms_or_seq == "M"])
+    microsatellite_by_locus: dict[str, list[list[int]]] = {}
+    _MATCH_MICROSAT = re.compile(r"^(\d{3}$|^\d{6}$)$")
+    for line in lines[first_POP_line_index + 1 :]:
+        if not line.strip():
+            continue
+        if line.startswith("POP"):
+            continue
+        fields = line.split()
+        match_counter = 0
+        for field, loci in zip(fields[2:], list_loci, strict=True):
+            match = _MATCH_MICROSAT.match(field)
+            if not match:
+                continue
+            else:
+                alleles = [
+                    int(field[:3]),
+                    int(field[3:]) if len(field) == 6 else int(field[:3]),
+                ]
+            microsatellite_by_locus.setdefault(loci.name, []).append(alleles)
+            match_counter += 1
+        if match_counter != nb_microsat:
+            raise ValueError(
+                f"Le nombre de microsatellites observés sur une ligne ne correspond pas au nombre de loci microsatellites attendu. "
+                f"Nombre de loci: {nb_microsat}, Nombre de microsatellites observés: {match_counter}."
+            )
+    return microsatellite_by_locus
