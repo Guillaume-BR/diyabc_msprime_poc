@@ -32,7 +32,7 @@ SNP = f"{REFERENCE_DIR}/pseudo_observed_DATASET_SNP_POOLSEQ_4pops_Scenario3_MER.
 
 with open(f"{REFERENCE_DIR}/headerRF.txt") as f:
     header_text = f.read()
-num_loci = parse_loci_description(header_text).total_loci["A"]
+num_loci = parse_loci_description(header_text).loci_counts_by_heritage["A"]
 
 pool_sizes = build_samples_argument(SNP)
 population_names = list(pool_sizes.keys())

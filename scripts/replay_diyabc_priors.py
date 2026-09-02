@@ -67,8 +67,7 @@ print(f"Copie du répertoire de travail terminée en {t2 - t1:.2f}s : {WORK_DIR}
 
 
 header_text = (WORK_DIR / "headerRF.txt").read_text()
-total_loci = parse_loci_description(header_text).total_loci.values()
-total_loci = sum(total_loci)
+total_loci = sum(parse_loci_description(header_text).loci_counts_by_heritage.values())
 
 print(
     f"Début de la simulation des {total_loci} loci pour rejouer les tirages de priors DIYABC..."

@@ -29,7 +29,7 @@ demography, values = build_random_demography_for_scenario_index(
 
 snp_filename = header_text.splitlines()[0].strip()
 snp_path = f"{REFERENCE_DIR}/{snp_filename}"
-num_loci = parse_loci_description(header_text).total_loci["A"]
+num_loci = parse_loci_description(header_text).loci_counts_by_heritage["A"]
 
 reads_list = list(
     simulate_poolseq_reads_with_mrc_filter(demography, snp_path, num_loci, seed=42)
