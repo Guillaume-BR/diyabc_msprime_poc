@@ -290,10 +290,6 @@ using `-g 50` caused a 29x slowdown by silently discarding 49/50
 simulated particles) to compute statistics via `statobs_parser.py`. That
 path is kept only for cross-validation (see the `DIYABC_GENERAL_PATH`
 skip-marked tests) — it is no longer the default and is far slower.
-`msprime_cpp/msprime_from_cpp.cpp` is an exploratory spike (embedding a
-Python interpreter in a C++ process to call msprime directly, avoiding
-subprocess overhead) — not wired into the pipeline, kept for reference
-only.
 
 ### Known limitation (mostly resolved 2026-07-10 — see below)
 
