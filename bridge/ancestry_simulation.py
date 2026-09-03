@@ -32,6 +32,7 @@ from bridge.observed_data import (
     base_frequency_by_locus,
     coalescence_coefficient,
     count_samples_per_population,
+    individual_sexes_from_locus_genotype,
     individual_sexes_per_population,
     observed_count_population,
     observed_mrc,
@@ -98,6 +99,7 @@ _SITE_RATE_SEED_OFFSET = 90_000_000
 _MUTATION_SEED_OFFSET = 100_000_000
 _ANCESTRY_SEED_OFFSET = 110_000_000
 _SHARED_M_ANCESTRY_SEED_OFFSET = 120_000_000
+_SHARED_Y_ANCESTRY_SEED_OFFSET = 130_000_000
 
 
 # ── Construction de l'argument samples (un builder par type de locus) ──────
@@ -133,6 +135,60 @@ def build_samples_argument(
         f"pop{index}": count
         for index, count in enumerate(counts_by_name.values(), start=1)
     }
+
+
+def _sample_sets_from_sexes(
+    sexes_by_population: dict[str, list[str]],
+) -> list[msprime.SampleSet]:
+    """Construit la liste des SampleSet à partir des sexes par population.
+
+    Args:
+        sexes_by_population: dict {nom_population: [liste de sexes]}.
+
+    Returns:
+        Une liste de msprime.SampleSet (2 par population).
+    """
+    sample_sets = []
+    for name, sexes in sexes_by_population.items():
+        if "9" in sexes_by_population[name]:
+            raise ValueError(
+                f"Individu avec sexe inconnu trouvé dans la population {name}"
+            )
+        nb_femelles = sexes.count("F")
+        nb_males = sexes.count("M")
+
+        # On ajoute les SampleSet pour les femelles et les mâles avec le ploidy approprié
+        sample_sets.append(
+            msprime.SampleSet(num_samples=nb_femelles, population=name, ploidy=2)
+        )
+        sample_sets.append(
+            msprime.SampleSet(num_samples=nb_males, population=name, ploidy=1)
+        )
+
+    return sample_sets
+
+
+def _male_counts_from_sexes(
+    sexes_by_population: dict[str, list[str]],
+) -> dict[str, int]:
+    """Construit le dict {nom_population: nombre_d_individus_mâles} à partir des
+    sexes par population.
+
+    Args:
+        sexes_by_population: dict {nom_population: [liste de sexes]}.
+
+    Returns:
+        Un dict {nom_population: nombre_d_individus_mâles}.
+    """
+    for name, sexes in sexes_by_population.items():
+        if "9" in sexes_by_population[name]:
+            raise ValueError(
+                f"Individu avec sexe inconnu trouvé dans la population {name}"
+            )
+        else:
+            return {
+                name: sexes.count("M") for name, sexes in sexes_by_population.items()
+            }
 
 
 def build_sex_stratified_samples_argument(
@@ -174,33 +230,16 @@ def build_sex_stratified_samples_argument(
             faux (individual_sexes_per_population laisse ce choix à
             l'appelant, c'est ici qu'il se prend).
     """
-    samples_by_population = []
 
     sexes_by_population = individual_sexes_per_population(snp_file_path)
     index_to_name = population_index_to_name(snp_file_path)
     name_to_index = {name: index for index, name in index_to_name.items()}
-    for name in sexes_by_population:
-        if "9" in sexes_by_population[name]:
-            raise ValueError(
-                f"Individu avec sexe inconnu trouvé dans la population {name}"
-            )
-        nb_femelles = sexes_by_population[name].count("F")
-        nb_males = sexes_by_population[name].count("M")
-        pop_index = name_to_index[name]
+    # remplacer les clés de sexes_by_population par les noms msprime ("pop1", "pop2"...)
+    sexes_by_population = {
+        f"pop{name_to_index[k]}": v for k, v in sexes_by_population.items()
+    }
 
-        # On ajoute les SampleSet pour les femelles et les mâles avec le ploidy approprié
-        samples_by_population.append(
-            msprime.SampleSet(
-                num_samples=nb_femelles, population=f"pop{pop_index}", ploidy=2
-            )
-        )
-        samples_by_population.append(
-            msprime.SampleSet(
-                num_samples=nb_males, population=f"pop{pop_index}", ploidy=1
-            )
-        )
-
-    return samples_by_population
+    return _sample_sets_from_sexes(sexes_by_population)
 
 
 def build_male_only_samples_argument(snp_file_path: str) -> dict[str, int]:
@@ -227,21 +266,16 @@ def build_male_only_samples_argument(snp_file_path: str) -> dict[str, int]:
     Raises:
         ValueError: Si un individu a le sexe "9" (inconnu).
     """
-    samples_by_population = {}
 
     sexes_by_population = individual_sexes_per_population(snp_file_path)
     index_to_name = population_index_to_name(snp_file_path)
     name_to_index = {name: index for index, name in index_to_name.items()}
-    for name in sexes_by_population:
-        if "9" in sexes_by_population[name]:
-            raise ValueError(
-                f"Individu avec sexe inconnu trouvé dans la population {name}"
-            )
-        nb_males = sexes_by_population[name].count("M")
-        pop_index = name_to_index[name]
-        samples_by_population[f"pop{pop_index}"] = nb_males
+    # remplacer les clés de sexes_by_population par les noms msprime ("pop1", "pop2"...)
+    sexes_by_population = {
+        f"pop{name_to_index[k]}": v for k, v in sexes_by_population.items()
+    }
 
-    return samples_by_population
+    return _male_counts_from_sexes(sexes_by_population)
 
 
 # ── Simulation des généalogies (arbres indépendants ou partagés) ───────────
@@ -1319,6 +1353,58 @@ def count_loci_per_group(list_loci: list[LociDescriptionDetailed]) -> dict[str, 
     return loci_count
 
 
+def build_sex_stratified_samples_argument_dna(
+    mss_file_path: str,
+    list_loci: list[LociDescriptionDetailed],
+    locus_name: str,
+) -> list[msprime.SampleSet]:
+    """Construit l'argument `samples` pour simulate_independent_loci, stratifié par sexe.
+
+    Pour les loci de type "X", on doit échantillonner les individus en fonction de leur sexe.
+    Cette fonction lit le fichier .snp et construit la liste des SampleSet correspondants.
+
+    Args:
+        mss_file_path: Chemin du fichier .mss.
+
+    Returns:
+        Une liste de msprime.SampleSet, stratifiée par sexe.
+    """
+    # Lire le fichier .mss et extraire les informations nécessaires
+    sexes_by_population = individual_sexes_from_locus_genotype(
+        mss_file_path=mss_file_path,
+        locus_name=locus_name,
+        list_loci=list_loci,
+    )
+
+    return _sample_sets_from_sexes(sexes_by_population)
+
+
+def build_male_only_samples_argument_dna(
+    mss_file_path: str,
+    list_loci: list[LociDescriptionDetailed],
+    locus_name: str,
+) -> dict[str, int]:
+    """
+    Construit l'argument `samples` pour simulate_independent_loci, pour les individus mâles uniquement.
+
+    Args:
+        mss_file_path: Chemin du fichier .mss.
+        list_loci: La liste des loci détaillés.
+        locus_name: Le nom du locus pour lequel construire l'argument `samples`.
+
+    Returns:
+        Un dictionnaire {nom_population: nombre_d_individus_mâles} pour le
+    """
+    # Lire le fichier .mss et extraire les informations nécessaires
+    sexes_by_population = individual_sexes_from_locus_genotype(
+        mss_file_path=mss_file_path,
+        locus_name=locus_name,
+        list_loci=list_loci,
+    )
+
+    return _male_counts_from_sexes(sexes_by_population)
+
+
 def build_group_local_param_per_locus(
     header_text: str, seed: int
 ) -> dict[str, tuple[float, float, float]]:
@@ -1572,7 +1658,7 @@ def dna_ancestry_parameters_for_heritage(
 
     Reproduit le même dispatch que `simulate_genotypes_for_locus_type`
     côté SNP : "A" utilise la démographie <A> telle quelle en
-    ploidy=2 ; "H"/"M" la rescalent par
+    ploidy=2 ; "H"/"M"/"X"/"Y" la rescalent par
     `coalescence_coefficient(heritage, sex_ratio) / 2` en ploidy=1
     (mêmes coefficients, mêmes formules, aucune raison structurelle
     qu'ils diffèrent entre SNP et séquences ADN -- comp_matQ/
@@ -1588,27 +1674,15 @@ def dna_ancestry_parameters_for_heritage(
         Le tuple (demography, ploidy) à utiliser pour ce locus.
 
     Raises:
-        NotImplementedError: Pour "X"/"Y" -- contrairement au .snp
-            (colonnes IND/SEX/POP), le format .mss (genepop) ne porte
-            aucun sexe par individu -- `build_sex_stratified_samples_
-            argument`/`build_male_only_samples_argument` n'ont pas
-            d'équivalent exploitable sur ce format, et on ne devine
-            pas un sexe par individu qui n'existe pas dans le fichier
-            observé. Et pour tout autre type d'héritage inconnu.
+        NotImplementedError: Pour tout autre type d'héritage inconnu.
     """
     if heritage == "A":
         return demography, 2
-    elif heritage in ("H", "M"):
+    elif heritage in ("H", "M", "X", "Y"):
         rescaled_demography = rescale_demography(
             demography, coalescence_coefficient(heritage, sex_ratio) / 2
         )
         return rescaled_demography, 1
-    elif heritage in ("X", "Y"):
-        raise NotImplementedError(
-            f"Locus ADN de type <{heritage}> non supporté : le format .mss "
-            "ne porte pas de sexe par individu, nécessaire pour la "
-            "stratification par sexe qu'exige ce type d'héritage."
-        )
     else:
         raise NotImplementedError(
             f"Type d'héritage de locus non supporté: {heritage!r}"
@@ -1628,19 +1702,17 @@ def dna_mutation_simulation_per_locus(
     locus) + mutation (matQ/RateMap déjà construits).
 
     La démographie et la ploïdie utilisées pour l'arbre de coalescence de
-    chaque locus dépendent de son type d'héritage (<A>/<H>/<M>, voir
+    chaque locus dépendent de son type d'héritage (<A>/<H>/<M>/<X>/<Y>, voir
     `dna_ancestry_parameters_for_heritage`) -- un groupe peut mélanger des
     loci de types différents (ex. toy_example2_ms_dna : G2 <A>, G3 <M>),
     donc ce dispatch se fait par locus, jamais une fois pour tout le
     dataset.
 
     Pour les loci [S] de type <A>, on tire une graine différente pour chaque
-    locus (seed + _ANCESTRY_SEED_OFFSET + i),     pour que chaque locus <A>
-    ait sa propre généalogie indépendante tandis que pour les loci mitochondriaux,
-    on utilise la graine (seed + _SHARED_M_ANCESTRY_SEED_OFFSET) pour que tous les
-    loci mitochondriaux partagent la même généalogie.
-    Il n'y pas pour l'instant de support pour les loci X/Y, car le format .mss
-    ne porte pas de sexe par individu et donc ne permet pas de stratification par sexe.
+    locus (seed + _ANCESTRY_SEED_OFFSET + i), pour que chaque locus <A>
+    ait sa propre généalogie indépendante tandis que pour les autres loci,
+    on utilise la graine (seed + _SHARED_M/Y_ANCESTRY_SEED_OFFSET) pour que tous les
+    loci M ou Y partagent la même généalogie.
 
     Args:
         header_text: Texte complet de header.txt.
@@ -1657,7 +1729,7 @@ def dna_mutation_simulation_per_locus(
     frequencies_by_locus = base_frequency_by_locus(
         observed_sequences(mss_file_path, list_loci)
     )
-    samples = observed_count_population(mss_file_path=mss_file_path)
+    samples_default = observed_count_population(mss_file_path=mss_file_path)
     sex_ratio = parse_sex_ratio(mss_file_path)
     mutated_tree_sequences = {}
 
@@ -1665,14 +1737,34 @@ def dna_mutation_simulation_per_locus(
         if locus.ms_or_seq != "S":
             continue
         else:
+            if locus.heritage in ("A", "H", "M"):
+                samples = samples_default
+            elif locus.heritage == "X":
+                samples = build_sex_stratified_samples_argument_dna(
+                    mss_file_path, list_loci, locus.name
+                )
+            elif locus.heritage == "Y":
+                samples = build_male_only_samples_argument_dna(
+                    mss_file_path, list_loci, locus.name
+                )
+            else:
+                raise NotImplementedError(
+                    f"Type d'héritage de locus non supporté: {locus.heritage!r}"
+                )
+
             locus_demography, ploidy = dna_ancestry_parameters_for_heritage(
                 locus.heritage, demography, sex_ratio
             )
-            seed_offset = (
-                seed + _SHARED_M_ANCESTRY_SEED_OFFSET
-                if locus.heritage == "M"
-                else seed + _ANCESTRY_SEED_OFFSET + i
-            )
+            if locus.heritage == "M":
+                # Pour les loci mitochondriaux, on utilise la même graine pour tous les loci
+                seed_offset = seed + _SHARED_M_ANCESTRY_SEED_OFFSET
+            elif locus.heritage == "Y":
+                # Pour les loci Y, on utilise la même graine pour tous les loci
+                seed_offset = seed + _SHARED_Y_ANCESTRY_SEED_OFFSET
+            else:
+                # Pour les autres loci, on utilise une graine différente pour chaque locus
+                seed_offset = seed + _ANCESTRY_SEED_OFFSET + i
+
             tree_sequences = msprime.sim_ancestry(
                 samples=samples,
                 demography=locus_demography,
@@ -2014,13 +2106,10 @@ def dna_mutation_simulation_per_locus_from_values(
     telle quelle (générique, ne sait rien de SNP vs ADN).
 
     Pour les loci [S] de type <A>, on tire une graine différente pour chaque
-    locus (seed + _ANCESTRY_SEED_OFFSET + i), pour que chaque locus <A>
+    locus (seed + _ANCESTRY_SEED_OFFSET + i), pour que chaque locus <A>/<H>/<X>
     ait sa propre généalogie indépendante tandis que pour les loci mitochondriaux,
-    on utilise la graine (seed + _SHARED_M_ANCESTRY_SEED_OFFSET) pour que tous
-    les loci mitochondriaux partagent la même généalogie.
-    Il n'y pas pour l'instant de support pour les loci X/Y, car le format
-    .mss ne porte pas de sexe par individu et donc ne permet pas de stratification
-    par sexe.
+    on utilise la graine (seed + _SHARED_M/Y_ANCESTRY_SEED_OFFSET) pour que tous
+    les loci M ou Y partagent la même généalogie.
 
     Args:
         header_text: Texte complet de header.txt.
@@ -2046,7 +2135,7 @@ def dna_mutation_simulation_per_locus_from_values(
     frequencies_by_locus = base_frequency_by_locus(
         observed_sequences(mss_file_path, list_loci)
     )
-    samples = observed_count_population(mss_file_path=mss_file_path)
+    samples_default = observed_count_population(mss_file_path=mss_file_path)
     sex_ratio = parse_sex_ratio(mss_file_path)
     mutated_tree_sequences = {}
 
@@ -2054,14 +2143,34 @@ def dna_mutation_simulation_per_locus_from_values(
         if locus.ms_or_seq != "S":
             continue
         else:
+            if locus.heritage in ("A", "H", "M"):
+                samples = samples_default
+            elif locus.heritage == "X":
+                samples = build_sex_stratified_samples_argument_dna(
+                    mss_file_path, list_loci, locus.name
+                )
+            elif locus.heritage == "Y":
+                samples = build_male_only_samples_argument_dna(
+                    mss_file_path, list_loci, locus.name
+                )
+            else:
+                raise NotImplementedError(
+                    f"Type d'héritage de locus non supporté: {locus.heritage!r}"
+                )
+
             locus_demography, ploidy = dna_ancestry_parameters_for_heritage(
                 locus.heritage, demography, sex_ratio
             )
-            seed_offset = (
-                seed + _SHARED_M_ANCESTRY_SEED_OFFSET
-                if locus.heritage == "M"
-                else seed + _ANCESTRY_SEED_OFFSET + i
-            )
+            if locus.heritage == "M":
+                # Pour les loci mitochondriaux, on utilise la même graine pour tous les loci
+                seed_offset = seed + _SHARED_M_ANCESTRY_SEED_OFFSET
+            elif locus.heritage == "Y":
+                # Pour les loci Y, on utilise la même graine pour tous les loci
+                seed_offset = seed + _SHARED_Y_ANCESTRY_SEED_OFFSET
+            else:
+                # Pour les autres loci, on utilise une graine différente pour chaque locus
+                seed_offset = seed + _ANCESTRY_SEED_OFFSET + i
+
             tree_sequences = msprime.sim_ancestry(
                 samples=samples,
                 demography=locus_demography,

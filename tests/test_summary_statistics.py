@@ -10,7 +10,7 @@ régression de formule, pas juste un problème de branchement.
 import numpy as np
 import pytest
 from conftest import (
-    OBSERVED_SNP_FILE_TE2,
+    OBSERVED_MSS_FILE_TE2,
 )
 
 from bridge.ancestry_simulation import dna_mutation_simulation_per_locus
@@ -95,7 +95,7 @@ def test_genotype_matrix_by_population(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -135,7 +135,7 @@ def test_mean_segregating_sites_per_group(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -175,7 +175,7 @@ def test_mean_distinct_haplotypes_per_group(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -215,7 +215,7 @@ def test_mean_pairwise_differences_per_group(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -261,7 +261,7 @@ def test_variance_pairwise_differences_per_group(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -307,7 +307,7 @@ def test_mean_tajima_d_per_group(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -353,7 +353,7 @@ def test_mean_private_segregating_sites_per_group(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -393,7 +393,7 @@ def test_mean_minor_allele_count_per_group(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -439,7 +439,7 @@ def test_variance_minor_allele_count_per_group(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -485,7 +485,7 @@ def test_mean_distinct_haplotypes_per_group_pairwize(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -524,7 +524,7 @@ def test_mean_segregating_sites_per_group_pairwize(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -563,7 +563,7 @@ def test_mean_pairwise_differences_per_group_pairwize(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -602,7 +602,7 @@ def test_mean_pairwise_differences_between_per_group_pairwize(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -641,7 +641,7 @@ def test_mean_hst_per_group_pairwize(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -667,7 +667,7 @@ def test_compute_all_statistics_dna(header_text_te2):
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 

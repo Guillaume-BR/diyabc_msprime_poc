@@ -286,4 +286,4 @@ def test_compute_summary_statistics_dna():
     assert len(stats) == 42
     assert stats["NSS_2_1"] == pytest.approx(5.8)
     assert stats["HST_2_1.2"] == pytest.approx(0.029037253935292443)
-    assert stats["NH2_3_1.2"] == pytest.approx(9.4)
+    assert stats["NH2_3_1.2"] == pytest.approx(10.0)

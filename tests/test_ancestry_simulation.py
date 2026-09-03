@@ -7,8 +7,9 @@ import msprime
 import numpy as np
 import pytest
 from conftest import (
+    OBSERVED_MSS_FILE_TE2,
+    OBSERVED_MSS_FILE_TE2_XY,
     OBSERVED_SNP_FILE_HUMAN,
-    OBSERVED_SNP_FILE_TE2,
     OBSERVED_SNP_FILE_TE4,
     OBSERVED_SNP_FILE_TE5,
 )
@@ -19,11 +20,13 @@ from bridge.ancestry_simulation import (
     build_group_local_param_per_locus,
     build_group_local_param_per_locus_from_values,
     build_male_only_samples_argument,
+    build_male_only_samples_argument_dna,
     build_matrix_per_locus,
     build_rate_map,
     build_rate_map_per_locus,
     build_samples_argument,
     build_sex_stratified_samples_argument,
+    build_sex_stratified_samples_argument_dna,
     build_transition_matrix,
     count_loci_per_group,
     dna_ancestry_parameters_for_heritage,
@@ -540,7 +543,7 @@ def test_build_matrix_per_locus(header_text_te2):
     Test de reproductibilité avec la même graine.
     """
     matrix_per_locus = build_matrix_per_locus(
-        header_text_te2, OBSERVED_SNP_FILE_TE2, seed=42
+        header_text_te2, OBSERVED_MSS_FILE_TE2, seed=42
     )
 
     assert len(matrix_per_locus) == 10
@@ -550,7 +553,7 @@ def test_build_matrix_per_locus(header_text_te2):
 
     # test de reproductibilité avec la même graine
     matrix_per_locus_2 = build_matrix_per_locus(
-        header_text_te2, OBSERVED_SNP_FILE_TE2, seed=42
+        header_text_te2, OBSERVED_MSS_FILE_TE2, seed=42
     )
     for locus in matrix_per_locus:
         assert np.allclose(matrix_per_locus[locus], matrix_per_locus_2[locus])
@@ -609,7 +612,7 @@ def test_build_rate_map_per_locus(header_text_te2):
         assert rate_map_per_locus[locus] == rate_map_per_locus_2[locus]
 
 
-def test_dna_mutation_simulation_per_locus(header_text_te2):
+def test_dna_mutation_simulation_per_locus(header_text_te2, header_text_te2_XY):
     """Vérifie que dna_mutation_simulation_per_locus produit bien une
     TreeSequence mutée par locus séquence (pas les loci microsat), avec
     une généalogie ET des mutations indépendantes d'un locus à l'autre
@@ -622,7 +625,7 @@ def test_dna_mutation_simulation_per_locus(header_text_te2):
     mutated_tree_sequences = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -645,7 +648,7 @@ def test_dna_mutation_simulation_per_locus(header_text_te2):
     mutated_tree_sequences_2 = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
     for locus_name in mutated_tree_sequences:
@@ -656,6 +659,30 @@ def test_dna_mutation_simulation_per_locus(header_text_te2):
         assert list(mutated_tree_sequences[locus_name].tables.sites.position) == list(
             mutated_tree_sequences_2[locus_name].tables.sites.position
         )
+
+    # test mais à partir de header_text_te2_xy pour vérifier que les loci <X> et <Y> sont bien supportés
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+    mutated_tree_sequences = dna_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    # Vérifier que les loci <X> et <Y> sont bien simulés
+    assert "Locus_S_A_11_" in mutated_tree_sequences
+    assert "Locus_S_M_16_" in mutated_tree_sequences
+
+    ts1 = mutated_tree_sequences["Locus_S_A_11_"]
+    ts2 = mutated_tree_sequences["Locus_S_M_16_"]
+    ts3 = mutated_tree_sequences["Locus_S_M_20_"]
+
+    assert ts1.num_samples == 60
+    assert ts2.num_samples == 20
+
+    assert ts2.tables.edges == ts3.tables.edges
 
 
 def test_dna_ancestry_parameters_for_heritage(header_text_te2):
@@ -675,7 +702,7 @@ def test_dna_ancestry_parameters_for_heritage(header_text_te2):
     assert ploidy == 2
     assert resolved_demography is demography
 
-    for heritage in ("H", "M"):
+    for heritage in ("H", "M", "X", "Y"):
         rescaled_demography, ploidy = dna_ancestry_parameters_for_heritage(
             heritage, demography, sex_ratio
         )
@@ -685,10 +712,6 @@ def test_dna_ancestry_parameters_for_heritage(header_text_te2):
             demography.populations, rescaled_demography.populations, strict=True
         ):
             assert rescaled_pop.initial_size == pytest.approx(pop.initial_size * factor)
-
-    for heritage in ("X", "Y"):
-        with pytest.raises(NotImplementedError):
-            dna_ancestry_parameters_for_heritage(heritage, demography, sex_ratio)
 
 
 def test_dna_mutation_simulation_per_locus_ploidy_matches_heritage(header_text_te2):
@@ -703,7 +726,7 @@ def test_dna_mutation_simulation_per_locus_ploidy_matches_heritage(header_text_t
     mutated_tree_sequences = dna_mutation_simulation_per_locus(
         demography=demography,
         header_text=header_text_te2,
-        mss_file_path=OBSERVED_SNP_FILE_TE2,
+        mss_file_path=OBSERVED_MSS_FILE_TE2,
         seed=42,
     )
 
@@ -749,3 +772,29 @@ def test_build_group_local_param_per_locus_from_values(header_text_te2):
     assert len(result["Locus_S_A_11_"]) == 3
     assert result["Locus_S_A_11_"][1] == 0.0
     assert result["Locus_S_A_11_"][0] > 0.0
+
+
+def test_build_sex_stratified_samples_argument_dna(header_text_te2_XY):
+    """Vérifie que build_sex_stratified_samples construit bien la liste de SampleSet attendue par msprime.sim_ancestry,"""
+    liste_loci = parse_loci_description(header_text_te2_XY)
+    locus_name = "Locus_M_A_1_"
+    samples = build_sex_stratified_samples_argument_dna(
+        OBSERVED_MSS_FILE_TE2_XY, liste_loci, locus_name
+    )
+
+    assert len(samples) == 4
+    for sample_set in samples:
+        assert sample_set.population in {"pop1", "pop2"}
+        assert sample_set.num_samples in {1, 19, 20, 0}  # 1 M ou 19 F par population
+        assert sample_set.ploidy in {1, 2}  # M=1, F=2
+
+
+def test_build_male_only_samples_argument_dna(header_text_te2_XY):
+    """Vérifie que build_male_only_samples_argument construit bien un dict {population: nombre_de_mâles} (PAS une liste de SampleSet, contrairement à build_sex_stratified_samples"""
+
+    liste_loci = parse_loci_description(header_text_te2_XY)
+    locus_name = "Locus_M_A_1_"
+    samples = build_male_only_samples_argument_dna(
+        OBSERVED_MSS_FILE_TE2_XY, liste_loci, locus_name
+    )
+    assert samples == {"pop1": 1, "pop2": 0}

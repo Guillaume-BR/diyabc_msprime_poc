@@ -5,8 +5,9 @@ voir notes/exploration.md)."""
 
 import pytest
 from conftest import (
+    OBSERVED_MSS_FILE_TE2,
+    OBSERVED_MSS_FILE_TE2_XY,
     OBSERVED_SNP_FILE_HUMAN,
-    OBSERVED_SNP_FILE_TE2,
     OBSERVED_SNP_FILE_TE3,
     OBSERVED_SNP_FILE_TE4,
     OBSERVED_SNP_FILE_TE5,
@@ -18,6 +19,7 @@ from bridge.observed_data import (
     coalescence_coefficient,
     count_samples_per_population,
     detect_snp_file_type,
+    individual_sexes_from_locus_genotype,
     individual_sexes_per_population,
     observed_count_population,
     observed_microsatellites,
@@ -162,7 +164,7 @@ def test_observed_sequences(header_text_te2):
     avec 3 populations)."""
     list_loci = parse_loci_description(header_text_te2)
     nb_seq = len([locus for locus in list_loci if locus.ms_or_seq == "S"])
-    sequences_te2 = observed_sequences(OBSERVED_SNP_FILE_TE2, list_loci)
+    sequences_te2 = observed_sequences(OBSERVED_MSS_FILE_TE2, list_loci)
     assert len(sequences_te2.keys()) == nb_seq
     assert len(sequences_te2[list(sequences_te2.keys())[0]]) == 80
     assert (
@@ -174,7 +176,7 @@ def test_observed_sequences(header_text_te2):
 def test_observed_count_population():
     """Vérifie que le comptage du nombre d'individus par population est correct
     pour le fichier toy_example2 (dataset <A>+<M> avec 3 populations)."""
-    population_counts = observed_count_population(OBSERVED_SNP_FILE_TE2)
+    population_counts = observed_count_population(OBSERVED_MSS_FILE_TE2)
     assert population_counts == {"pop1": 20, "pop2": 20}
 
 
@@ -182,7 +184,7 @@ def test_base_frequency_by_locus(header_text_te2):
     """Vérifie que le calcul des fréquences de bases par locus est correct
     pour le fichier toy_example2 (dataset <A>+<M> avec 3 populations)."""
     list_loci = parse_loci_description(header_text_te2)
-    sequences_te2 = observed_sequences(OBSERVED_SNP_FILE_TE2, list_loci)
+    sequences_te2 = observed_sequences(OBSERVED_MSS_FILE_TE2, list_loci)
     base_freqs = base_frequency_by_locus(sequences_te2)
     assert len(base_freqs.keys()) == len(sequences_te2.keys())
     for _, freqs in base_freqs.items():
@@ -221,7 +223,7 @@ def test_observed_microsatellites(header_text_te2):
     observés par individu, pour le fichier toy_example2 (dataset <A>+<M>
     avec 3 populations)."""
     list_loci = parse_loci_description(header_text_te2)
-    microsatellites_te2 = observed_microsatellites(OBSERVED_SNP_FILE_TE2, list_loci)
+    microsatellites_te2 = observed_microsatellites(OBSERVED_MSS_FILE_TE2, list_loci)
     for _, alleles_list in microsatellites_te2.items():
         assert len(alleles_list) == 40  # 80 individus au total
         for alleles in alleles_list:
@@ -230,3 +232,54 @@ def test_observed_microsatellites(header_text_te2):
                 isinstance(allele, int) for allele in alleles
             )  # Les allèles sont des entiers
     assert microsatellites_te2[list(microsatellites_te2.keys())[0]][0] == [191, 187]
+
+
+def test_individual_sexes_from_locus_genotype(header_text_te2, header_text_te2_XY):
+    """Vérifie que le parsing du fichier snp renvoie bien les sexes des individus par population
+    pour le fichier toy_example2 (dataset <A>+<M> avec 2 populations)."""
+
+    list_loci = parse_loci_description(header_text_te2)
+    locus_name = "Locus_S_A_11_"
+    sexes = individual_sexes_from_locus_genotype(
+        mss_file_path=OBSERVED_MSS_FILE_TE2, list_loci=list_loci, locus_name=locus_name
+    )
+    assert len(sexes) == 2  # 2 populations
+    assert sexes["pop1"] == ["F"] * 20
+
+    list_loci_XY = parse_loci_description(header_text_te2_XY)
+
+    locus_name_X_seq = "Locus_S_A_11_"
+    sexes = individual_sexes_from_locus_genotype(
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        list_loci=list_loci_XY,
+        locus_name=locus_name_X_seq,
+    )
+    assert sexes["pop1"][0] == "M"
+    assert sexes["pop1"][10] == "F"
+
+    locus_name_Y_ms = "Locus_M_A_10_"
+    sexes = individual_sexes_from_locus_genotype(
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        list_loci=list_loci_XY,
+        locus_name=locus_name_Y_ms,
+    )
+    assert sexes["pop1"] == ["M"] * 20
+    assert sexes["pop2"] == ["F"] * 20
+
+    locus_name_X_seq = "Locus_S_A_11_"
+    sexes = individual_sexes_from_locus_genotype(
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        list_loci=list_loci_XY,
+        locus_name=locus_name_X_seq,
+    )
+    assert sexes["pop1"][0] == "M"
+    assert sexes["pop1"][10] == "F"
+
+    locus_name_Y_seq = "Locus_S_M_20_"
+    sexes = individual_sexes_from_locus_genotype(
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        list_loci=list_loci_XY,
+        locus_name=locus_name_Y_seq,
+    )
+    assert sexes["pop1"][0] == "M"
+    assert sexes["pop1"][10] == "F"

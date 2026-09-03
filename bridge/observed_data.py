@@ -513,28 +513,28 @@ def observed_sequences(
         haploïde (<M>) en produit 1.
 
     Raises:
-        ValueError: Si le fichier ne contient aucune ligne 'POP', ou
+        ValueError: Si le fichier ne contient aucune ligne 'POP' (indépendamment de la casse), ou
             si le nombre de séquences observées sur une ligne ne
             correspond pas au nombre de loci séquentiels attendu.
     """
     lines = Path(mss_file_path).read_text().splitlines()
 
-    g = (i for i, line in enumerate(lines) if line.startswith("POP"))
+    g = (i for i, line in enumerate(lines) if line.lower().startswith("pop"))
     first_POP_line_index = next(g, None)
 
     if first_POP_line_index is None:
         raise ValueError(
-            f"Le fichier {mss_file_path} ne contient aucune ligne 'POP'. "
+            f"Le fichier {mss_file_path} ne contient aucune ligne 'pop' (indépendamment de la casse). "
             f"Format de fichier .mss invalide."
         )
     nb_seq = len([locus for locus in list_loci if locus.ms_or_seq == "S"])
 
     sequences_by_locus: dict[str, list[str]] = {}
-    _MATCH_SEQUENCES = re.compile(r"^\<\[(\S+)\]\>$")
+    _MATCH_SEQUENCES = re.compile(r"^\<\[(\S*)\]\>$")
     for line in lines[first_POP_line_index + 1 :]:
         if not line.strip():
             continue
-        if line.startswith("POP"):
+        if line.lower().startswith("pop"):
             continue
         fields = line.split()
 
@@ -555,6 +555,110 @@ def observed_sequences(
     return sequences_by_locus
 
 
+def individual_sexes_from_locus_genotype(
+    mss_file_path: str | Path,
+    list_loci: list[LociDescriptionDetailed],
+    locus_name: str,
+) -> dict[str, list[str]]:
+    """Lit le sexe de chaque individu à partir du génotype d'un locus donné.
+
+    Args:
+        mss_file_path: Chemin du fichier .mss.
+        list_loci: La description détaillée des loci (voir
+            loci_parser.parse_loci_description), utilisée pour
+            distinguer les loci séquentiels ([S]) des loci
+            microsatellites ([M]) et pour nommer les entrées du
+            dictionnaire retourné.
+        locus_name: Le nom du locus à partir duquel déduire le sexe.
+
+    Returns:
+        Un dict {nom_population: [sexe, ...]}, ex: pour toy_example5 ->
+        {"pop1": ["M", "F", "F", ...], ...}.
+
+    Raises:
+        ValueError: Si le fichier ne contient aucune ligne 'POP' (indépendamment de la casse), ou
+            si le locus spécifié n'est pas trouvé dans la liste des loci.
+    """
+    locus_index = next(
+        (i for i, locus in enumerate(list_loci) if locus.name == locus_name), None
+    )
+    if locus_index is None:
+        raise ValueError(f"Locus {locus_name} non trouvé dans la liste des loci.")
+
+    locus_heritage = list_loci[locus_index].heritage
+
+    lines = Path(mss_file_path).read_text().splitlines()
+    g = (i for i, line in enumerate(lines) if line.lower().startswith("pop"))
+    first_POP_line_index = next(g, None)
+    if first_POP_line_index is None:
+        raise ValueError(
+            f"Le fichier {mss_file_path} ne contient aucune ligne 'pop' (indépendamment de la casse). "
+            f"Format de fichier .mss invalide."
+        )
+
+    sexes_by_population: dict[str, list[str]] = {}
+
+    # \S* (pas \S+) : le token "manquant" d'une séquence haploïde s'écrit
+    # <[]> (contenu vide entre crochets, vérifié empiriquement sur
+    # reference/toy_example2_ms_dna_XY) -- avec \S+, ce token ne matchait
+    # jamais et tombait dans le "else: raise ValueError" ci-dessous, alors
+    # que c'est le cas NORMAL pour un locus <Y> (toutes les femelles du
+    # jeu de données n'ont pas de séquence Y).
+    _MATCH_SEQUENCES = re.compile(r"^\<\[(\S*)\]\>$")
+    _MATCH_MICROSAT = re.compile(r"^(\d{3}$|^\d{6}$)$")
+    i = 1
+    for line in lines[first_POP_line_index + 1 :]:
+        if not line.strip():
+            continue
+        if line.lower().startswith("pop"):
+            i += 1
+            continue
+
+        if locus_heritage in {"A", "M", "H"}:
+            sexes_by_population.setdefault(f"pop{i}", []).append("F")
+        elif locus_heritage in {"X", "Y"}:
+            fields = line.split()
+
+            field = fields[locus_index + 2]
+            if _MATCH_SEQUENCES.match(field):
+                sequence = _MATCH_SEQUENCES.match(field).group(1).split("][")
+                if locus_heritage == "X":
+                    # Inconditionnel sur le contenu (même si manquant,
+                    # sequence == [""]) -- reproduit le format haploïde =
+                    # mâle de do_sequence, qui ne teste jamais le
+                    # manquant pour <X> (contrairement à <Y> ci-dessous).
+                    sexes_by_population.setdefault(f"pop{i}", []).append(
+                        "M" if len(sequence) <= 1 else "F"
+                    )
+                if locus_heritage == "Y":
+                    is_missing = sequence == [""]
+                    sexes_by_population.setdefault(f"pop{i}", []).append(
+                        "M" if (len(sequence) == 1 and not is_missing) else "F"
+                    )
+
+            elif _MATCH_MICROSAT.match(field):
+                if locus_heritage == "Y":
+                    sexes_by_population.setdefault(f"pop{i}", []).append(
+                        "M" if field != "000" else "F"
+                    )
+                elif locus_heritage == "X":
+                    sexes_by_population.setdefault(f"pop{i}", []).append(
+                        "M" if len(field) == 3 else "F"
+                    )
+
+            else:
+                raise ValueError(
+                    f"Format de génotype inattendu pour le locus {locus_name}: {field!r}."
+                )
+
+        else:
+            raise ValueError(
+                f"Type d'héritage inattendu pour le locus {locus_name}: {locus_heritage!r}."
+            )
+
+    return sexes_by_population
+
+
 def observed_count_population(mss_file_path: str | Path) -> dict[str, int]:
     """Compte le nombre d'individus par population dans un fichier .mss.
 
@@ -565,15 +669,15 @@ def observed_count_population(mss_file_path: str | Path) -> dict[str, int]:
         Un dict {"pop1": effectif, "pop2": effectif, ...}.
 
     Raises:
-        ValueError: Si le fichier ne contient aucune ligne 'POP'.
+        ValueError: Si le fichier ne contient aucune ligne commençant par 'pop' (indépendamment de la casse).
     """
     lines = Path(mss_file_path).read_text().splitlines()
 
     population_counts: dict[str, int] = {}
-    POP_indexes = [i for i, line in enumerate(lines) if line.startswith("POP")]
+    POP_indexes = [i for i, line in enumerate(lines) if line.lower().startswith("pop")]
     if not POP_indexes:
         raise ValueError(
-            f"Le fichier {mss_file_path} ne contient aucune ligne 'POP'. "
+            f"Le fichier {mss_file_path} ne contient aucune ligne 'pop' (indépendamment de la casse). "
             f"Format de fichier .mss invalide."
         )
     for i, index in enumerate(POP_indexes):
@@ -669,19 +773,19 @@ def observed_microsatellites(
         haploïde (<M>) en produit 1.
 
     Raises:
-        ValueError: Si le fichier ne contient aucune ligne 'POP', ou
+        ValueError: Si le fichier ne contient aucune ligne 'pop', ou
             si le nombre de microsatellites observés sur une ligne ne
             correspond pas au nombre de loci microsatellites attendu.
         ValueError: Si un microsatellite n'est pas au format attendu (3 ou 6 chiffres, ex: '000' ou 'NNNNNN').
     """
     lines = Path(mss_file_path).read_text().splitlines()
 
-    g = (i for i, line in enumerate(lines) if line.startswith("POP"))
+    g = (i for i, line in enumerate(lines) if line.lower().startswith("pop"))
     first_POP_line_index = next(g, None)
 
     if first_POP_line_index is None:
         raise ValueError(
-            f"Le fichier {mss_file_path} ne contient aucune ligne 'POP'. "
+            f"Le fichier {mss_file_path} ne contient aucune ligne 'pop'. "
             f"Format de fichier .mss invalide."
         )
     nb_microsat = len([locus for locus in list_loci if locus.ms_or_seq == "M"])
@@ -690,7 +794,7 @@ def observed_microsatellites(
     for line in lines[first_POP_line_index + 1 :]:
         if not line.strip():
             continue
-        if line.startswith("POP"):
+        if line.lower().startswith("pop"):
             continue
         fields = line.split()
         match_counter = 0

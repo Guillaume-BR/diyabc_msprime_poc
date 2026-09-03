@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 from conftest import (
     GENERAL_BINARY_PATH,
+    OBSERVED_MSS_FILE_TE2,
     OBSERVED_SNP_FILE_HUMAN,
-    OBSERVED_SNP_FILE_TE2,
     REFERENCE_DIR,
 )
 
@@ -286,13 +286,13 @@ def test_parse_real_reftable_params_with_group_priors(header_text_te2):
     group_priors_names = group_prior_column_names(header_text_te2)
     scenarios = parse_header_scenarios(header_text_te2)
     result = parse_real_reftable_params_with_group_priors(
-        path=OBSERVED_SNP_FILE_TE2.parent
+        path=OBSERVED_MSS_FILE_TE2.parent
         / "first_records_of_the_reference_table_0.txt",
         priors=list_priors,
         scenarios=scenarios,
         group_priors_names=group_priors_names,
     )
-    path = OBSERVED_SNP_FILE_TE2.parent / "first_records_of_the_reference_table_0.txt"
+    path = OBSERVED_MSS_FILE_TE2.parent / "first_records_of_the_reference_table_0.txt"
     text = Path(path).read_text().splitlines()
 
     # Vérifie que le nombre de lignes lues correspond au nombre de lignes de données (en-tête exclue)
