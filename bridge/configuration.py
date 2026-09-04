@@ -9,9 +9,9 @@ tailles de lot (batching de simulate_independent_loci).
 # ── Offsets de graine (chacun doit rester unique dans ce fichier) ──────────
 
 _GROUP_PRIOR_SEED_OFFSET = 10_000_000  # parameter_sampling.py
-_MAF_REJECTION_SEED_OFFSET = 2_000_000  # ancestry_simulation.py
-_MRC_REJECTION_SEED_OFFSET = 3_000_000  # ancestry_simulation.py
-_BINOMIAL_SEED_OFFSET = 4_000_000  # ancestry_simulation.py
+_MAF_REJECTION_SEED_OFFSET = 20_000_000  # ancestry_simulation.py
+_MRC_REJECTION_SEED_OFFSET = 30_000_000  # ancestry_simulation.py
+_BINOMIAL_SEED_OFFSET = 40_000_000  # ancestry_simulation.py
 _SCENARIO_DRAW_SEED_OFFSET = 50_000_000  # reftable_loop.py
 _KAPPA1_SEED_OFFSET = 60_000_000  # ancestry_simulation.py
 _KAPPA2_SEED_OFFSET = 70_000_000  # ancestry_simulation.py
@@ -28,10 +28,10 @@ _SHARED_Y_ANCESTRY_SEED_OFFSET = 130_000_000  # ancestry_simulation.py
 # types différents (voir pipeline.py pour la justification empirique).
 _LOCUS_TYPE_SEED_OFFSET = {
     "A": 0,
-    "H": 10_000_000,
-    "X": 20_000_000,
-    "Y": 30_000_000,
-    "M": 40_000_000,
+    "H": 1_000_000,
+    "X": 2_000_000,
+    "Y": 3_000_000,
+    "M": 4_000_000,
 }
 
 # ── Tailles de lot ──────────────────────────────────────────────────────────
