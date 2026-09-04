@@ -209,7 +209,7 @@ def extract_referenced_names(expr: str) -> set[str]:
 
     Returns:
         L'ensemble des noms de paramètres référencés (vide pour un
-        nombre littéral).
+        nombre littéral).s S_A_11
     """
     match = _EXPR_RE.match(expr)
     if match:
@@ -226,20 +226,20 @@ def extract_referenced_names(expr: str) -> set[str]:
 def get_parameter_names_used_by_scenario(scenario: Scenario) -> set[str]:
     """Collecte les noms de paramètres réellement référencés par un scénario.
 
-    Tailles de population initiales, et time_expr / new_size_expr de
-    chacun de ses événements. C'est ce sous-ensemble (pas la totalité
-    des priors déclarés dans header.txt) qui doit constituer les
-    colonnes param[] du reftable.bin pour ce scénario -- un scénario
-    donné n'utilise généralement qu'une partie des priors globaux (ex:
-    human/header.txt a 21 priors déclarés, mais le scénario 1 n'en
-    référence que 16 -- ra/t11/t22/t33/t44 appartiennent aux scénarios
-    2-6, pas au scénario 1).
+        Tailles de population initiales, et time_expr / new_size_expr de
+        chacun de ses événements. C'est ce sous-ensemble (pas la totalité
+        des priors déclarés dans header.txt) qui doit constituer les
+        colonnes param[] du reftable.bin pour ce scénario -- un scénario
+        donné n'utilise généralement qu'une partie des priors globaux (ex:
+        human/header.txt a 21 priors déclarés, mais le scénario 1 n'en
+        référence que 16 -- ra/t11/t22/t33/t44 appartiennent aux scénarios
+        2-6, pas au scénario 1).
+    s S_A_11
+        Args:
+            scenario: Le scénario parsé (header_dataclasses.Scenario).
 
-    Args:
-        scenario: Le scénario parsé (header_dataclasses.Scenario).
-
-    Returns:
-        L'ensemble des noms de paramètres utilisés par ce scénario.
+        Returns:
+            L'ensemble des noms de paramètres utilisés par ce scénario.
     """
     names: set[str] = set()
 

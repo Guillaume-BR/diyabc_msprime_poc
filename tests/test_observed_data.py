@@ -219,17 +219,15 @@ def test_base_frequency_by_locus_invalid_base():
 
 
 def test_observed_microsatellites(header_text_te2_XY):
-    """Vérifie que le parsing du fichier snp renvoie bien les microsatellites
-    observés par individu, pour le fichier toy_example2 (dataset <A>+<M>
-    avec 3 populations)."""
+    """Vérifie que le parsing du fichier mss renvoie bien les microsatellites
+    observés par individu, pour le fichier toy_example2_xy (dataset <A>+<X>+<Y>
+    avec 2 populations)."""
     list_loci = parse_loci_description(header_text_te2_XY)
     microsatellites_te2 = observed_microsatellites(OBSERVED_MSS_FILE_TE2_XY, list_loci)
     for _, alleles_list in microsatellites_te2.items():
         assert len(alleles_list) == 40  # 80 individus au total
         for alleles in alleles_list:
-            assert (
-                len(alleles) >= 0 and len(alleles) <= 2
-            )  # Chaque individu a 0, 1 ou 2 allèles
+            assert len(alleles) <= 2  # Chaque individu a 0, 1 ou 2 allèles
             assert all(
                 isinstance(allele, int) for allele in alleles
             )  # Les allèles sont des entiers
@@ -240,8 +238,8 @@ def test_observed_microsatellites(header_text_te2_XY):
 
 
 def test_individual_sexes_from_locus_genotype(header_text_te2, header_text_te2_XY):
-    """Vérifie que le parsing du fichier snp renvoie bien les sexes des individus par population
-    pour le fichier toy_example2 (dataset <A>+<M> avec 2 populations)."""
+    """Vérifie que le parsing du fichier mss renvoie bien les sexes des individus par population
+    pour le fichier toy_example2_xy (dataset <A>+<X>+<Y> avec 2 populations)."""
 
     list_loci = parse_loci_description(header_text_te2)
     locus_name = "Locus_S_A_11_"

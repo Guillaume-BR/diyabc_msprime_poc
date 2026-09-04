@@ -681,7 +681,6 @@ def test_dna_mutation_simulation_per_locus(header_text_te2, header_text_te2_XY):
 
     assert ts1.num_samples == 60
     assert ts2.num_samples == 20
-
     assert ts2.tables.edges == ts3.tables.edges
 
 

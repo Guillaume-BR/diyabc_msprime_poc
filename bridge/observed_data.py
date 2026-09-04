@@ -766,8 +766,7 @@ def observed_microsatellites(
             dictionnaire retourné.
 
     Returns:
-        Un dict {nom_locus: [[allèle1, allèle2], ...]}. Les valeurs de la
-        liste peuvent être [], [allèle1], [allèle2] ou [allèle1, allèle2] selon le
+        Un dict {nom_locus: [[allèle1, allèle2] / [allèle1] / [allèle2] / [],  ...]} selon le
         contenu du fichier .mss.
         Chaque entrée est une liste de listes représentant les
         allèles observés pour chaque individu.
