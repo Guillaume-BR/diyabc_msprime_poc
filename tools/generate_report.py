@@ -14,7 +14,7 @@ def run(cmd, cwd=None):
 # 1. Tree — lancé depuis la racine
 def generate_tree():
     print("Generating tree...")
-    out = run("tree -L 3")  # cwd=ROOT, donc l'arbre part bien de la racine
+    out = run("tree -L 2")  # cwd=ROOT, donc l'arbre part bien de la racine
     (NOTES_DIR / "tree.md").write_text(
         f"# Project Tree\n\n```\n{out}\n```", encoding="utf-8"
     )

@@ -16,6 +16,7 @@ import dataclasses
 import math
 import random
 
+from bridge.configuration import _GROUP_PRIOR_SEED_OFFSET
 from bridge.header_dataclasses import (
     GroupPrior,
     LociDescriptionDetailed,
@@ -24,16 +25,13 @@ from bridge.header_dataclasses import (
     Scenario,
 )
 
-# Décalage de graine pour draw_group_parameter_values, distinct de celui utilisé
-# par draw_parameter_values (qui n'en a pas besoin, une seule instance de
-# random.Random par appel) -- évite que les deux tirages soient corrélés si un
-# appelant utilise la même seed de base pour les deux, même bug que celui déjà
-# rencontré et corrigé le 2026-07-16 (corrélation scénario/premier prior en
-# multi-scénario). Valeur choisie loin des autres offsets déjà utilisés dans le
-# projet (_MAF_REJECTION_SEED_OFFSET=2_000_000, _MRC_REJECTION_SEED_OFFSET=
-# 3_000_000, _BINOMIAL_SEED_OFFSET=4_000_000 dans ancestry_simulation.py ;
-# _SCENARIO_DRAW_SEED_OFFSET=50_000_000 dans reftable_loop.py).
-_GROUP_PRIOR_SEED_OFFSET = 10_000_000
+# _GROUP_PRIOR_SEED_OFFSET : voir bridge/configuration.py. Décalage de
+# graine pour draw_group_parameter_values, distinct de celui utilisé par
+# draw_parameter_values (qui n'en a pas besoin, une seule instance de
+# random.Random par appel) -- évite que les deux tirages soient corrélés
+# si un appelant utilise la même seed de base pour les deux, même bug que
+# celui déjà rencontré et corrigé le 2026-07-16 (corrélation scénario/
+# premier prior en multi-scénario).
 
 
 class ConstraintsNotSatisfiedError(Exception):

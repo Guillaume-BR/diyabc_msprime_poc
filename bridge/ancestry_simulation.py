@@ -25,6 +25,21 @@ import msprime
 import numpy as np
 import tskit
 
+from bridge.configuration import (
+    _ANCESTRY_SEED_OFFSET,
+    _BINOMIAL_SEED_OFFSET,
+    _KAPPA1_SEED_OFFSET,
+    _KAPPA2_SEED_OFFSET,
+    _MAF_BATCH_SIZE,
+    _MAF_REJECTION_SEED_OFFSET,
+    _MRC_BATCH_SIZE,
+    _MRC_REJECTION_SEED_OFFSET,
+    _MUS_RATE_SEED_OFFSET,
+    _MUTATION_SEED_OFFSET,
+    _SHARED_M_ANCESTRY_SEED_OFFSET,
+    _SHARED_Y_ANCESTRY_SEED_OFFSET,
+    _SITE_RATE_SEED_OFFSET,
+)
 from bridge.demography_builder import rescale_demography
 from bridge.header_dataclasses import LociDescriptionDetailed
 from bridge.loci_parser import parse_loci_description
@@ -50,15 +65,21 @@ from bridge.parameter_sampling import (
 )
 from bridge.prior_parser import get_parameter_used_by_model, parse_group_priors
 
-# Offset de graine dédié à la boucle de rejet MAF et du rejet MRC, distinct du +1_000_000
-# déjà utilisé partout ailleurs dans le projet pour séparer la graine de
-# mutation de la graine de généalogie (voir notebooks/scripts) -- ne
-# jamais réutiliser 1_000_000 ici, ça collisionnerait avec cette
-# convention existante plutôt qu'avec autre chose.
-_MAF_REJECTION_SEED_OFFSET = 2_000_000
-_MRC_REJECTION_SEED_OFFSET = 3_000_000
+# Toutes les constantes ci-dessous (offsets de graine, tailles de lot)
+# vivent maintenant dans bridge/configuration.py -- regroupées avec
+# celles des autres modules pour pouvoir vérifier d'un coup d'œil
+# qu'aucun offset ne collisionne avec un autre (voir sa docstring).
+# Les commentaires qui suivent documentent le POURQUOI de chaque valeur,
+# gardés ici au plus près de leur usage.
 
-# Taille de lot PLANCHER pour with_maf_filter : un seul appel
+# _MAF_REJECTION_SEED_OFFSET/_MRC_REJECTION_SEED_OFFSET : offset de
+# graine dédié à la boucle de rejet MAF et du rejet MRC, distinct du
+# +1_000_000 déjà utilisé partout ailleurs dans le projet pour séparer la
+# graine de mutation de la graine de généalogie (voir notebooks/scripts)
+# -- ne jamais réutiliser 1_000_000 ici, ça collisionnerait avec cette
+# convention existante plutôt qu'avec autre chose.
+
+# _MAF_BATCH_SIZE : taille de lot PLANCHER pour with_maf_filter : un seul appel
 # simulate_independent_loci (num_replicates=batch_size) au lieu d'un appel
 # par tentative de rejet. Mesuré empiriquement (script jetable,
 # toy_example3 scenario3, maf=0.05, 100 loci) : le setup Python/msprime
@@ -78,28 +99,19 @@ _MRC_REJECTION_SEED_OFFSET = 3_000_000
 # plateau de rendement décroissant à ce volume). num_loci//4 capture déjà
 # ~94% du gain d'un lot égal à num_loci entier ; pas la peine d'aller
 # jusque là.
-_MAF_BATCH_SIZE = 20
 
-# Taille de lot pour with_mrc_filter (PoolSeq) : contrairement à
-# _MAF_BATCH_SIZE, ce lot est PARTAGÉ ENTRE TOUS LES LOCI (pas de scaling
-# avec num_loci ici -- mesuré empiriquement le 24/07/2026, toy_example4,
-# mrc=5 : le partage du pool entre loci apporte ~1.5x, mais faire varier
-# la taille du lot une fois le pool partagé n'apporte quasiment rien en
-# plus). Voir with_mrc_filter pour le détail du design.
-_MRC_BATCH_SIZE = 20
+# _MRC_BATCH_SIZE : taille de lot pour with_mrc_filter (PoolSeq) :
+# contrairement à _MAF_BATCH_SIZE, ce lot est PARTAGÉ ENTRE TOUS LES LOCI
+# (pas de scaling avec num_loci ici -- mesuré empiriquement le 24/07/2026,
+# toy_example4, mrc=5 : le partage du pool entre loci apporte ~1.5x, mais
+# faire varier la taille du lot une fois le pool partagé n'apporte
+# quasiment rien en plus). Voir with_mrc_filter pour le détail du design.
 
-# pour séparer le tirage binomial du tirage de mutation
-_BINOMIAL_SEED_OFFSET = 4_000_000
+# _BINOMIAL_SEED_OFFSET : pour séparer le tirage binomial du tirage de mutation.
 
-# pour séparer les tirages des kappas (un tirage par locus, donc un tirage par réplicat) du tirage de mutation
-_KAPPA1_SEED_OFFSET = 60_000_000
-_KAPPA2_SEED_OFFSET = 70_000_000
-_MUS_RATE_SEED_OFFSET = 80_000_000
-_SITE_RATE_SEED_OFFSET = 90_000_000
-_MUTATION_SEED_OFFSET = 100_000_000
-_ANCESTRY_SEED_OFFSET = 110_000_000
-_SHARED_M_ANCESTRY_SEED_OFFSET = 120_000_000
-_SHARED_Y_ANCESTRY_SEED_OFFSET = 130_000_000
+# _KAPPA1_SEED_OFFSET/_KAPPA2_SEED_OFFSET/_MUS_RATE_SEED_OFFSET : pour
+# séparer les tirages des kappas (un tirage par locus, donc un tirage par
+# réplicat) du tirage de mutation.
 
 
 # ── Construction de l'argument samples (un builder par type de locus) ──────

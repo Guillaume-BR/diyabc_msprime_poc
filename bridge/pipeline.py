@@ -32,6 +32,7 @@ from bridge.ancestry_simulation import (
     simulate_genotypes_for_locus_type,
     simulate_poolseq_reads_with_mrc_filter,
 )
+from bridge.configuration import _LOCUS_TYPE_SEED_OFFSET
 from bridge.demography_builder import build_demography
 from bridge.header_dataclasses import Scenario
 from bridge.loci_parser import parse_loci_description
@@ -46,26 +47,20 @@ from bridge.summary_statistics import (
     compute_all_statistics_poolseq,
 )
 
-# Décalage fixe et bien séparé par type de locus, à ajouter à la seed de
-# base avant d'appeler simulate_genotypes_for_locus_type : réutiliser la
-# MÊME seed pour tous les types corrèle artificiellement la position
-# relative de leur première mutation (random.Random(seed) fraîchement
-# recréé à chaque appel de simulate_snp_genotypes tire la même fraction
-# relative target/total au premier tirage, quel que soit le total réel
-# de branches -- vérifié empiriquement). Des offsets petits/positionnels
+# _LOCUS_TYPE_SEED_OFFSET : voir bridge/configuration.py. Décalage fixe
+# et bien séparé par type de locus, à ajouter à la seed de base avant
+# d'appeler simulate_genotypes_for_locus_type : réutiliser la MÊME seed
+# pour tous les types corrèle artificiellement la position relative de
+# leur première mutation (random.Random(seed) fraîchement recréé à
+# chaque appel de simulate_snp_genotypes tire la même fraction relative
+# target/total au premier tirage, quel que soit le total réel de
+# branches -- vérifié empiriquement). Des offsets petits/positionnels
 # (0,1,2,3...) ne suffisent PAS : ils entreraient en collision avec les
 # seeds d'autres particules (seed = particle_index + 1 dans
 # reftable_loop.py, donc de petits entiers eux aussi). Des offsets
 # grands et bien séparés rendent une collision (particule, type) quasi
 # impossible même sur des dizaines de milliers de particules -- msprime
 # accepte des seeds jusqu'à 2**32-1.
-LOCUS_TYPE_SEED_OFFSET = {
-    "A": 0,
-    "H": 10_000_000,
-    "X": 20_000_000,
-    "Y": 30_000_000,
-    "M": 40_000_000,
-}
 
 
 # ── Fondations et helpers partagés par les deux familles ──────────────────
@@ -119,7 +114,7 @@ def _simulate_genotypes_for_all_locus_types(
     un test de validation.
 
     Un seed DISTINCT est dérivé par type de locus via
-    LOCUS_TYPE_SEED_OFFSET (voir sa docstring en tête de fichier pour la
+    _LOCUS_TYPE_SEED_OFFSET (voir bridge/configuration.py pour la
     justification empirique) -- ne JAMAIS appeler
     simulate_genotypes_for_locus_type avec la même seed brute pour
     plusieurs types dans cette boucle.
@@ -147,7 +142,7 @@ def _simulate_genotypes_for_all_locus_types(
     liste_iterateurs_par_type = []
 
     for locus_type, declared_count in loci_counts_by_heritage.items():
-        seed_for_type = seed + LOCUS_TYPE_SEED_OFFSET[locus_type]
+        seed_for_type = seed + _LOCUS_TYPE_SEED_OFFSET[locus_type]
         loci_count = num_loci if num_loci is not None else declared_count
         liste_iterateurs_par_type.append(
             simulate_genotypes_for_locus_type(

@@ -43,7 +43,14 @@ it to a combinatorial admixture effect — not a port bug either way, but
 a 2026-08-31 falsification test (no-admixture control scenario) showed
 that attribution was incomplete and reopened the investigation. Fixed
 2026-09-02: `<M>` loci weren't sharing a genealogy — see "RESOLVED
-2026-09-02: G3 (`<M>`) variance deficit" below.
+2026-09-02: G3 (`<M>`) variance deficit" below. As of 2026-09-03,
+`<X>`/`<Y>` DNA sequence loci are supported too (sex per individual
+inferred from genotype ploidy at the `.mss` locus itself, mirroring
+`DataC::do_microsat`/`do_sequence` — no dedicated sex column needed) —
+see "DNA sequence `<X>`/`<Y>` support" below; no real DIYABC reference
+output exists for this case (the real binary crashes on it), so it is
+validated on a synthetic fixture only, not a paired real-vs-msprime
+comparison.
 MicroSat itself (stepwise mutation model, `NAL`/`HET`-style summary
 statistics) has no simulation-side code at all yet, only header
 parsing. The goal is to demonstrate that a
@@ -702,14 +709,13 @@ own already-built `matQ`/`pi` sidesteps this entirely.
   `simulate_genotypes_for_locus_type`. New helper
   `dna_ancestry_parameters_for_heritage` (`ancestry_simulation.py`)
   replicates that same dispatch for DNA sequences: `"A"` → demography
-  unchanged, `ploidy=2`; `"H"`/`"M"` → `rescale_demography(demography,
-  coalescence_coefficient(heritage, sex_ratio) / 2)`, `ploidy=1`; `"X"`/`"Y"`
-  → `NotImplementedError` (deliberately, not deferred-by-oversight: `.mss`
-  is genepop-format and carries no per-individual sex column the way
-  `.snp` does, so `build_sex_stratified_samples_argument`/
-  `build_male_only_samples_argument` have no equivalent to call here —
-  sex-stratified DNA sequence loci would need a real per-individual sex
-  source that doesn't exist in this file format). `sex_ratio` is read via
+  unchanged, `ploidy=2`; `"H"`/`"M"`/`"X"`/`"Y"` →
+  `rescale_demography(demography, coalescence_coefficient(heritage,
+  sex_ratio) / 2)`, `ploidy=1` (all four share the same rescale formula —
+  `"X"`/`"Y"` originally raised `NotImplementedError` here, on the
+  assumption that `.mss` carries no per-individual sex; see "DNA sequence
+  `<X>`/`<Y>` support" below for why that assumption was wrong and how it
+  was resolved 2026-09-03). `sex_ratio` is read via
   the existing `parse_sex_ratio(mss_file_path)` — works unchanged on
   `.mss` because the `<NM=xNF>` token it looks for lives on the file's
   first line in exactly the same format as `.snp`, confirmed by direct
@@ -724,6 +730,118 @@ own already-built `matQ`/`pi` sidesteps this entirely.
   this would have passed silently before the fix, since both were
   ploidy=2, hence checked directly against the post-fix dispatch, not
   just re-run of the pre-existing test).
+
+### DNA sequence `<X>`/`<Y>` support (2026-09-03, mentor mode — user-driven, reviewed/debugged with the assistant)
+
+`dna_ancestry_parameters_for_heritage`'s original `"X"`/`"Y"` →
+`NotImplementedError` (see above) assumed `.mss` carries no per-individual
+sex, by analogy with `.snp`'s dedicated `SEX` column. Direct reading of
+`DataC::do_microsat`/`do_sequence` (`data.cpp:1377-1497`, sibling repo —
+see `reference_diyabc_cpp_repo` memory) showed this was only half right:
+there's no dedicated column, but DIYABC infers sex from the genotype's
+own ploidy AT the `<X>`/`<Y>` locus itself — `indivsexe` starts at
+"female" for everyone (`data.cpp:1320`) and flips to "male" when a locus
+of type `<X>` shows a **haploid** genotype (hemizygous, one bracket group
+`<[seq]>` for sequences / 3 digits for MicroSat — unconditionally, even
+if it's the missing-data placeholder) or a locus of type `<Y>` shows a
+**present** (non-missing) genotype at all (only males carry a Y).
+`<X>`/`<Y>` never appeared in the same investigation as the crash below
+by coincidence — both trace back to the same DIYABC source path.
+
+New `observed_data.individual_sexes_from_locus_genotype(mss_file_path,
+list_loci, locus_name)` reproduces this exactly, returning the same
+`{"pop1": ["M","F",...], ...}` shape as `individual_sexes_per_population`
+(`.snp` side) — reused as-is by `ancestry_simulation.build_sex_stratified_
+samples_argument_dna`/`build_male_only_samples_argument_dna`, thin
+wrappers around the SAME `_sample_sets_from_sexes`/`_male_counts_from_
+sexes` helpers now factored out of `build_sex_stratified_samples_
+argument`/`build_male_only_samples_argument` (`.snp` side) — those two
+kept their own `individual_sexes_per_population` +
+`population_index_to_name` translation, the `.mss` side needs none since
+`individual_sexes_from_locus_genotype`'s keys are already `"pop1"/"pop2"`.
+`dna_ancestry_parameters_for_heritage` now folds `"X"`/`"Y"` into the
+same branch as `"H"`/`"M"`. `dna_mutation_simulation_per_locus`/`_from_
+values`: the `samples` argument, previously computed ONCE before the
+per-locus loop (correct for `<A>`/`<H>`/`<M>`, wrong for `<X>`/`<Y>`,
+which need a DIFFERENT sample set per locus — each locus's own ploidy
+pattern is its only source of sex information), is now dispatched INSIDE
+the loop, keeping the hoisted `samples_default` for the cheap `<A>`/`<H>`/
+`<M>` case and only paying the extra `.mss` scan for `<X>`/`<Y>` loci —
+and only ever reached for `[S]` loci at all (the `ms_or_seq != "S"`
+filter now runs BEFORE this dispatch, not after, to avoid scanning the
+whole `.mss` file once per MicroSat locus for a result that would just be
+thrown away by the `continue`).
+
+**`<Y>` shares one genealogy across all its loci, like `<M>` — a gap
+caught mid-review, not present from the start.** `<Y>` (like
+mitochondrial DNA) is inherited without recombination, so all `<Y>` loci
+of one particle must share the SAME tree — exactly the same reasoning as
+`<M>` (see `simulate_genotypes_for_locus_type`'s SNP-side dispatch,
+`with_maf_filter_shared_ancestry` for both `"Y"` and `"M"`, and
+`particuleC.cpp:2422-2435`'s `GeneTreeY`/`GeneTreeM`). A first draft of
+this DNA-sequence port only special-cased `"M"` for the shared-seed
+branch, leaving `"Y"` with an independent seed per locus like `<A>`/`<H>`/
+`<X>` — caught by the user asking "is it only `<M>` that shares a
+genealogy?" while reviewing the seed-offset logic. Fixed with a
+DEDICATED `_SHARED_Y_ANCESTRY_SEED_OFFSET` (not reusing
+`_SHARED_M_ANCESTRY_SEED_OFFSET` — that would make every `<Y>` locus
+share the exact same tree as every `<M>` locus too, not just share within
+its own type).
+
+**Several bugs caught during review, none of them survived to the final
+version** (typical for this session's mentor-mode back-and-forth, listed
+because the patterns are the kind likely to recur):
+- `individual_sexes_from_locus_genotype`'s population index started at
+  `i=0` and only incremented on `POP` lines already past the first one
+  (consumed before the loop starts) — off by one against every other
+  function's 1-based `"pop1"/"pop2"` convention.
+- The `<Y>` MicroSat branch set "M" on any 3-digit match, without
+  excluding `"000"` (missing) — breaking the X/Y asymmetry from the C++
+  source (`<X>` is unconditional on the missing code, `<Y>` is not).
+- The real missing-sequence token is `<[]>` (empty content between
+  brackets, confirmed empirically on `reference/toy_example2_ms_dna_XY`)
+  — but BOTH `individual_sexes_from_locus_genotype`'s own regex and
+  `observed_sequences`'s (a separate, older, pre-existing function,
+  `observed_data.py`) required `\S+` (non-empty) inside the brackets, so
+  neither matched it — `\S+` → `\S*` fixed both. The `observed_sequences`
+  instance was invisible until `te2_ms_dna_XY` (a dataset with genuine
+  missing data) was actually run through the DNA-sequence pipeline
+  end-to-end — every previous dataset in this project's test suite
+  happened to have no missing sequence data at all.
+- Factoring `build_male_only_samples_argument`'s body into
+  `_male_counts_from_sexes` dropped its `"9"` (unknown sex) `ValueError`
+  check along the way — caught by `test_build_male_only_samples_argument`
+  failing (`DID NOT RAISE`) on `human` (unsexed dataset).
+  `build_sex_stratified_samples_argument`'s own refactor separately
+  produced dict keys that were bare integers (`name_to_index[k]`) instead
+  of `f"pop{name_to_index[k]}"` strings — same class of copy-paste-without-
+  adjusting mistake, different symptom.
+- The `_from_values` twin of `dna_mutation_simulation_per_locus` (used by
+  the DIYABC-replay pipeline) got the same per-locus `samples` dispatch
+  copy-pasted in, but the hoisted variable kept its original name
+  (`samples`) instead of being renamed to `samples_default` like the
+  original — the dispatch branch referencing `samples_default` inside the
+  loop would have raised `NameError` on the very first `<A>`/`<H>`/`<M>`
+  locus, caught before being run.
+
+**No real DIYABC reference data exists for this case, deliberately not a
+blocker**: the real `diyabc` binary SIGSEGVs on any `<X>`/`<Y>` DNA
+sequence dataset with genuinely heterogeneous ploidy (see
+`notes/exploration.md`'s 2026-09-02 entry — a `%5` bug in `do_sequence`'s
+type comparison makes its own sex-inference code dead for sequences,
+unlike MicroSat where the equivalent code works) — so this port is
+implemented from the C++ source's evident INTENT (which does match
+MicroSat's real, working behavior) rather than against any paired
+real-vs-msprime validation, unlike every other feature in this file.
+`reference/toy_example2_ms_dna_XY/` (originally built to reproduce that
+crash) is reused here as the only available test fixture: a synthetic,
+hand-edited copy of `toy_example2_ms_dna` with G2 relabeled `<A>`→`<X>`,
+G3 `<M>`→`<Y>`, one MicroSat locus (`Locus_M_A_1_`) also relabeled `<X>`
+and another (`Locus_M_A_10_`) `<Y>`, real heterogeneous ploidy data
+(10 haploid + 10 diploid individuals per population) and genuine missing
+tokens (`<[]>`/`"000"`) — good enough to validate the mechanism's
+internal consistency (ploidy/sample counts match the sexing, `<Y>` loci
+share a genealogy, `<X>` loci don't) but not DIYABC-output fidelity.
 
 **Not yet done**: no real reference dataset with a `JK`- or `TN`-model
 DNA sequence group to cross-validate `build_transition_matrix` against

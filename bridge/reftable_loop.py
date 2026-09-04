@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from bridge.ancestry_simulation import prepare_poolseq_observed_reads
+from bridge.configuration import _SCENARIO_DRAW_SEED_OFFSET
 from bridge.demography_builder import get_parameter_names_used_by_scenario
 from bridge.header_dataclasses import Scenario
 from bridge.loci_parser import parse_loci_description
@@ -53,7 +54,8 @@ from bridge.prior_parser import (
 )
 from bridge.scenario_parser import parse_header_scenarios
 
-# Décalage appliqué à la seed de particule avant de tirer le scénario
+# _SCENARIO_DRAW_SEED_OFFSET : voir bridge/configuration.py. Décalage
+# appliqué à la seed de particule avant de tirer le scénario
 # (draw_scenario), pour ne JAMAIS partager la même seed brute avec le
 # tirage des paramètres (draw_parameter_values, appelé plus loin dans
 # compute_summary_statistics avec seed=seed, sans offset) -- sinon les
@@ -63,9 +65,8 @@ from bridge.scenario_parser import parse_header_scenarios
 # scénario tiré et la valeur du premier prior déclaré (ex: N1) :
 # vérifié empiriquement sur toy_example5 -- scénario 1 (ra petit) donnait
 # systématiquement un N1 trop bas, scénario 3 (ra grand) un N1 trop haut.
-# Au-delà de LOCUS_TYPE_SEED_OFFSET (pipeline.py, 0..40_000_000) pour ne
+# Au-delà de _LOCUS_TYPE_SEED_OFFSET (bridge/configuration.py, 0..40_000_000) pour ne
 # pas non plus recréer une collision avec ce décalage-là.
-_SCENARIO_DRAW_SEED_OFFSET = 50_000_000
 
 
 @dataclass
