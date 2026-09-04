@@ -766,12 +766,11 @@ def observed_microsatellites(
             dictionnaire retourné.
 
     Returns:
-        Un dict {nom_locus: [[allèle1, allèle2], ...]}.
+        Un dict {nom_locus: [[allèle1, allèle2], ...]}. Les valeurs de la
+        liste peuvent être [], [allèle1], [allèle2] ou [allèle1, allèle2] selon le
+        contenu du fichier .mss.
         Chaque entrée est une liste de listes représentant les
-        allèles observés pour chaque individu ou pool -- un locus
-        diploïde (<A>) produit 2 entrées par individu, un locus
-        haploïde (<M>) en produit 1.
-
+        allèles observés pour chaque individu.
     Raises:
         ValueError: Si le fichier ne contient aucune ligne 'pop', ou
             si le nombre de microsatellites observés sur une ligne ne
@@ -803,10 +802,8 @@ def observed_microsatellites(
             if not match:
                 continue
             else:
-                alleles = [
-                    int(field[:3]),
-                    int(field[3:]) if len(field) == 6 else int(field[:3]),
-                ]
+                chunks = [field[i : i + 3] for i in range(0, len(field), 3)]
+                alleles = [int(chunk) for chunk in chunks if chunk != "000"]
             microsatellite_by_locus.setdefault(loci.name, []).append(alleles)
             match_counter += 1
         if match_counter != nb_microsat:
