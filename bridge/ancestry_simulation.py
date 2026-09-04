@@ -32,6 +32,8 @@ from bridge.configuration import (
     _KAPPA2_SEED_OFFSET,
     _MAF_BATCH_SIZE,
     _MAF_REJECTION_SEED_OFFSET,
+    _MICROSAT_MUT_RATE_SEED_OFFSET,
+    _MICROSAT_PGEOM_SEED_OFFSET,
     _MRC_BATCH_SIZE,
     _MRC_REJECTION_SEED_OFFSET,
     _MUS_RATE_SEED_OFFSET,
@@ -44,12 +46,14 @@ from bridge.demography_builder import rescale_demography
 from bridge.header_dataclasses import LociDescriptionDetailed
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
+    allele_bounds_per_locus,
     base_frequency_by_locus,
     coalescence_coefficient,
     count_samples_per_population,
     individual_sexes_from_locus_genotype,
     individual_sexes_per_population,
     observed_count_population,
+    observed_microsatellites,
     observed_mrc,
     observed_reads,
     observed_sequences,
@@ -2202,3 +2206,130 @@ def dna_mutation_simulation_per_locus_from_values(
             )
             mutated_tree_sequences[locus.name] = mutated_ts
     return mutated_tree_sequences
+
+
+# -------------------------------------------------------
+# Microsatellites
+# -------------------------------------------------------
+
+
+def build_microsat_transition_matrix(
+    kmin: int, kmax: int, motif_size: int, Pgeom: float, epsilon: float = 1e-16
+) -> msprime.MatrixMutationModel:
+    """Construit la matrice de transition (matQ) d'un locus microsatellite [M].
+
+    Args:
+        kmin: Nombre minimum d'allèles du locus.
+        kmax: Nombre maximum d'allèles du locus.
+        motif_size: Taille du motif répétitif du microsatellite.
+        Pgeom: Paramètre de mutation du modèle SMM.
+        epsilon: Paramètre de précision pour éviter les valeurs nulles.
+
+    Returns:
+        Modèle de mutation (alleles, root_distribution, transition_matrix) du locus microsatellite.
+    """
+
+    root = kmin + (kmax - kmin) // 2
+
+    # nombre de pas de chaque côté de root pour atteindre kmin et kmax
+    n_minus = (root - kmin) // motif_size
+    n_plus = (kmax - root) // motif_size
+    n_alleles = n_minus + n_plus + 1
+
+    def clamp(n, smallest, largest):
+        return max(smallest, min(n, largest))
+
+    matrix = msprime.TPM(
+        p=epsilon, m=clamp(1 - Pgeom, epsilon, 1 - epsilon), lo=0, hi=n_alleles - 1
+    ).transition_matrix
+
+    alleles = [str(root + (i - n_minus) * motif_size) for i in range(n_alleles)]
+
+    root_distribution = np.zeros(n_alleles)
+    root_distribution[n_minus] = 1.0
+
+    return msprime.MatrixMutationModel(
+        alleles=alleles, root_distribution=root_distribution, transition_matrix=matrix
+    )
+
+
+def build_microsat_local_param_per_locus(
+    header_text, seed
+) -> dict[str, tuple[float, float]]:
+    """Construit les paramètres locaux (mut_rate, Pgeom) de chaque locus [M]. A terme on rajoutera
+    aussi sni_rate.
+
+    Args:
+        header_text: Texte complet de header.txt.
+        seed: La graine du tirage.
+
+    Returns:
+        Un dict {nom_locus: (mut_rate,Pgeom)} pour chaque locus microsat.
+    """
+    params_per_locus = {}
+    group_priors = parse_group_priors(header_text)
+    list_loci = parse_loci_description(header_text)
+
+    list_loci_microsat = [locus for locus in list_loci if locus.ms_or_seq == "M"]
+    nloc_per_group = count_loci_per_group(list_loci_microsat)
+
+    values = draw_group_parameter_values(group_priors, seed)
+
+    mut_rate_rng = random.Random(seed + _MICROSAT_MUT_RATE_SEED_OFFSET)
+    Pgeom_rng = random.Random(seed + _MICROSAT_PGEOM_SEED_OFFSET)
+
+    for group in nloc_per_group:
+        list_locus_in_group = [
+            locus for locus in list_loci_microsat if locus.group == group
+        ]
+        mut_rate_values = sampling_group_local_param(
+            next(gp for gp in group_priors[group] if gp.name == "GAMMU"),
+            k_moy=values[group]["MEANMU"],
+            n_loci=nloc_per_group[group],
+            check_nloc=True,
+            list_loci=list_locus_in_group,
+            rng=mut_rate_rng,
+        )
+        Pgeom_values = sampling_group_local_param(
+            next(gp for gp in group_priors[group] if gp.name == "GAMP"),
+            k_moy=values[group]["MEANP"],
+            n_loci=nloc_per_group[group],
+            check_nloc=True,
+            list_loci=list_locus_in_group,
+            rng=Pgeom_rng,
+        )
+        for locus in list_locus_in_group:
+            params_per_locus[locus.name] = (
+                mut_rate_values[locus.name],
+                Pgeom_values[locus.name],
+            )
+    return params_per_locus
+
+
+def build_matrix_microsat_per_locus(
+    header_text: str, mss_file_path: str, seed: int
+) -> dict[str, msprime.MatrixMutationModel]:
+    """Construit la matrice de transition (matQ) de chaque locus microsatellite [M].
+
+    Args:
+        header_text: Texte complet de header.txt.
+        mss_file_path: Chemin du fichier .mss.
+        seed: La graine du tirage.
+
+    Returns:
+        Un dict {nom_locus: matQ} pour chaque locus microsatellite [M].
+    """
+    list_loci = parse_loci_description(header_text)
+    params_per_locus = build_microsat_local_param_per_locus(header_text, seed)
+    microsat_observed = observed_microsatellites(mss_file_path, list_loci)
+    bounds_per_locus = allele_bounds_per_locus(microsat_observed, list_loci)
+
+    matrix_per_locus = {}
+    for locus in list_loci:
+        if locus.ms_or_seq == "M":
+            mut_rate, Pgeom = params_per_locus[locus.name]
+            bounds = bounds_per_locus[locus.name]
+            matrix_per_locus[locus.name] = build_microsat_transition_matrix(
+                kmin=bounds[0], kmax=bounds[1], motif_size=locus.motif_size, Pgeom=Pgeom
+            )
+    return matrix_per_locus

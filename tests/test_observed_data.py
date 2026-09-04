@@ -13,8 +13,10 @@ from conftest import (
     OBSERVED_SNP_FILE_TE5,
 )
 
+from bridge.header_dataclasses import LociDescriptionDetailed
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
+    allele_bounds_per_locus,
     base_frequency_by_locus,
     coalescence_coefficient,
     count_samples_per_population,
@@ -286,3 +288,49 @@ def test_individual_sexes_from_locus_genotype(header_text_te2, header_text_te2_X
     )
     assert sexes["pop1"][0] == "M"
     assert sexes["pop1"][10] == "F"
+
+
+def test_allele_bounds_per_locus(header_text_te2_XY):
+    """Vérifie que le parsing du fichier mss renvoie bien les bornes d'allèles par locus
+    pour le fichier toy_example2_xy (dataset <A>+<X>+<Y> avec 2 populations)."""
+
+    list_loci = parse_loci_description(header_text_te2_XY)
+    microsatellites_te2 = observed_microsatellites(OBSERVED_MSS_FILE_TE2_XY, list_loci)
+
+    allele_bounds = allele_bounds_per_locus(microsatellites_te2, list_loci)
+    list_loci_M = [locus for locus in list_loci if locus.ms_or_seq == "M"]
+    assert len(allele_bounds) == len(list_loci_M)
+    bounds_MA1 = allele_bounds["Locus_M_A_1_"]
+    assert bounds_MA1[0] == 162
+    assert bounds_MA1[1] == 240
+
+    with pytest.raises(ValueError, match="Aucun allèle observé"):
+        allele_bounds_per_locus({"Locus_M_A_1_": [[]]}, list_loci)
+
+    with pytest.raises(ValueError, match="non trouvé dans la liste"):
+        allele_bounds_per_locus(
+            microsatellites_te2,
+            [
+                LociDescriptionDetailed(
+                    name="Locus_M_A_999_",
+                    heritage="A",
+                    ms_or_seq="M",
+                    group="A",
+                    motif_size=3,
+                    motif_range=10,
+                    dnalength=None,
+                )
+            ],
+        )
+
+    with pytest.raises(ValueError, match="motif_range"):
+        locus_etroit = LociDescriptionDetailed(
+            name="Locus_M_A_1_",
+            heritage="A",
+            ms_or_seq="M",
+            group="A",
+            motif_size=2,
+            motif_range=2,
+            dnalength=None,
+        )
+        allele_bounds_per_locus({"Locus_M_A_1_": [[100], [200]]}, [locus_etroit])

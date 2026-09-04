@@ -811,3 +811,46 @@ def observed_microsatellites(
                 f"Nombre de loci: {nb_microsat}, Nombre de microsatellites observés: {match_counter}."
             )
     return microsatellite_by_locus
+
+
+def allele_bounds_per_locus(
+    microsatellites_by_locus: dict[str, list[list[int]]],
+    list_loci: list[LociDescriptionDetailed],
+) -> dict[str, tuple[int, int]]:
+    """Calcule les bornes d'allèles observées pour chaque locus microsatellite.
+
+    Args:
+        microsatellites_by_locus: Dict {nom_locus: [[allèle1, allèle2] / [allèle1] / [allèle2] / [],  ...]} tel que
+            retourné par observed_microsatellites.
+        list_loci: La description détaillée des loci (voir
+                    loci_parser.parse_loci_description), utilisée pour
+                    recupérer motif_size et motif_range pour chaque locus.
+
+    Returns:
+        Un dict {nom_locus: (min_allèle, max_allèle)}.
+
+    Raises:
+        ValueError: Si un locus n'est pas trouvé dans la liste des loci ou,
+          si le motif_range n'est pas assez large pour contenir tous les allèles observés ou,
+          si aucun allèle n'est observé pour un locus.
+    """
+    bounds_by_locus: dict[str, tuple[int, int]] = {}
+    for locus_name, alleles_list in microsatellites_by_locus.items():
+        all_alleles = [allele for alleles in alleles_list for allele in alleles]
+        locus = next((loc for loc in list_loci if loc.name == locus_name), None)
+        if locus is None:
+            raise ValueError(f"Locus {locus_name} non trouvé dans la liste des loci.")
+        motif_size = locus.motif_size
+        motif_range = locus.motif_range
+        if all_alleles:
+            min_allele = min(all_alleles)
+            max_allele = max(all_alleles)
+            kmoy = (min_allele + max_allele) // 2
+            kmin = kmoy - (motif_range // 2 - 1) * motif_size
+            kmax = kmin + (motif_range - 1) * motif_size
+            if kmin > min_allele or kmax < max_allele:
+                raise ValueError("Le motif_range n'est pas assez large")
+            bounds_by_locus[locus_name] = (kmin, kmax)
+        else:
+            raise ValueError(f"Aucun allèle observé pour le locus {locus_name}.")
+    return bounds_by_locus
