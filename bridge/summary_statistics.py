@@ -2319,6 +2319,8 @@ _DNA_PAIRWISE_STATS = {
     "HST": compute_HST,
 }
 
+_MICROSAT_STATS = {}
+
 
 def compute_all_statistics_dna(
     header_text: str,
@@ -2379,6 +2381,68 @@ def compute_all_statistics_dna(
                     f"{stat_name}_{group_number}_{pair_key}"
                     if multi_group
                     else f"{stat_name}_{pair_key}"
+                )
+                results[key] = value
+
+    return results
+
+
+def compute_all_statistics_microsat(
+    header_text: str,
+    tree_sequences_by_locus: dict[str, tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule les statistiques résumées microsat pour chaque `group Gx`
+    microsat (`[M]`) du header, et retourne un dict {nom_colonne: valeur}
+    utilisant les VRAIS noms de colonnes DIYABC -- vérifié caractère pour
+    caractère contre la sortie réelle de `diyabc` sur
+    `toy_example2_ms_dna` (`STAT_<groupe>_<suffixe>` quand il y a
+    plusieurs groupes, `STAT_<suffixe>` seul sinon -- même convention
+    que `stats_group_parser.parse_requested_statistic_names`).
+
+    Args:
+        header_text: contenu de header.txt/headerRF.txt (pour
+            `parse_loci_description`, qui donne le groupe de chaque
+            locus).
+        tree_sequences_by_locus: {nom_locus: TreeSequence mutée} --
+            la sortie de `microsat_mutation_simulation_per_locus`. Les loci ADN (`ms_or_seq == "S"`) présents dans le header sont ignorés ici (pas de code de simulation ADN).
+        population_names: toutes les populations du dataset, dans
+            l'ordre "pop1".."popN" (leur position dans cette liste,
+            pas leur nom, détermine l'indice numérique utilisé dans
+            les noms de colonnes).
+    Returns:
+        Un dict {nom_colonne_diyabc: valeur}.
+    """
+
+    if not _MICROSAT_STATS:
+        raise NotImplementedError(
+            "Les statistiques microsat ne sont pas encore implémentées."
+        )
+
+    loci_by_group: dict[str, list[str]] = {}
+    for locus in parse_loci_description(header_text):
+        if locus.ms_or_seq != "M":
+            continue
+        loci_by_group.setdefault(locus.group, []).append(locus.name)
+
+    if not loci_by_group:
+        return {}
+
+    multi_group = len(loci_by_group) > 1
+
+    results = {}
+
+    for group_label, locus_names in loci_by_group.items():
+        group_number = group_label[1:]  # "G2" -> "2", comme stats_group_parser.py
+        tree_sequences = [tree_sequences_by_locus[name] for name in locus_names]
+
+        for stat_name, stat_fn in _MICROSAT_STATS.items():
+            for pop_name, value in stat_fn(tree_sequences, population_names).items():
+                pop_index = population_names.index(pop_name) + 1
+                key = (
+                    f"{stat_name}_{group_number}_{pop_index}"
+                    if multi_group
+                    else f"{stat_name}_{pop_index}"
                 )
                 results[key] = value
 

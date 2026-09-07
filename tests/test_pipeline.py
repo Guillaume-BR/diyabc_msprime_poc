@@ -16,6 +16,7 @@ from bridge.pipeline import (
     compute_summary_statistics,
     compute_summary_statistics_dna,
     compute_summary_statistics_from_values,
+    compute_summary_statistics_microsat,
     read_header_text,
     run_poc_for_directory,
 )
@@ -287,3 +288,13 @@ def test_compute_summary_statistics_dna():
     assert stats["NSS_2_1"] == pytest.approx(5.8)
     assert stats["HST_2_1.2"] == pytest.approx(0.029037253935292443)
     assert stats["NH2_3_1.2"] == pytest.approx(10.0)
+
+
+def test_compute_summary_statistics_microsat():
+
+    with pytest.raises(NotImplementedError, match="Les statistiques microsat"):
+        compute_summary_statistics_microsat(
+            reference_directory=REFERENCE_DIR.parent / "toy_example2_ms_dna_XY",
+            scenario_index=1,
+            seed=42,
+        )

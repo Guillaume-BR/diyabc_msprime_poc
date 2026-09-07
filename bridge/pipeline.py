@@ -29,6 +29,7 @@ from bridge.ancestry_simulation import (
     build_samples_argument,
     dna_mutation_simulation_per_locus,
     dna_mutation_simulation_per_locus_from_values,
+    microsat_mutation_simulation_per_locus,
     simulate_genotypes_for_locus_type,
     simulate_poolseq_reads_with_mrc_filter,
 )
@@ -44,6 +45,7 @@ from bridge.stats_group_parser import parse_requested_statistic_names
 from bridge.summary_statistics import (
     compute_all_statistics,
     compute_all_statistics_dna,
+    compute_all_statistics_microsat,
     compute_all_statistics_poolseq,
 )
 
@@ -589,6 +591,11 @@ def compute_summary_statistics_from_values(
     return summary_stats
 
 
+# --------------------------------------------------------------
+# Pour des séquences ADN
+# --------------------------------------------------------------
+
+
 def compute_summary_statistics_dna(
     reference_directory: str | Path,
     scenario_index: int,
@@ -658,6 +665,9 @@ def compute_summary_statistics_dna(
     return summary_stats, values
 
 
+# Calcul des stats ADN à partir de valeurs déjà connues : rejeu de tirages DIYABC
+
+
 def compute_summary_statistics_dna_from_values(
     reference_directory: str | Path,
     scenario_index: int,
@@ -718,3 +728,78 @@ def compute_summary_statistics_dna_from_values(
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 
     return summary_stats
+
+
+# ------------------------------------------------------------------
+# Pour les microsats
+# ------------------------------------------------------------------
+
+
+def compute_summary_statistics_microsat(
+    reference_directory: str | Path,
+    scenario_index: int,
+    *,
+    seed: int,
+    stats_filter: str = "ALL",
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Calcule les statistiques résumées microsat (compute_all_statistics_microsat)
+    sur des données SIMULÉES par msprime -- équivalent microsat de
+    compute_summary_statistics (chemin IND/PoolSeq), pour les datasets
+    qui déclarent des loci microsat (`[M]`, groupes `G4`/`G5`... de
+    header.txt) plutôt que des SNP.
+
+    Tire les paramètres historiques (N1, ta, ts...) ET les priors de
+    groupe (mus_rate,Pgeom) par groupe microsat, en interne à
+    microsat_mutation_simulation_per_locus) depuis `seed` -- voir
+    compute_summary_statistics_microsat_from_values pour la variante qui
+    rejoue des valeurs déjà connues plutôt que d'en tirer de nouvelles
+    (paired comparison avec un vrai reftable DIYABC).
+
+    `values` (le second élément du tuple retourné) ne contient QUE les
+    paramètres historiques, pas les priors de groupe -- microsat_mutation_
+    simulation_per_locus ne renvoie nulle part les valeurs de mut_rate,Pgeom
+    qu'elle a tirées en interne, donc ce `values` seul ne
+    suffirait pas à rejouer exactement cette même particule (contrairement
+    au chemin SNP, où `values` capture tout ce qui a été tiré).
+
+    Args:
+        reference_directory: dossier contenant header.txt/headerRF.txt
+            et le fichier .mss observé (son nom lu sur la première ligne
+            du header).
+        scenario_index: le scénario à utiliser pour construire la
+            démographie (pas de tirage pondéré multi-scénario ici,
+            contrairement à reftable_loop.run_reftable_simulation).
+        seed: La graine du tirage par-locus (second niveau, généalogie,
+            mutation).
+        stats_filter: "ALL" (toutes les stats implémentées) ou "HEADER"
+            (seulement celles déclarées dans header.txt, voir
+            compute_summary_statistics pour le détail).
+    Returns:
+        (summary_stats, values) -- summary_stats est le dict {nom_
+        colonne_diyabc: valeur} de compute_all_statistics_microsat (ex.
+        "NSS_2_1"), values est {nom_paramètre_historique: valeur}.
+    """
+
+    reference_directory = Path(reference_directory)
+    header_text = read_header_text(reference_directory)
+    mss_filename = header_text.splitlines()[0].strip()
+    mss_path = reference_directory / mss_filename
+
+    demography, values = build_random_demography_for_scenario_index(
+        header_text, scenario_index, seed
+    )
+
+    mutated = microsat_mutation_simulation_per_locus(
+        header_text,
+        mss_path,
+        demography,
+        seed,
+    )
+
+    population_names = list(observed_count_population(mss_path).keys())
+    summary_stats = compute_all_statistics_microsat(
+        header_text, mutated, population_names
+    )
+    summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
+
+    return summary_stats, values

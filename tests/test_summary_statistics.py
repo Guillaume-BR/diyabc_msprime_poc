@@ -11,15 +11,20 @@ import numpy as np
 import pytest
 from conftest import (
     OBSERVED_MSS_FILE_TE2,
+    OBSERVED_MSS_FILE_TE2_XY,
 )
 
-from bridge.ancestry_simulation import dna_mutation_simulation_per_locus
+from bridge.ancestry_simulation import (
+    dna_mutation_simulation_per_locus,
+    microsat_mutation_simulation_per_locus,
+)
 from bridge.loci_parser import parse_loci_description
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.summary_statistics import (
     _genotype_matrix_by_population,
     _prepare_matrices_poolseq,
     compute_all_statistics_dna,
+    compute_all_statistics_microsat,
     compute_all_statistics_poolseq,
     compute_DTA,
     compute_HST,
@@ -691,3 +696,31 @@ def test_compute_all_statistics_dna(header_text_te2):
     assert pytest.approx(results["NSS_2_1"]) == 5.8
     assert pytest.approx(results["HST_2_1.2"]) == 0.029037253935292443
     assert pytest.approx(results["NH2_3_1.2"]) == 10.0
+
+
+# -----------------------------------------------------------------------
+# Pour les microsat
+# -----------------------------------------------------------------------
+
+
+def test_compute_all_statistics_microsat(header_text_te2_XY):
+    """Vérifie compute_all_statistics_microsat sur toy_example2_ms_dna."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+    mutated = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    population_names = ["pop1", "pop2"]
+
+    with pytest.raises(
+        NotImplementedError,
+        match="Les statistiques microsat ne sont pas encore implémentées",
+    ):
+        assert compute_all_statistics_microsat(
+            header_text_te2_XY, mutated, population_names
+        )
