@@ -1027,3 +1027,170 @@ un écart dans le sens inverse (bruit d'échantillonnage, pas un déficit).
 **Investigation CLOSE.** Voir aussi `CLAUDE.md`, section "RESOLVED
 2026-09-02".
 
+## 02/09/26 — Séquences ADN `<X>`/`<Y>` : le vrai DIYABC plante sur toute donnée réellement hémizygote (SUSPENDUE puis reprise et implémentée le 03/09, voir mise à jour ci-dessous)
+
+Reprise du chantier séquences ADN pour lever la limitation documentée
+dans `dna_ancestry_parameters_for_heritage` (`bridge/
+ancestry_simulation.py`) : `<X>`/`<Y>` y lèvent `NotImplementedError`
+avec pour justification "le format `.mss` ne porte pas de sexe par
+individu". Cette investigation montre que c'est vrai à moitié, et
+surtout que le vrai DIYABC compilé (`~/Documents/Github/diyabc`, build
+statique fourni par l'utilisateur) **plante systématiquement**
+(`SIGSEGV`) dès qu'on lui donne un jeu `<X>`/`<Y>` en séquences ADN où
+des individus sont réellement hémizygotes — il n'y a donc pour l'instant
+aucune sortie DIYABC réelle à répliquer pour ce cas.
+
+**Étape 1 — le sexe EST inférable depuis le `.mss`, mais pas via une
+colonne dédiée.** Lecture directe de `DataC::do_sequence` (`~/Documents/
+Github/diyabc/src-JMC-C++/data.cpp:1494-1495`) : `indivsexe` part à 2
+(femelle) par défaut pour tout le monde (`data.cpp:1320`) et n'est
+jamais réinitialisé à 2 une fois passé à 1 — un individu devient "mâle"
+si :
+- un locus `<X>` présente un génotype **haploïde** (un seul groupe de
+  crochets `<[seq]>`, pas `<[seq][seq]>` — hémizygotie) ;
+- OU un locus `<Y>` présente un génotype non vide (`geno != "[]"`).
+
+Exactement le même mécanisme que `DataC::do_microsat`
+(`data.cpp:1406-1407`), qui lui fonctionne correctement (voir plus bas
+pourquoi la version séquence ADN ne fonctionne pas).
+
+**Étape 2 — construction d'un jeu de test réel.** L'utilisateur a créé
+`reference/toy_example2_ms_dna_XY/` (copie de `toy_example2_ms_dna`,
+avec le vrai binaire `diyabc`/`abcranger` dedans) et relabellisé G2
+`<A>`→`<X>` dans `headerRF.txt`. Le `.mss` original étant resté
+identique bit-à-bit (tous les tokens G2 diploïdes, aucun individu
+hémizygote — vérifié par script), l'assistant a construit une version
+synthétique avec un vrai mélange de sexes : individus `*-001`..`*-010`
+de chaque pop désignés "mâles" (G2 rendu haploïde par troncature du
+2e allèle ; G3 relabellisé `<M>`→`<Y>` et laissé haploïde-présent),
+`*-011`..`*-020` désignés "femelles" (G2 inchangé diploïde ; G3 remplacé
+par le token vide `<[]>`, choisi par analogie avec le format conteneur
+`<[...]>` et avec la constante `SEQMISSING` = `""` trouvée dans
+`particuleC.hpp:17`).
+
+**Étape 3 — crash, isolé empiriquement en 3 runs réels** (`./diyabc -n
+"t:8;c:1;s:1" -p ./` puis `./diyabc -p ./ -R ALL -r 1000 -g 1000 -m -t
+8`, dans des copies temporaires sous `/tmp`) :
+- **Test 1** (G2 hétérogène + G3 `<Y>` avec `<[]>` manquant côté
+  femelles) → `SIGSEGV` dans `ParticleC::cal_numvar`
+  (`sumstat.cpp:2157`), confirmé par `gdb -batch -ex run -ex bt`.
+- **Test 2** (aucune modification des données observées, seul le header
+  relabellisé `<A>`→`<X>`/`<M>`→`<Y>`, ploïdie uniforme pour tous) →
+  **pas de crash**, `reftableRF.bin` généré normalement (1000
+  particules, 20000 loci simulés).
+- **Test 3** (G2 toujours hétérogène, mais G3 laissé en `<M>` — donc
+  aucun token manquant nulle part) → crash quand même.
+
+Conclusion de l'isolement : ni le relabellisage `<Y>` en soi, ni le
+token `<[]>` choisi pour le manquant, ne sont en cause — c'est
+spécifiquement le **mélange haploïde/diploïde au sein d'un même groupe
+`<X>` séquence** qui fait planter DIYABC.
+
+**Étape 4 — cause racine, trouvée en relisant `data.cpp`.**
+`DataC::readfile` (`data.cpp:1363`) fait `locus[loc].type += 5` pour
+tout locus dont un génotype contient un `[` — c'est-à-dire tous les
+loci `[S]` (séquence ADN), pour les distinguer de leurs équivalents
+MicroSat (type 0-4 → 5-9). Mais les deux lignes de `do_sequence` citées
+à l'étape 1 comparent `this->locus[loc].type == 2` / `== 3`, **sans
+`% 5`** — alors que `do_microsat` (qui s'exécute AVANT le bump, les
+génotypes microsat ne contenant jamais `[`) compare bien sur les types
+bruts 2/3, correctement. Résultat : pour une séquence ADN `<X>` (type
+réel 7) ou `<Y>` (type réel 8), ces comparaisons ne sont **jamais**
+vraies — le bloc d'inférence de sexe est du **code mort** pour les
+séquences ADN, il ne fonctionne que pour le MicroSat. `indivsexe` reste
+donc à 2 (femelle) pour tout le monde, quel que soit le contenu réel du
+fichier `.mss`, dès qu'il s'agit de loci séquence.
+
+**Étape 5 — pourquoi ce code mort fait planter, et pas juste produire un
+résultat faux.** `DataC::calcule_ss` (`data.cpp:966-999`) calcule
+`ssize[catégorie][pop]` (l'effectif retenu par catégorie de locus) à
+partir de cet `indivsexe` toujours-femelle : pour `<X>`, la condition
+`(locustype==2) and (indivsexe==2)` est vraie pour tout le monde →
+`ssize[X][pop] = 2 × 20 = 40` (les 20 individus comptés diploïdes). Mais
+`do_sequence` a, lui, correctement lu le fichier et n'a peuplé
+`haplodna[pop]` que de 30 entrées réelles (10 mâles à 1 copie + 10
+femelles à 2 copies — la lecture du fichier n'est pas buguée, seule
+l'inférence de sexe qui en découle l'est). `cal_numvar`
+(`sumstat.cpp:2201-2226`) boucle ensuite jusqu'à `ssize[X][pop]=40` pour
+indexer `haplodna[pop][i]`, un `vector<string>` de taille 30 réelle →
+accès hors bornes → `SIGSEGV`. Le mésalignement ssize/haplodna
+n'apparaît PAS quand tout le monde a la même ploïdie (Test 2 : `ssize`
+et taille réelle valent tous deux 40, coïncidence heureuse), d'où
+l'absence de crash dans ce cas précis.
+
+**Conclusion et implication pour ce projet** : avec le binaire `diyabc`
+actuellement disponible, il n'existe **aucune sortie réelle exploitable**
+comme vérité terrain pour un jeu `<X>`/`<Y>` en séquences ADN comportant
+de vrais individus hémizygotes — DIYABC plante avant même d'écrire
+`statobsRF.txt`. Deux voies possibles pour la suite (non tranchées) :
+corriger le `%5` manquant dans `do_sequence` et recompiler pour obtenir
+un vrai `reftableRF.bin` de référence (même philosophie que la
+correction du bug `<M>` non partagé, RESOLVED ci-dessus), ou implémenter
+côté Python en se basant sur l'intention (logique `do_microsat`,
+correcte, généralisée aux séquences) sans réplique-terrain réelle,
+comme au tout début du chantier MicroSat.
+
+**Statut initial : SUSPENDU** à la demande de l'utilisateur — décision à
+prendre avec son encadrant académique avant de choisir entre les deux
+voies ci-dessus. `reference/toy_example2_ms_dna_XY/` est laissé en
+l'état (header + `.mss` construits pour reproduire le crash) comme cas
+de test pour une reprise future. Aucun changement de code dans
+`bridge/` à ce stade — `dna_ancestry_parameters_for_heritage` continue
+de lever `NotImplementedError` pour `<X>`/`<Y>`, sa justification
+("`.mss` ne porte pas de sexe par individu") reste correcte dans les
+faits même si la raison profonde côté DIYABC s'est révélée plus
+subtile (code d'inférence présent mais mort, pas absent).
+
+### Mise à jour du 03/09/26 — reprise, chantier implémenté côté Python (voie "intention du code", pas de recompilation)
+
+Chantier repris en mode mentor (utilisateur au clavier, assistant en
+review/debug). Décision (implicite, jamais formellement tranchée avec
+l'encadrant, mais l'utilisateur a choisi d'avancer) : implémenter côté
+Python **l'intention évidente du code C++** — la logique de
+`do_microsat`, qui fonctionne réellement (elle n'est jamais atteinte par
+le bug `%5`, ses génotypes ne contenant jamais de `[`) — plutôt que
+recompiler `do_sequence` avec le `%5` corrigé. Pas de nouvelle sortie
+DIYABC réelle générée ou utilisée : `reference/toy_example2_ms_dna_XY/`
+reste le seul fixture, purement synthétique.
+
+Résumé de ce qui a été fait (détail complet dans `CLAUDE.md`, section
+"DNA sequence `<X>`/`<Y>` support") :
+- `observed_data.individual_sexes_from_locus_genotype` : nouvelle
+  fonction qui déduit le sexe par individu à partir de la ploïdie du
+  génotype AU locus `<X>`/`<Y>` lui-même (haploïde/présent = mâle),
+  reproduisant exactement `do_microsat`/l'intention de `do_sequence`.
+- `ancestry_simulation.py` : `_sample_sets_from_sexes`/
+  `_male_counts_from_sexes` factorisées hors de
+  `build_sex_stratified_samples_argument`/`build_male_only_samples_
+  argument` (`.snp`), réutilisées par deux nouveaux wrappers `_dna`
+  (`.mss`). `dna_ancestry_parameters_for_heritage` : `"X"`/`"Y"`
+  rejoignent la branche `"H"`/`"M"` (même rescale, `ploidy=1`).
+  `dna_mutation_simulation_per_locus`/`_from_values` : `samples`
+  dispatché PAR LOCUS (plus un seul calcul hoisté hors boucle) ;
+  nouvelle constante `_SHARED_Y_ANCESTRY_SEED_OFFSET` pour que les loci
+  `<Y>` partagent une seule généalogie entre eux, comme `<M>`
+  (transmission sans recombinaison) — distincte de
+  `_SHARED_M_ANCESTRY_SEED_OFFSET` pour ne pas faire partager le MÊME
+  arbre à `<M>` et `<Y>`.
+- Plusieurs bugs attrapés en cours de review (indices de population
+  décalés, asymétrie manquant `<X>`/`<Y>` non respectée, regex `\S+` qui
+  ne matchait pas le token manquant `<[]>` -- à la fois dans la nouvelle
+  fonction ET dans `observed_sequences`, préexistante, jamais exercée sur
+  données manquantes avant `te2_ms_dna_XY` --, vérification du sexe "9"
+  perdue lors d'une factorisation, variable renommée à moitié dans le
+  jumeau `_from_values`) : tous corrigés, détail dans `CLAUDE.md`.
+
+**Validation** : uniquement sur `reference/toy_example2_ms_dna_XY/`
+(synthétique) — cohérence interne vérifiée (nombre de lignées simulées
+cohérent avec le sexage réel du fichier, généalogie partagée entre tous
+les loci `<Y>`, indépendante entre loci `<X>`) mais **aucune comparaison
+appariée à une vraie sortie DIYABC**, puisqu'aucune n'existe pour ce cas
+(le binaire réel plante toujours dessus, cause racine inchangée — voir
+ci-dessus). Tests ajoutés dans `test_observed_data.py`/
+`test_ancestry_simulation.py`, suite complète verte (134/134).
+
+**Statut final : IMPLÉMENTÉ** (voie "intention du code"). La question de
+corriger et recompiler `do_sequence` pour obtenir une vraie référence
+reste ouverte, toujours à trancher avec l'encadrant si une validation
+face au vrai DIYABC devient nécessaire un jour.
+

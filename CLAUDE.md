@@ -51,9 +51,21 @@ see "DNA sequence `<X>`/`<Y>` support" below; no real DIYABC reference
 output exists for this case (the real binary crashes on it), so it is
 validated on a synthetic fixture only, not a paired real-vs-msprime
 comparison.
-MicroSat itself (stepwise mutation model, `NAL`/`HET`-style summary
-statistics) has no simulation-side code at all yet, only header
-parsing. The goal is to demonstrate that a
+As of 2026-09-07, MicroSat's GSM (stepwise) mutation model is wired
+end-to-end too — transition matrix construction (`msprime.TPM`-based),
+hierarchical `mut_rate`/`Pgeom` draws, and the full per-locus
+`sim_ancestry`+`sim_mutations` assembly, plus the `pipeline.py`/
+`reftable_loop.py` orchestration layer (mirroring the DNA-sequence
+path) — see "MicroSat GSM mutation model" below. The one missing piece
+is the MicroSat-specific summary statistics themselves (`NAL`/`HET`/
+`VAR`/`MGW`/`N2P`/`H2P`/`V2P`/`FST`/`LIK`/`DAS`/`DM2` from
+`statdefs.cpp`): `summary_statistics.compute_all_statistics_microsat`
+exists as a wired-but-unimplemented skeleton (raises
+`NotImplementedError` until the individual stat functions are written)
+— deliberately deferred to a future session. The SNI mutation channel
+(single nucleotide insertion/deletion alongside GSM) is also
+deliberately deferred, same as noted below. The goal is to demonstrate
+that a
 `header.txt` → `msprime.Demography` → coalescent+mutation → summary
 statistics pipeline built in Python produces a `reftable.bin`
 structurally and statistically equivalent to the real DIYABC's.
@@ -472,11 +484,210 @@ dedup-across-groups in `stats_group_parser.py` deliberately deferred (no
 evidence yet whether two groups can legitimately share a column name);
 DNA sequence *substitution model construction* (base frequencies,
 model choice, `k1`/`k2` draw, `matQ`) is now done — see "DNA sequence
-substitution model" below — but DNA sequence *mutation placement* along
-the tree, and the entire MicroSat simulation side (demography rescaling
-semantics, stepwise mutation model, MicroSat-specific summary
-statistics catalog e.g. `NAL`/`HET` from `statdefs.cpp`), have not
-started at all.
+substitution model" below. The MicroSat simulation side (demography
+rescaling semantics, stepwise/GSM mutation model) was picked up and
+completed 2026-09-04 to 2026-09-07 — see "MicroSat GSM mutation model"
+below; only the MicroSat-specific summary statistics catalog (`NAL`/
+`HET`/... from `statdefs.cpp`) remains, deferred to a future session.
+
+### MicroSat GSM mutation model (2026-09-04 to 2026-09-07, mentor mode — user-driven, reviewed/debugged with the assistant)
+
+Picked up as the natural continuation of "MicroSat / sequences-mut
+header parsing" above (parsing was complete, simulation wasn't started
+at all). Covers the full path from `header.txt` + `.mss` to a mutated
+`tskit.TreeSequence` per MicroSat (`[M]`) locus, validated end-to-end
+on `toy_example1_ms`/`toy_example2_ms_dna`/`toy_example2_ms_dna_XY`,
+plus the `pipeline.py`/`reftable_loop.py` orchestration layer mirroring
+the DNA-sequence path. The DIYABC model (confirmed by direct reading of
+`particuleC.cpp::mute`/`setMutParamValue`/`cree_haplo`, and by the
+user's own doc research): at each mutation event (Poisson per branch,
+rate `mut_rate` — SNI is a separate, deferred channel, see below), a
+GSM step of `d` repeat units is drawn via a geometric distribution
+parameterized by `Pgeom` (`Pgeom=0` is the SMM special case), clamped
+to `[kmin, kmax]`. Ancestral state = midpoint of `[kmin, kmax]`, not
+drawn.
+
+**Key discovery (proposed by the user, verified empirically)**:
+`msprime.TPM` (Two-Phase Model) with `p→ε` (literal `p=0` raises
+`ValueError`) reproduces the GSM channel alone exactly — verified by
+inspecting `.transition_matrix` directly: the geometric ratio between
+`P(d=k)` and `P(d=k+1)` equals `Pgeom` (so `m_msprime = 1 - Pgeom`,
+same epsilon-clamp requirement, relevant because `Pgeom=0`/`Pgeom=1`
+are both valid DIYABC inputs that map to msprime's forbidden `m=1`/`m=0`
+literals), each row sums to 1, zero diagonal except at the clamped
+edges (faithfully reproducing DIYABC's own "auto-mutation at the
+boundary"). **Non-obvious fix caught before code was written**: the
+`TPM` grid must be anchored on `root` (the ancestral state), NOT on
+`kmin` — verified on real data (`toy_example1_ms`'s `Locus_M_A_1_`:
+`root - kmin = 39`, ODD, while `motif_size = 2` is even) that the
+ancestral state doesn't necessarily fall on a `motif_size`-multiple
+offset from `kmin`, and GSM steps happen from the CURRENT state, not
+from `kmin`. Accepted consequence (explicit choice, not a silent
+approximation): `TPM`'s own bounds can differ from DIYABC's literal
+`kmin`/`kmax` by up to `motif_size - 1` bp — negligible in practice
+(`kmin`/`kmax` are a generous guard-rail, almost never reached by a
+real genealogy).
+
+- **`build_microsat_transition_matrix(kmin, kmax, motif_size, Pgeom,
+  epsilon=1e-16)`** (`ancestry_simulation.py`) → `msprime.
+  MatrixMutationModel`: computes `root`, `n_minus`/`n_plus`, builds
+  `msprime.TPM(p=epsilon, m=clamp(1-Pgeom, epsilon, 1-epsilon), lo=0,
+  hi=n_alleles-1).transition_matrix`, relabels alleles to real bp
+  (`root + (i-n_minus)*motif_size`), one-hot `root_distribution` at
+  `n_minus`. Tested (commit `740b9e6`): nominal case plus both `Pgeom`
+  edges — `Pgeom=0` gives exactly `0.5`/`0.5` to the two immediate
+  neighbors and zero elsewhere (pure SMM), `Pgeom=1` gives a uniform
+  `1/(n_alleles-1)` off-diagonal (no distance preference at all).
+  **Non-obvious**: at the `Pgeom` edges, `epsilon` must stay near its
+  default (`1e-16`), NOT the nominal case's `epsilon=0.01` — at
+  `epsilon=0.01` the `TPM`'s `p` clamp has a real, measurable (~1%)
+  effect that breaks the exact `0.5` assertion, since `p` is the
+  probability of a "long jump" (uniform anywhere), not just a numerical
+  guard-rail.
+
+- **`build_microsat_local_param_per_locus(header_text, seed)`** →
+  `dict[locus_name, (mut_rate, Pgeom)]`: same two-tier hierarchy as the
+  DNA-sequence `k1`/`k2`/`mus_rate` draw (`draw_group_parameter_values`
+  then `sampling_group_local_param`, both generalize for free — no
+  MicroSat-specific changes needed in `parameter_sampling.py`, verified
+  empirically before writing the rest). **Naming pitfall, already
+  documented and re-triggered here**: DIYABC uses `mut_rate` for
+  MicroSat and a DIFFERENT variable, `mus_rate`, for DNA sequences —
+  reusing `mus_rate` for MicroSat (copy-paste from the DNA-sequence
+  code) was caught and corrected before commit. A `next(gp for gp in
+  group_priors[group] if gp.name == "GAM")` bug (real name is `"GAMP"`,
+  not `"GAM"` — `StopIteration` otherwise) was also caught before
+  commit. Tested (`740b9e6`): MicroSat-only filter (the dict must
+  contain ONLY `ms_or_seq=="M"` keys, never the `[S]` loci of the same
+  mixed header), total count, bounds (`mut_rate>0`, `0<=Pgeom<=1`),
+  inter-locus diversity, 2 golden values, reproducibility.
+
+- **`build_matrix_microsat_per_locus(header_text, mss_file_path,
+  seed)`** → `dict[locus_name, MatrixMutationModel]`: assembles
+  `allele_bounds_per_locus` + `build_microsat_local_param_per_locus` +
+  `build_microsat_transition_matrix`, mirroring `build_matrix_per_locus`
+  (DNA). Tested (`740b9e6`): MicroSat-only filter (on the right dict —
+  an early draft looped over `params_per_locus` instead of the
+  function's own return value, testing the wrong thing), integration
+  cross-check against the first test (`Locus_M_A_1_` → 39 alleles,
+  confirming bounds+params+matrix wiring), reproducibility.
+  **`MatrixMutationModel` does NOT implement `__eq__` usefully** (`m1
+  == m2` is `False` even for two identically-constructed models,
+  verified empirically) — reproducibility tests must compare
+  `.alleles`/`.root_distribution`/`.transition_matrix` separately
+  (`np.array_equal`/`np.allclose`), never `==` on the object or a dict
+  containing one.
+
+- **`microsat_mutation_simulation_per_locus(header_text, mss_file_path,
+  demography, seed)`** (`ancestry_simulation.py`, commit `c50e37c`) →
+  `dict[locus_name, tskit.TreeSequence]`: the full per-locus assembly,
+  copied from `dna_mutation_simulation_per_locus`'s structure
+  (ploidy/demography/sex dispatch via `dna_ancestry_parameters_for_
+  heritage`/`build_sex_stratified_samples_argument_dna`/`build_male_
+  only_samples_argument_dna` reused as-is — all already generic enough,
+  verified before writing). Three bugs caught and fixed during review,
+  none survived to the committed version:
+  - `msprime.sim_mutations(..., seed=...)` instead of `random_seed=...`
+    — confirmed via `inspect.signature`: the real keyword is
+    `random_seed`; `seed` isn't a recognized parameter at all
+    (`TypeError` at the very first call, caught by actually running the
+    function rather than just reading the diff).
+  - `mut_rate` was never retrieved at all — `build_matrix_microsat_
+    per_locus` (called internally) discards it (`_, Pgeom = params_
+    per_locus[...]`), so an early draft passed no `rate=` to
+    `sim_mutations` at all. Fixed by calling `build_microsat_local_
+    param_per_locus` a second time (deterministic given the same seed,
+    so no correctness risk, just a redundant computation — a known,
+    accepted minor inefficiency, not fixed) to recover `mut_rate`
+    alongside the matrix.
+  - `sequence_length=locus.motif_size * locus.motif_range` instead of
+    `sequence_length=1` — a MicroSat locus is a SINGLE site with a
+    large allele-space alphabet (like DNA sequence's 4-base alphabet,
+    but ~39 states here), not multiple independent sites; with
+    msprime's default `discrete_genome=True`, a length `>1` would have
+    silently simulated several INDEPENDENT big-alphabet sites per
+    locus instead of one repeat-length state — caught by comparing
+    against the plan agreed the session before (session memory /
+    `notes` had already flagged `sequence_length=1` as the right
+    answer), not by running the code first.
+  Validated by direct execution (not just `pytest`): 10/10 MicroSat
+  loci on `toy_example2_ms_dna_XY`, `num_sites=1` everywhere, mutation
+  counts scaling plausibly with each locus's own drawn `mut_rate`
+  (cross-checked against `build_microsat_local_param_per_locus`'s own
+  output), correct `<X>`/`<Y>` sample-count dispatch (`79`/`20` on this
+  dataset's real heterogeneous sex ratio).
+  Tests (same commit, later fixed in follow-up commits): reproducibility
+  and cross-locus independence must compare `np.array_equal(...
+  .genotype_matrix(), ...)`, NEVER `.genotype_matrix().all()` (the
+  latter collapses the whole matrix to one boolean — two completely
+  different matrices can coincidentally have the same `.all()`,
+  verified empirically on this exact dataset, making such an assertion
+  pass without proving anything). Ploidy-matches-heritage test needed a
+  fixture edit (`toy_example2_ms_dna_XY`'s `Locus_M_A_2_` relabeled
+  `<A>`→`<M>` in both `headerRF.txt` and the `.mss`, since the original
+  fixture had no MicroSat `<M>` locus at all) — confirmed this didn't
+  disturb any already-committed golden-value test elsewhere (the
+  per-group RNG draw sequence depends only on locus order/count within
+  the group, never on the `heritage` field). Also confirmed empirically
+  that `<Y>` (`num_samples=20`) is NOT expected to equal `<M>`
+  (`num_samples=40`) on this dataset — `<M>` includes every individual
+  regardless of sex while `<Y>` filters to males only, and this
+  dataset's real sex distribution happens to put ALL males in `pop1`
+  (`{"pop1": 20, "pop2": 0}`, verified via `observed_count_population`/
+  `build_male_only_samples_argument_dna`) — the right assertion compares
+  `<Y>`'s sample count against the real male count, not against `<M>`.
+  **Known gap, not a blocker**: no fixture currently has more than one
+  MicroSat `<M>`/`<Y>` locus, so the shared-genealogy behavior for those
+  heritage types (same mechanism as DNA sequences, `_SHARED_M_
+  ANCESTRY_SEED_OFFSET`/`_SHARED_Y_ANCESTRY_SEED_OFFSET`) can't be
+  tested end-to-end on MicroSat the way it is on DNA sequences.
+
+- **`summary_statistics.compute_all_statistics_microsat`,
+  `pipeline.compute_summary_statistics_microsat`, `reftable_loop.
+  run_reftable_simulation_microsat`/`_run_single_particle_microsat`**
+  (commits `fbada23`/`3066a16`/`35d3164`): the orchestration layer,
+  each a direct structural mirror of its DNA-sequence sibling (same
+  "two generations of architecture" duplication philosophy as SNP→DNA,
+  see below — deliberately NOT factored into a single parameterized
+  function even though `_run_single_particle_dna`/`_run_single_
+  particle_microsat` are identical but for one function call; discussed
+  explicitly with the user, who agreed to keep the duplication given
+  MicroSat's stats aren't real yet and only 2 similar cases exist so
+  far).
+  `compute_all_statistics_microsat` is a deliberate skeleton:
+  `_MICROSAT_STATS = {}` (empty catalog dict, mirroring `_DNA_
+  PAIRWISE_STATS`'s structure) and an explicit `if not _MICROSAT_STATS:
+  raise NotImplementedError(...)` guard before the (currently
+  unreachable) aggregation loop — verified by direct execution (not
+  just reading the diff) that it parses a real header's loci correctly
+  and raises at the right point, past the parsing, not before it. Two
+  test-writing bugs caught along the way, both about `pytest.raises`
+  misuse (recurring pattern worth flagging in review): a second
+  positional argument to `pytest.raises(ExceptionType, "some string")`
+  is NOT a message-matching pattern (that's the `match=` keyword) —
+  it's legacy API expecting a callable, so a bare string raises
+  `TypeError: '...' object must be callable`; and calling the
+  exception-raising function BEFORE entering the `with pytest.raises
+  (...):` block means the exception fires outside the context manager
+  and is never caught at all.
+
+**Not yet done**: the actual MicroSat summary statistics
+(`compute_all_statistics_microsat`'s body). The real catalog needed on
+`toy_example2_ms_dna_XY` was enumerated via `stats_group_parser.parse_
+requested_statistic_names` (2026-09-07, not yet cross-checked against
+`statdefs.cpp`): **11 distinct categories**, not the 8 previously
+assumed elsewhere in this file (`NAL`/`HET`/`VAR`/`MGW`/`FST`/`LIK`/
+`DAS`/`DM2`) — `N2P`/`H2P`/`V2P` also appear (`N2P_1_1.2`/`H2P_1_1.2`/
+`V2P_1_1.2` on this dataset), likely the pairwise counterparts of
+`NAL`/`HET`/`VAR` by analogy with DNA sequence's `NH2`/`NS2` naming
+convention, but this is a hypothesis, not yet confirmed against source.
+Also flagged for the next session: `LIK` is ASYMMETRIC on this dataset
+(`LIK_1_1.2` ≠ `LIK_1_2.1`, unlike `FST`/`DAS`/`DM2`'s single `.1.2`
+value) — smells like a directional likelihood (population 1 deriving
+from population 2 vs. the reverse), needs verifying against
+`statdefs.cpp`/`sumstat.cpp` before writing any code, not assumed.
+SNI mutation channel remains deferred too (placeholder comment already
+in place in `build_microsat_local_param_per_locus`, see above).
 
 ### DNA sequence substitution model (started 2026-07-29, mutation placement done 2026-07-31)
 

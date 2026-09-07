@@ -2,10 +2,12 @@
 
 ```
 .
-├── benchmark_1000.py
+├── API.md
 ├── bridge
 │   ├── ancestry_simulation.py
+│   ├── configuration.py
 │   ├── demography_builder.py
+│   ├── header_dataclasses.py
 │   ├── __init__.py
 │   ├── loci_parser.py
 │   ├── observed_data.py
@@ -13,77 +15,90 @@
 │   ├── pipeline.py
 │   ├── prior_parser.py
 │   ├── __pycache__
-│   │   ├── ancestry_simulation.cpython-311.pyc
-│   │   ├── demography_builder.cpython-311.pyc
-│   │   ├── __init__.cpython-311.pyc
-│   │   ├── loci_parser.cpython-311.pyc
-│   │   ├── observed_data.cpython-311.pyc
-│   │   ├── parameter_sampling.cpython-311.pyc
-│   │   ├── pipeline.cpython-311.pyc
-│   │   ├── prior_parser.cpython-311.pyc
-│   │   ├── reftable_loop.cpython-311.pyc
-│   │   ├── scenario_parser.cpython-311.pyc
-│   │   ├── scenario_types.cpython-311.pyc
-│   │   ├── snp_writer.cpython-311.pyc
-│   │   ├── statobs_parser.cpython-311.pyc
-│   │   └── summary_statistics.cpython-311.pyc
 │   ├── reftable_loop.py
 │   ├── scenario_parser.py
-│   ├── scenario_types.py
 │   ├── snp_writer.py
 │   ├── statobs_parser.py
+│   ├── stats_group_parser.py
 │   └── summary_statistics.py
-├── calibrate_reftable.py
+├── CLAUDE.md
 ├── docs
-├── generate_test_reftable.py
-├── msprime_cpp
-│   ├── msprime_from_cpp
-│   └── msprime_from_cpp.cpp
+├── notebook
+│   ├── comparaison_summary.csv
+│   ├── comparaison_summary_exemple5.csv
+│   ├── comparaison_summary_fixed_params.csv
+│   ├── comparaison_summary_human.csv
+│   ├── compare_raw_genotypes_fixed_params.ipynb
+│   ├── compare_reftables_exemple2.ipynb
+│   ├── compare_reftables_exemple5.ipynb
+│   ├── compare_reftables_human.ipynb
+│   └── test_fonction.ipynb
 ├── notes
 │   ├── api.md
 │   ├── commits.md
 │   ├── exploration.md
 │   ├── report.md
+│   ├── resume_coalescence_lignees.md
+│   ├── resume_stat_dna.md
 │   └── tree.md
-├── param_keepers.py
-├── priors_keeper.py
-├── profile_one_particle.py
-├── profile_python_stats.py
-├── profile_sim.py
-├── profile_stats.py
 ├── pyproject.toml
 ├── README.md
 ├── reference
-│   └── human
-│       ├── headerRF.txt
-│       ├── header.txt
-│       ├── human_snp_all22chr_maf5.snp
-│       ├── reftableRF.bin
-│       └── RNG_state_0000.bin
-├── run_test.py
-├── tests
+│   ├── human
+│   ├── toy_example1_ms
+│   ├── toy_example2_ms_dna
+│   ├── toy_example2_ms_dna_50loci
+│   ├── toy_example2_ms_dna_XY
+│   ├── toy_example3
+│   ├── toy_example3_500loci
+│   ├── toy_example4
+│   ├── toy_example4_MRC1
+│   ├── toy_example5
+│   └── toy_example5_500loci
+├── scripts
+│   ├── benchmark_1000.py
+│   ├── calibrate_reftable.py
+│   ├── compare_reftable_te4.py
+│   ├── generate_test_reftable.py
+│   ├── param_keepers.py
+│   ├── priors_keeper.py
+│   ├── profile_one_particle.py
+│   ├── profile_python_stats.py
+│   ├── profile_sim.py
+│   ├── profile_stats.py
 │   ├── __pycache__
-│   │   └── test_scenario1_human.cpython-311-pytest-9.0.3.pyc
-│   └── test_scenario1_human.py
+│   ├── replay_diyabc_priors_dna_50loci.py
+│   ├── replay_diyabc_priors_dna.py
+│   ├── replay_diyabc_priors.py
+│   ├── run_test.py
+│   ├── validate_observed_stats_poolseq.py
+│   └── validate_stats.py
+├── tests
+│   ├── conftest.py
+│   ├── __pycache__
+│   ├── test_ancestry_simulation.py
+│   ├── test_demography_builder.py
+│   ├── test_loci_parser.py
+│   ├── test_observed_data.py
+│   ├── test_parameter_sampling.py
+│   ├── test_pipeline.py
+│   ├── test_prior_parser.py
+│   ├── test_reftable_loop.py
+│   ├── test_scenario_parser.py
+│   ├── test_snp_writer.py
+│   ├── test_stats_group_parser.py
+│   └── test_summary_statistics.py
 ├── tmp
-│   ├── bench_reftable.bin
+│   ├── benchmark_1000
+│   ├── human_scratch_test
+│   ├── profile_one
+│   ├── replay_diyabc_priors
+│   ├── validate_batching
 │   └── validate_stats
-│       ├── first_records_of_the_reference_table_0.txt
-│       ├── headerRF.txt
-│       ├── header.txt
-│       ├── human_snp_all22chr_maf5.snp
-│       ├── human_snp_all22chr_maf5.snp.bin
-│       ├── human_snp_all22chr_maf5.snpbin.txt
-│       ├── maf.txt
-│       ├── reftable.log
-│       ├── reftableRF.bin
-│       ├── RNG_state_0000.bin
-│       └── statobsRF.txt
-├── tools
-│   ├── generate_api_md.py
-│   └── generate_report.py
-└── validate_stats.py
+└── tools
+    ├── generate_api_md.py
+    └── generate_report.py
 
-12 directories, 69 files
+29 directories, 67 files
 
 ```

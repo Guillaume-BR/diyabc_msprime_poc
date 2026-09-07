@@ -7,7 +7,7 @@ Démontrer la faisabilité de remplacer le simulateur génétique de DIYABC
 résumées, entièrement en Python, produisant un `reftable.bin`
 structurellement et statistiquement équivalent à celui du vrai DIYABC.
 
-## État actuel (2026-09-02)
+## État actuel (2026-09-07)
 
 **Côté SNP** (format condensé de `loci description`) : COMPLET et validé
 contre le vrai DIYABC sur `human`, `toy_example3`/`4`/`5` :
@@ -23,9 +23,15 @@ contre le vrai DIYABC sur `human`, `toy_example3`/`4`/`5` :
 mitochondriaux (`<M>`) — généalogie non partagée entre loci — a été
 diagnostiqué et corrigé le 2026-09-02 (voir `notes/exploration.md`).
 
-**MicroSat** : parsing du header (format détaillé, priors de groupe)
-complet ; aucune simulation (modèle de mutation stepwise, statistiques
-`NAL`/`HET`...) n'est encore implémentée.
+**MicroSat** : parsing du header complet ; le modèle de mutation GSM
+(stepwise, via `msprime.TPM`) est maintenant simulé de bout en bout
+(généalogie + mutation par locus, dispatch ploïdie/sexe `<A>/<X>/<Y>`,
+orchestration `pipeline.py`/`reftable_loop.py` calquée sur le chemin
+ADN) — voir "MicroSat GSM mutation model" dans `CLAUDE.md`. Seules les
+statistiques résumées spécifiques (`NAL`/`HET`/`VAR`/`MGW`/`N2P`/`H2P`/
+`V2P`/`FST`/`LIK`/`DAS`/`DM2`) restent à implémenter (squelette en
+place, lève `NotImplementedError`) ; le canal de mutation SNI reste
+également différé.
 
 Voir `CLAUDE.md` pour l'architecture détaillée et l'historique complet
 des investigations, `notes/exploration.md` pour le journal de recherche
