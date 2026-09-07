@@ -34,6 +34,7 @@ from bridge.ancestry_simulation import (
     count_loci_per_group,
     dna_ancestry_parameters_for_heritage,
     dna_mutation_simulation_per_locus,
+    microsat_mutation_simulation_per_locus,
     observed_maf,
     simulate_genotypes_for_locus_type,
     simulate_independent_loci,
@@ -742,6 +743,9 @@ def test_dna_mutation_simulation_per_locus_ploidy_matches_heritage(header_text_t
     assert ts_a.num_samples == 2 * ts_m.num_samples
 
 
+# tests sur les valeurs de prior par groupe tirées par diyabc
+
+
 def test_group_prior_values_from_columns(header_text_te2):
     group_priors_values = {
         "µmic_1": 0.0007375,
@@ -912,7 +916,7 @@ def test_build_matrix_microsat_per_locus(header_text_te2_XY):
             None,
         )
         assert locus_type == "M", f"Locus {locus} n'est pas un microsatellite"
-
+    assert len(matrix_per_locus) == 10
     assert matrix_per_locus["Locus_M_A_1_"].transition_matrix.shape == (39, 39)
 
     matrix_per_locus2 = build_matrix_microsat_per_locus(
@@ -930,3 +934,85 @@ def test_build_matrix_microsat_per_locus(header_text_te2_XY):
             matrix_per_locus[locus].root_distribution,
             matrix_per_locus2[locus].root_distribution,
         )
+
+
+def test_microsat_mutation_simulation_per_locus(header_text_te2_XY):
+    """Vérifie que microsat_mutation_simulation_per_locus produit bien une
+    TreeSequence mutée par locus microsat, avec une généalogie ET des
+    mutations indépendantes d'un locus à l'autre (pas la même graine
+    réutilisée partout), et reproductible avec la même graine de particule."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+
+    mutated_tree_sequences = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    # 10 loci microsatellites (5 <A> + 5 <M>), pas les 10 loci séquences du même header
+    assert len(mutated_tree_sequences) == 10
+    assert set(mutated_tree_sequences.keys()) == {
+        f"Locus_M_A_{1 + i}_" for i in range(10)
+    }
+
+    # Deux loci différents ne doivent pas partager la même généalogie ni
+    # les mêmes positions de mutation -- sinon la graine par locus serait
+    # réutilisée telle quelle (bug qu'on a corrigé plus tôt).
+    ts3 = mutated_tree_sequences["Locus_M_A_3_"]
+    ts4 = mutated_tree_sequences["Locus_M_A_4_"]
+    assert ts3.tables.edges != ts4.tables.edges
+    assert np.array_equal(ts3.genotype_matrix(), ts4.genotype_matrix()) is False
+
+    # Reproductibilité : même graine de particule -> même résultat pour
+    # chaque locus.
+    mutated_tree_sequences_2 = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+    for locus_name in mutated_tree_sequences:
+        assert (
+            mutated_tree_sequences[locus_name].tables.edges
+            == mutated_tree_sequences_2[locus_name].tables.edges
+        )
+        assert np.array_equal(
+            mutated_tree_sequences[locus_name].genotype_matrix(),
+            mutated_tree_sequences_2[locus_name].genotype_matrix(),
+        )
+
+
+def test_microsat_mutation_simulation_per_locus_ploidy_matches_heritage(
+    header_text_te2_XY,
+):
+    """Vérifie que le nombre de lignées échantillonnées reflète bien la
+    ploïdie attendue par héritage : un locus <A> (G2) doit avoir 2x plus de
+    "samples" msprime qu'un locus <M> (G3) pour la même population -- avant
+    la correction, les deux étaient simulés en ploidy=2 sans distinction."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+
+    mutated_tree_sequences = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    list_loci = parse_loci_description(header_text_te2_XY)
+
+    ts_A = mutated_tree_sequences["Locus_M_A_3_"]
+    ts_M = mutated_tree_sequences["Locus_M_A_2_"]
+    ts_Y = mutated_tree_sequences["Locus_M_A_10_"]
+
+    num_samples_male_only = sum(
+        build_male_only_samples_argument_dna(
+            OBSERVED_MSS_FILE_TE2_XY, list_loci, "Locus_M_A_10_"
+        ).values()
+    )
+    assert ts_A.num_samples == 2 * ts_M.num_samples
+    assert ts_Y.num_samples == num_samples_male_only

@@ -2317,7 +2317,7 @@ def build_matrix_microsat_per_locus(
         seed: La graine du tirage.
 
     Returns:
-        Un dict {nom_locus: matQ} pour chaque locus microsatellite [M].
+        Un dict {nom_locus: msprime.MatrixMutationModel} pour chaque locus microsatellite [M].
     """
     list_loci = parse_loci_description(header_text)
     params_per_locus = build_microsat_local_param_per_locus(header_text, seed)
@@ -2333,3 +2333,83 @@ def build_matrix_microsat_per_locus(
                 kmin=bounds[0], kmax=bounds[1], motif_size=locus.motif_size, Pgeom=Pgeom
             )
     return matrix_per_locus
+
+
+def microsat_mutation_simulation_per_locus(
+    header_text: str,
+    mss_file_path: str | Path,
+    demography: msprime.Demography,
+    seed: int,
+) -> dict[str, tskit.TreeSequence]:
+    """Assemble le pipeline complet de simulation microsatellite, par locus.
+
+    Pour chaque locus [M] : généalogie (msprime.sim_ancestry direct,
+    pas simulate_independent_loci -- sequence_length variable par
+    locus) + mutation (matQ déjà construit).
+
+    Args:
+        header_text: Texte complet de header.txt.
+        mss_file_path: Chemin du fichier .mss.
+        seed: La graine de la simulation.
+    Returns:
+        Un dict {nom_locus: arbre_généalogique} pour chaque locus microsatellite [M].
+    """
+    matrix_per_locus = build_matrix_microsat_per_locus(header_text, mss_file_path, seed)
+
+    list_loci = parse_loci_description(header_text)
+    samples_default = observed_count_population(mss_file_path=mss_file_path)
+    sex_ratio = parse_sex_ratio(mss_file_path)
+    mutated_tree_sequences = {}
+
+    # appel redondant !? modifier build_matrix_microsat_per_locus où l'on pourrait récupérer mut_rate
+    params_per_locus = build_microsat_local_param_per_locus(header_text, seed)
+
+    for i, locus in enumerate(list_loci):
+        if locus.ms_or_seq != "M":
+            continue
+
+        if locus.heritage in ("A", "H", "M"):
+            samples = samples_default
+        elif locus.heritage == "X":
+            samples = build_sex_stratified_samples_argument_dna(
+                mss_file_path, list_loci, locus.name
+            )
+        elif locus.heritage == "Y":
+            samples = build_male_only_samples_argument_dna(
+                mss_file_path, list_loci, locus.name
+            )
+        else:
+            raise NotImplementedError(
+                f"Type d'héritage de locus non supporté: {locus.heritage!r}"
+            )
+        locus_demography, ploidy = dna_ancestry_parameters_for_heritage(
+            locus.heritage, demography, sex_ratio
+        )
+        if locus.heritage == "M":
+            # Pour les loci mitochondriaux, on utilise la même graine pour tous les loci
+            seed_offset = seed + _SHARED_M_ANCESTRY_SEED_OFFSET
+        elif locus.heritage == "Y":
+            # Pour les loci Y, on utilise la même graine pour tous les loci
+            seed_offset = seed + _SHARED_Y_ANCESTRY_SEED_OFFSET
+        else:
+            # Pour les autres loci, on utilise une graine différente pour chaque locus
+            seed_offset = seed + _ANCESTRY_SEED_OFFSET + i
+        tree_sequences = msprime.sim_ancestry(
+            samples=samples,
+            demography=locus_demography,
+            sequence_length=1,
+            random_seed=seed_offset,
+            ploidy=ploidy,
+        )
+        mutated_ts = msprime.sim_mutations(
+            tree_sequences,
+            rate=params_per_locus[locus.name][0],
+            random_seed=seed + _MUTATION_SEED_OFFSET + i,
+            model=msprime.MatrixMutationModel(
+                alleles=matrix_per_locus[locus.name].alleles,
+                root_distribution=matrix_per_locus[locus.name].root_distribution,
+                transition_matrix=matrix_per_locus[locus.name].transition_matrix,
+            ),
+        )
+        mutated_tree_sequences[locus.name] = mutated_ts
+    return mutated_tree_sequences
