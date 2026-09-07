@@ -21,7 +21,10 @@ from bridge.ancestry_simulation import (
     build_group_local_param_per_locus_from_values,
     build_male_only_samples_argument,
     build_male_only_samples_argument_dna,
+    build_matrix_microsat_per_locus,
     build_matrix_per_locus,
+    build_microsat_local_param_per_locus,
+    build_microsat_transition_matrix,
     build_rate_map,
     build_rate_map_per_locus,
     build_samples_argument,
@@ -403,6 +406,11 @@ def test_simulate_poolseq_reads_with_mrc_filter(header_text_te4):
             min(sum_derived, sum_total - sum_derived) if sum_total > 0 else 0.0
         )
         assert mrc_observed >= mrc
+
+
+# ------------------------------------------------------
+# Tests sur les fonctions relatives aux séquences d'ADN
+# ------------------------------------------------------
 
 
 def test_transition_matrix_jk():
@@ -797,3 +805,128 @@ def test_build_male_only_samples_argument_dna(header_text_te2_XY):
         OBSERVED_MSS_FILE_TE2_XY, liste_loci, locus_name
     )
     assert samples == {"pop1": 1, "pop2": 0}
+
+
+# ------------------------------------------------------
+# Tests sur les fonctions relatives aux microsatellites
+# ------------------------------------------------------
+
+
+def test_build_microsat_transition_matrix():
+    """Vérifie que la fonction build_microsat_transition_matrix retourne la bonne matrice de transition pour les loci microsatellites."""
+
+    model = build_microsat_transition_matrix(
+        kmin=162,
+        kmax=240,
+        motif_size=2,
+        Pgeom=0.2,
+        epsilon=1e-16,
+    )
+
+    assert len(model.alleles) == 39
+    assert np.allclose(
+        model.transition_matrix.sum(axis=1), 1.0
+    )  # Chaque ligne doit sommer à 1
+
+    # root=201, n_minus=19 pour kmin=162, kmax=240, motif_size=2 -- calculé à la main,
+    assert model.alleles[19] == "201"
+
+    # On va tester avec un Pgeom limite
+    model2 = build_microsat_transition_matrix(
+        kmin=162,
+        kmax=240,
+        motif_size=2,
+        Pgeom=0,
+        epsilon=1e-16,
+    )
+
+    assert np.isclose(model2.transition_matrix[19, 18], 0.5)
+    assert np.isclose(model2.transition_matrix[19, 20], 0.5)
+    assert np.isclose(model2.transition_matrix.sum(axis=1)[19], 1.0)
+
+    model3 = build_microsat_transition_matrix(
+        kmin=162,
+        kmax=240,
+        motif_size=2,
+        Pgeom=1,
+        epsilon=1e-16,
+    )
+
+    assert np.isclose(model3.transition_matrix[19, 19], 0.0)
+    row_without_root = np.delete(model3.transition_matrix[19, :], 19)
+    assert np.allclose(row_without_root, 1.0 / 38)
+
+
+def test_build_microsat_local_param_per_locus(header_text_te2_XY):
+    """Vérifie que la fonction build_microsat_local_param_per_locus retourne le bon dictionnaire
+    Test de reproductibilité avec la même graine.
+    """
+    params_per_locus = build_microsat_local_param_per_locus(header_text_te2_XY, seed=42)
+
+    list_loci = parse_loci_description(header_text_te2_XY)
+
+    # Vérification qu'il n'y a que des loci microsatellites dans le dictionnaire
+    for locus in params_per_locus:
+        locus_type = next(
+            (
+                locus_desc.ms_or_seq
+                for locus_desc in list_loci
+                if locus_desc.name == locus
+            ),
+            None,
+        )
+        assert locus_type == "M", f"Locus {locus} n'est pas un microsatellite"
+    assert len(params_per_locus) == 10
+    all_mus_rate_values = [k[0] for k in params_per_locus.values()]
+    assert len(set(all_mus_rate_values)) == 10  # Tous les mus_rate sont différents
+
+    for locus in params_per_locus:
+        assert len(params_per_locus[locus]) == 2
+        assert params_per_locus[locus][0] > 0.0
+        assert params_per_locus[locus][1] >= 0.0 and params_per_locus[locus][1] <= 1.0
+
+    assert params_per_locus["Locus_M_A_1_"][0] == 0.00010313460804143706
+    assert params_per_locus["Locus_M_A_1_"][1] == 0.4820860729990509
+
+    # test de reproductibilité avec la même graine
+    params_per_locus_2 = build_microsat_local_param_per_locus(
+        header_text_te2_XY, seed=42
+    )
+    assert params_per_locus == params_per_locus_2
+
+
+def test_build_matrix_microsat_per_locus(header_text_te2_XY):
+    """Vérifie que la fonction build_matrix_microsat_per_locus retourne le bon dictionnaire"""
+    list_loci = parse_loci_description(header_text_te2_XY)
+    matrix_per_locus = build_matrix_microsat_per_locus(
+        header_text_te2_XY, OBSERVED_MSS_FILE_TE2_XY, seed=42
+    )
+
+    for locus in matrix_per_locus:
+        locus_type = next(
+            (
+                locus_desc.ms_or_seq
+                for locus_desc in list_loci
+                if locus_desc.name == locus
+            ),
+            None,
+        )
+        assert locus_type == "M", f"Locus {locus} n'est pas un microsatellite"
+
+    assert matrix_per_locus["Locus_M_A_1_"].transition_matrix.shape == (39, 39)
+
+    matrix_per_locus2 = build_matrix_microsat_per_locus(
+        header_text_te2_XY, OBSERVED_MSS_FILE_TE2_XY, seed=42
+    )
+    for locus in matrix_per_locus:
+        assert np.allclose(
+            matrix_per_locus[locus].transition_matrix,
+            matrix_per_locus2[locus].transition_matrix,
+        )
+        assert np.array_equal(
+            matrix_per_locus[locus].alleles, matrix_per_locus2[locus].alleles
+        )
+        assert np.allclose(
+            matrix_per_locus[locus].root_distribution,
+            matrix_per_locus2[locus].root_distribution,
+        )

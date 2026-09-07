@@ -2309,7 +2309,7 @@ def build_microsat_local_param_per_locus(
 def build_matrix_microsat_per_locus(
     header_text: str, mss_file_path: str, seed: int
 ) -> dict[str, msprime.MatrixMutationModel]:
-    """Construit la matrice de transition (matQ) de chaque locus microsatellite [M].
+    """Construit la matrice de transition de chaque locus microsatellite [M].
 
     Args:
         header_text: Texte complet de header.txt.
@@ -2327,7 +2327,7 @@ def build_matrix_microsat_per_locus(
     matrix_per_locus = {}
     for locus in list_loci:
         if locus.ms_or_seq == "M":
-            mut_rate, Pgeom = params_per_locus[locus.name]
+            _, Pgeom = params_per_locus[locus.name]
             bounds = bounds_per_locus[locus.name]
             matrix_per_locus[locus.name] = build_microsat_transition_matrix(
                 kmin=bounds[0], kmax=bounds[1], motif_size=locus.motif_size, Pgeom=Pgeom
