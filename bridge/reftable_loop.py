@@ -44,6 +44,7 @@ from bridge.pipeline import (
     compute_summary_statistics_dna,
     compute_summary_statistics_dna_from_values,
     compute_summary_statistics_from_values,
+    compute_summary_statistics_microsat,
     read_header_text,
 )
 from bridge.prior_parser import (
@@ -1112,3 +1113,117 @@ def replay_reftable_simulation_dna(
             particle_index = futures[future]
             results_by_index[particle_index] = future.result()
     return [results_by_index[i] for i in range(len(rows))]
+
+
+# --------------------------------------------------------------------------
+# Pour les microsatellites : lecture, écriture, rejeux de tirages réels
+# --------------------------------------------------------------------------
+
+
+def _run_single_particle_microsat(
+    particle_index: int,
+    reference_directory: Path,
+    scenarios: list[Scenario],
+    *,
+    stats_filter: str,
+) -> ParticleResult:
+    """Calcule une seule particule microsat (équivalent microsat de _run_single_particle).
+
+    Fonction top-level (picklable), appelée par chaque worker du
+    ProcessPoolExecutor.
+
+    La seed utilisée est dérivée de particle_index, garantissant un
+    tirage distinct et reproductible par particule (même particle_index
+    -> même résultat, peu importe l'ordre d'exécution des workers).
+
+    IMPORTANT : seed = particle_index + 1, jamais particle_index seul.
+    msprime.sim_ancestry rejette explicitement seed=0 (ValueError "seeds
+    must be greater than 0 and less than 2^32") -- vérifié empiriquement.
+    Donc particle_index=0 (le cas le plus probable, première particule)
+    utilise seed=1, pas seed=0.
+
+    Args:
+        particle_index: L'index de la particule (0-based).
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        scenarios: Les scénarios candidats (chaque particule tire le
+            sien).
+        stats_filter: "ALL" ou "HEADER".
+
+    Returns:
+        Le ParticleResult de cette particule.
+    """
+    seed = particle_index + 1
+    drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
+
+    summary_statistics, parameter_values = compute_summary_statistics_microsat(
+        reference_directory=reference_directory,
+        scenario_index=drawn_scenario.index,
+        seed=seed,
+        stats_filter=stats_filter,
+    )
+    return ParticleResult(
+        particle_index=particle_index,
+        scenario_index=drawn_scenario.index,
+        parameter_values=parameter_values,
+        summary_statistics=summary_statistics,
+    )
+
+
+def run_reftable_simulation_microsat(
+    reference_directory: str | Path,
+    scenarios: list[Scenario],
+    *,
+    nrec: int,
+    stats_filter: str = "ALL",
+    max_workers: int | None = None,
+) -> list[ParticleResult]:
+    """Produit nrec particules microsat (lignes de reftable.bin) en parallèle.
+
+    N'écrit rien sur disque par particule (compute_summary_statistics_microsat
+    est 100% Python, en mémoire).
+
+    Les résultats sont retournés DANS L'ORDRE de particle_index (0 à
+    nrec-1), pas dans l'ordre de complétion des workers -- important
+    pour la reproductibilité de l'ordre des lignes du reftable final.
+
+    Args:
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        scenarios: La liste des scénarios candidats (typiquement TOUS
+            les scénarios déclarés dans header.txt) : chaque particule
+            tire le SIEN au hasard, pondéré par son `weight` (voir
+            parameter_sampling.draw_scenario, sémantique vérifiée
+            contre particuleC.cpp::ParticleC::drawscenario) -- une même
+            particule peut donc finir sur n'importe lequel des
+            scénarios de la liste, pas forcément le même pour toutes.
+        nrec: Le nombre de particules à produire.
+        stats_filter: "ALL" ou "HEADER".
+        max_workers: Le nombre de process en parallèle (défaut : laissé
+            à ProcessPoolExecutor, généralement le nombre de cœurs
+            disponibles).
+
+    Returns:
+        La liste des ParticleResult, dans l'ordre de particle_index (0
+        à nrec-1).
+    """
+    reference_directory = Path(reference_directory)
+
+    results_by_index: dict[int, ParticleResult] = {}
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _run_single_particle_microsat,
+                particle_index,
+                reference_directory,
+                scenarios,
+                stats_filter=stats_filter,
+            ): particle_index
+            for particle_index in range(nrec)
+        }
+
+        for future in as_completed(futures):
+            particle_index = futures[future]
+            results_by_index[particle_index] = future.result()
+
+    return [results_by_index[i] for i in range(nrec)]
