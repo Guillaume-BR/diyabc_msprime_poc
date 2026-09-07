@@ -2350,6 +2350,7 @@ def microsat_mutation_simulation_per_locus(
     Args:
         header_text: Texte complet de header.txt.
         mss_file_path: Chemin du fichier .mss.
+        demography: La démographie <A> de base (PAS encore rescalée).
         seed: La graine de la simulation.
     Returns:
         Un dict {nom_locus: arbre_généalogique} pour chaque locus microsatellite [M].
