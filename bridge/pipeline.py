@@ -678,32 +678,32 @@ def compute_summary_statistics_dna_from_values(
     seed: int,
     stats_filter: str = "ALL",
 ) -> dict[str, float]:
-    """Variante de compute_summary_statistics_dna qui ne tire AUCUNE valeur de prior.
+    """
+    Variante de compute_summary_statistics_dna qui ne tire AUCUNE valeur de prior.
 
-       Reprend telles quelles des valeurs de paramètres déjà connues,
-       typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
-       reftable_loop.replay_reftable_simulation) -- permet de comparer
-       DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
-       biais possible de deux tirages indépendants.
-    cette approche pourra ensuite être appliquée à des jeux de don
-       Args:
-           reference_directory: Le dossier contenant header.txt et le
-               fichier .mss observé.
-           scenario_index: L'index 1-based du scénario à utiliser.
-           values: Les valeurs de paramètres historiques déjà connues,
-               {nom: valeur}.
-           group_priors_values: Dict {nom_param: valeur} pour tous les
-               groupes ADN déclarés dans header.txt. Ce sont les valeurs
-               que dna_mutation_simulation_per_locus aurait tirées en
-               interne si on avait appelé la variante "random"
-               (compute_summary_statistics_dna) -- elles ne sont pas
-               capturées par le dict `values` retourné par cette fonction
-               (voir compute_summary_statistics_dna).
-           seed: La graine du tirage par-locus (second niveau, généalogie,
-               mutation).
-           stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics.
+    Reprend telles quelles des valeurs de paramètres déjà connues,
+    typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
+    reftable_loop.replay_reftable_simulation) -- permet de comparer
+    DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
+    biais possible de deux tirages indépendants.
 
-       Returns:
+    Args:
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        scenario_index: L'index 1-based du scénario à utiliser.
+        values: Les valeurs de paramètres historiques déjà connues,
+            {nom: valeur}.
+        group_priors_values: Dict {nom_param: valeur} pour tous les
+            groupes ADN déclarés dans header.txt. Ce sont les valeurs
+            que dna_mutation_simulation_per_locus aurait tirées en
+            interne si on avait appelé la variante "random"
+            (compute_summary_statistics_dna) -- elles ne sont pas
+            capturées par le dict `values` retourné par cette fonction
+            (voir compute_summary_statistics_dna).
+        seed: La graine du tirage par-locus (second niveau, généalogie,
+            mutation).
+        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics.
+    Returns:
            Le dict summary_statistics (pas de `values` en retour,
            puisqu'ils sont déjà connus de l'appelant).
     """
@@ -853,8 +853,8 @@ def compute_summary_statistics_microsat_from_values(
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
 
-    demography, values = build_random_demography_for_scenario_index(
-        header_text, scenario_index, seed
+    demography, values = build_demography_for_scenario_index(
+        header_text, scenario_index, seed, values
     )
 
     mutated = microsat_mutation_simulation_per_locus_from_values(
