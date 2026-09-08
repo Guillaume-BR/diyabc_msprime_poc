@@ -853,7 +853,7 @@ def compute_summary_statistics_microsat_from_values(
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
 
-    demography, values = build_demography_for_scenario_index(
+    demography = build_demography_for_scenario_index(
         header_text, scenario_index, values
     )
 
