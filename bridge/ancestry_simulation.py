@@ -34,6 +34,7 @@ from bridge.configuration import (
     _MAF_REJECTION_SEED_OFFSET,
     _MICROSAT_MUT_RATE_SEED_OFFSET,
     _MICROSAT_PGEOM_SEED_OFFSET,
+    # _MICROSAT_SNI_SEED_OFFSET,
     _MRC_BATCH_SIZE,
     _MRC_REJECTION_SEED_OFFSET,
     _MUS_RATE_SEED_OFFSET,
@@ -1369,7 +1370,7 @@ def count_loci_per_group(list_loci: list[LociDescriptionDetailed]) -> dict[str, 
     return loci_count
 
 
-def build_sex_stratified_samples_argument_dna(
+def build_sex_stratified_samples_argument_ms_dna(
     mss_file_path: str,
     list_loci: list[LociDescriptionDetailed],
     locus_name: str,
@@ -1395,7 +1396,7 @@ def build_sex_stratified_samples_argument_dna(
     return _sample_sets_from_sexes(sexes_by_population)
 
 
-def build_male_only_samples_argument_dna(
+def build_male_only_samples_argument_ms_dna(
     mss_file_path: str,
     list_loci: list[LociDescriptionDetailed],
     locus_name: str,
@@ -1667,7 +1668,7 @@ def simulate_dna_mutations(
     return mutated_ts
 
 
-def dna_ancestry_parameters_for_heritage(
+def ms_dna_ancestry_parameters_for_heritage(
     heritage: str, demography: msprime.Demography, sex_ratio: float
 ) -> tuple[msprime.Demography, int]:
     """Détermine la démographie (rescalée ou non) et la ploïdie pour un locus ADN.
@@ -1719,7 +1720,7 @@ def dna_mutation_simulation_per_locus(
 
     La démographie et la ploïdie utilisées pour l'arbre de coalescence de
     chaque locus dépendent de son type d'héritage (<A>/<H>/<M>/<X>/<Y>, voir
-    `dna_ancestry_parameters_for_heritage`) -- un groupe peut mélanger des
+    `ms_dna_ancestry_parameters_for_heritage`) -- un groupe peut mélanger des
     loci de types différents (ex. toy_example2_ms_dna : G2 <A>, G3 <M>),
     donc ce dispatch se fait par locus, jamais une fois pour tout le
     dataset.
@@ -1756,11 +1757,11 @@ def dna_mutation_simulation_per_locus(
             if locus.heritage in ("A", "H", "M"):
                 samples = samples_default
             elif locus.heritage == "X":
-                samples = build_sex_stratified_samples_argument_dna(
+                samples = build_sex_stratified_samples_argument_ms_dna(
                     mss_file_path, list_loci, locus.name
                 )
             elif locus.heritage == "Y":
-                samples = build_male_only_samples_argument_dna(
+                samples = build_male_only_samples_argument_ms_dna(
                     mss_file_path, list_loci, locus.name
                 )
             else:
@@ -1768,7 +1769,7 @@ def dna_mutation_simulation_per_locus(
                     f"Type d'héritage de locus non supporté: {locus.heritage!r}"
                 )
 
-            locus_demography, ploidy = dna_ancestry_parameters_for_heritage(
+            locus_demography, ploidy = ms_dna_ancestry_parameters_for_heritage(
                 locus.heritage, demography, sex_ratio
             )
             if locus.heritage == "M":
@@ -2162,11 +2163,11 @@ def dna_mutation_simulation_per_locus_from_values(
             if locus.heritage in ("A", "H", "M"):
                 samples = samples_default
             elif locus.heritage == "X":
-                samples = build_sex_stratified_samples_argument_dna(
+                samples = build_sex_stratified_samples_argument_ms_dna(
                     mss_file_path, list_loci, locus.name
                 )
             elif locus.heritage == "Y":
-                samples = build_male_only_samples_argument_dna(
+                samples = build_male_only_samples_argument_ms_dna(
                     mss_file_path, list_loci, locus.name
                 )
             else:
@@ -2174,7 +2175,7 @@ def dna_mutation_simulation_per_locus_from_values(
                     f"Type d'héritage de locus non supporté: {locus.heritage!r}"
                 )
 
-            locus_demography, ploidy = dna_ancestry_parameters_for_heritage(
+            locus_demography, ploidy = ms_dna_ancestry_parameters_for_heritage(
                 locus.heritage, demography, sex_ratio
             )
             if locus.heritage == "M":
@@ -2372,18 +2373,263 @@ def microsat_mutation_simulation_per_locus(
         if locus.heritage in ("A", "H", "M"):
             samples = samples_default
         elif locus.heritage == "X":
-            samples = build_sex_stratified_samples_argument_dna(
+            samples = build_sex_stratified_samples_argument_ms_dna(
                 mss_file_path, list_loci, locus.name
             )
         elif locus.heritage == "Y":
-            samples = build_male_only_samples_argument_dna(
+            samples = build_male_only_samples_argument_ms_dna(
                 mss_file_path, list_loci, locus.name
             )
         else:
             raise NotImplementedError(
                 f"Type d'héritage de locus non supporté: {locus.heritage!r}"
             )
-        locus_demography, ploidy = dna_ancestry_parameters_for_heritage(
+        locus_demography, ploidy = ms_dna_ancestry_parameters_for_heritage(
+            locus.heritage, demography, sex_ratio
+        )
+        if locus.heritage == "M":
+            # Pour les loci mitochondriaux, on utilise la même graine pour tous les loci
+            seed_offset = seed + _SHARED_M_ANCESTRY_SEED_OFFSET
+        elif locus.heritage == "Y":
+            # Pour les loci Y, on utilise la même graine pour tous les loci
+            seed_offset = seed + _SHARED_Y_ANCESTRY_SEED_OFFSET
+        else:
+            # Pour les autres loci, on utilise une graine différente pour chaque locus
+            seed_offset = seed + _ANCESTRY_SEED_OFFSET + i
+        tree_sequences = msprime.sim_ancestry(
+            samples=samples,
+            demography=locus_demography,
+            sequence_length=1,
+            random_seed=seed_offset,
+            ploidy=ploidy,
+        )
+        mutated_ts = msprime.sim_mutations(
+            tree_sequences,
+            rate=params_per_locus[locus.name][0],
+            random_seed=seed + _MUTATION_SEED_OFFSET + i,
+            model=msprime.MatrixMutationModel(
+                alleles=matrix_per_locus[locus.name].alleles,
+                root_distribution=matrix_per_locus[locus.name].root_distribution,
+                transition_matrix=matrix_per_locus[locus.name].transition_matrix,
+            ),
+        )
+        mutated_tree_sequences[locus.name] = mutated_ts
+    return mutated_tree_sequences
+
+
+# Version "from values" pour rejouer exactement les mêmes valeurs par groupe que DIYABC
+
+
+def _group_prior_values_microsat_from_columns(
+    group_priors_values: dict[str, float], group_priors: dict
+) -> dict[str, dict[str, float]]:
+    """Reconstruit le dict nested {groupe: {prior: valeur}} depuis les colonnes du reftable réel pour les microsats.
+
+    Reshape les colonnes plates du vrai reftable DIYABC (ex:
+    "mut_rate", "Pgeom") dans la forme nested que
+    draw_group_parameter_values produit normalement, pour que
+    build_group_local_param_per_locus_from_values puisse réutiliser
+    tel quel le corps de build_group_local_param_per_locus.
+
+    Args:
+        group_priors_values: Dict {nom_colonne: valeur} tel que lu
+            dans le vrai reftable (voir
+            reftable_loop.parse_real_reftable_params_with_group_priors).
+        group_priors: Dict {nom_groupe: [GroupPrior, ...]} (voir
+            prior_parser.parse_group_priors).
+
+    Returns:
+        Un dict {nom_groupe: {nom_prior: valeur}}, pour les groupes de
+        loci microsat ([M]) uniquement -- les groupes ADN sont ignorés.
+    """
+    group_values = {}
+    for group, priors in group_priors.items():
+        if next(prior for prior in priors).ms_or_seq != "M":
+            continue  # Ignore les groupes de loci non microsat
+        group_number = group[1:]  # Extrait le numéro du groupe (ex: "G1" -> "1")
+        group_values[group] = {}
+        for prior in priors:
+            if prior.name == "MEANMU":
+                group_values[group][prior.name] = group_priors_values[
+                    f"µmic_{group_number}"
+                ]
+            elif prior.name == "MEANP":
+                group_values[group][prior.name] = group_priors_values[
+                    f"pmic_{group_number}"
+                ]
+            else:
+                continue  # il faudra une autre condition pour snimic
+        else:
+            continue
+    return group_values
+
+
+def build_group_local_param_per_locus_microsat_from_values(
+    header_text: str, group_priors_values: dict[str, float], seed: int
+) -> dict[str, tuple[float, float]]:
+    """Variante replay de build_group_local_param_per_locus (tier 1 = valeurs réelles).
+
+    Le tirage par-groupe (premier niveau) est remplacé par les valeurs
+    réellement tirées par DIYABC (`group_priors_values`, via
+    `_group_prior_values_from_columns`) ; le tirage par-locus (second
+    niveau, dispersion autour de la moyenne) N'EST PAS remplacé -- il
+    continue de dépendre de `seed`, car DIYABC n'enregistre pas cette
+    dispersion dans le reftable, il n'y a donc rien à rejouer pour elle.
+
+    Args:
+        header_text: Texte complet de header.txt.
+        group_priors_values: Dict {nom_colonne: valeur} tel que lu
+            dans le vrai reftable.
+        seed: La graine du tirage par-locus (second niveau).
+
+    Returns:
+        Un dict {nom_locus: (mut_rate,Pgeom)}, même contrat que
+        build_group_local_param_per_locus_from_values.
+    """
+    params_per_locus = {}
+    group_priors = parse_group_priors(header_text)
+    list_loci = parse_loci_description(header_text)
+
+    list_loci_ms = [locus for locus in list_loci if locus.ms_or_seq == "M"]
+    nloc_per_group = count_loci_per_group(list_loci_ms)
+
+    # Un seul appel pour tous les groupes -- draw_group_parameter_values gère
+    # déjà en interne son propre décalage de graine (_GROUP_PRIOR_SEED_OFFSET),
+    # pas besoin (et pas correct) de la rappeler
+    # une fois par groupe avec une graine décalée différente.
+    values = _group_prior_values_microsat_from_columns(
+        group_priors_values=group_priors_values, group_priors=group_priors
+    )
+
+    # Voir le commentaire équivalent dans build_group_local_param_per_locus :
+    # un random.Random(seed + OFFSET) créé À CHAQUE ITÉRATION du groupe fait
+    # rejouer la même séquence de tirages à tous les groupes partageant le
+    # même modèle en créant chaque rng UNE SEULE FOIS avant la boucle.
+    mut_rate_rng = random.Random(seed + _MICROSAT_MUT_RATE_SEED_OFFSET)
+    Pgeom_rng = random.Random(seed + _MICROSAT_PGEOM_SEED_OFFSET)
+    # sni_rng = random.Random(seed + _MICROSAT_SNI_SEED_OFFSET)
+
+    for group in nloc_per_group:
+        list_locus_in_group = [locus for locus in list_loci_ms if locus.group == group]
+        # calcul du mut_rate par locus
+        mut_rate_values = sampling_group_local_param(
+            next(gp for gp in group_priors[group] if gp.name == "GAMMU"),
+            k_moy=values[group]["MEANMU"],
+            n_loci=nloc_per_group[group],
+            check_nloc=True,
+            list_loci=list_locus_in_group,
+            rng=mut_rate_rng,
+        )
+
+        # calcul du Pgeom par locus
+        Pgeom_values = sampling_group_local_param(
+            next(gp for gp in group_priors[group] if gp.name == "GAMP"),
+            k_moy=values[group]["MEANP"],
+            n_loci=nloc_per_group[group],
+            check_nloc=True,
+            list_loci=list_locus_in_group,
+            rng=Pgeom_rng,
+        )
+        for locus in list_locus_in_group:
+            params_per_locus[locus.name] = (
+                mut_rate_values[locus.name],
+                Pgeom_values[locus.name],
+            )
+
+    return params_per_locus
+
+
+def build_matrix_microsat_per_locus_from_values(
+    header_text: str,
+    mss_file_path: str,
+    group_priors_values: dict[str, float],
+    seed: int,
+) -> dict[str, msprime.MatrixMutationModel]:
+    """Construit la matrice de transition de chaque locus microsatellite [M].
+
+    Args:
+        header_text: Texte complet de header.txt.
+        mss_file_path: Chemin du fichier .mss.
+        group_priors_values: Dict {nom_colonne: valeur} tel que lu
+        seed: La graine du tirage.
+
+    Returns:
+        Un dict {nom_locus: msprime.MatrixMutationModel} pour chaque locus microsatellite [M].
+    """
+    list_loci = parse_loci_description(header_text)
+    params_per_locus = build_group_local_param_per_locus_microsat_from_values(
+        header_text, group_priors_values, seed
+    )
+    microsat_observed = observed_microsatellites(mss_file_path, list_loci)
+    bounds_per_locus = allele_bounds_per_locus(microsat_observed, list_loci)
+
+    matrix_per_locus = {}
+    for locus in list_loci:
+        if locus.ms_or_seq == "M":
+            _, Pgeom = params_per_locus[locus.name]
+            bounds = bounds_per_locus[locus.name]
+            matrix_per_locus[locus.name] = build_microsat_transition_matrix(
+                kmin=bounds[0], kmax=bounds[1], motif_size=locus.motif_size, Pgeom=Pgeom
+            )
+    return matrix_per_locus
+
+
+def microsat_mutation_simulation_per_locus_from_values(
+    header_text: str,
+    mss_file_path: str | Path,
+    demography: msprime.Demography,
+    group_priors_values: dict[str, float],
+    seed: int,
+) -> dict[str, tskit.TreeSequence]:
+    """Assemble le pipeline complet de simulation microsatellite, par locus.
+
+    Pour chaque locus [M] : généalogie (msprime.sim_ancestry direct,
+    pas simulate_independent_loci -- sequence_length variable par
+    locus) + mutation (matQ déjà construit).
+
+    Args:
+        header_text: Texte complet de header.txt.
+        mss_file_path: Chemin du fichier .mss.
+        demography: La démographie <A> de base (PAS encore rescalée).
+        group_priors_values: Dict {nom_colonne: valeur} tel que lu
+            dans le vrai reftable.
+        seed: La graine de la simulation.
+    Returns:
+        Un dict {nom_locus: arbre_généalogique} pour chaque locus microsatellite [M].
+    """
+    matrix_per_locus = build_matrix_microsat_per_locus_from_values(
+        header_text, mss_file_path, group_priors_values, seed
+    )
+
+    list_loci = parse_loci_description(header_text)
+    samples_default = observed_count_population(mss_file_path=mss_file_path)
+    sex_ratio = parse_sex_ratio(mss_file_path)
+    mutated_tree_sequences = {}
+
+    # appel redondant !? modifier build_matrix_microsat_per_locus où l'on pourrait récupérer mut_rate
+    params_per_locus = build_group_local_param_per_locus_microsat_from_values(
+        header_text, group_priors_values, seed
+    )
+
+    for i, locus in enumerate(list_loci):
+        if locus.ms_or_seq != "M":
+            continue
+
+        if locus.heritage in ("A", "H", "M"):
+            samples = samples_default
+        elif locus.heritage == "X":
+            samples = build_sex_stratified_samples_argument_ms_dna(
+                mss_file_path, list_loci, locus.name
+            )
+        elif locus.heritage == "Y":
+            samples = build_male_only_samples_argument_ms_dna(
+                mss_file_path, list_loci, locus.name
+            )
+        else:
+            raise NotImplementedError(
+                f"Type d'héritage de locus non supporté: {locus.heritage!r}"
+            )
+        locus_demography, ploidy = ms_dna_ancestry_parameters_for_heritage(
             locus.heritage, demography, sex_ratio
         )
         if locus.heritage == "M":

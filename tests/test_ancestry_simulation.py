@@ -20,7 +20,7 @@ from bridge.ancestry_simulation import (
     build_group_local_param_per_locus,
     build_group_local_param_per_locus_from_values,
     build_male_only_samples_argument,
-    build_male_only_samples_argument_dna,
+    build_male_only_samples_argument_ms_dna,
     build_matrix_microsat_per_locus,
     build_matrix_per_locus,
     build_microsat_local_param_per_locus,
@@ -29,12 +29,12 @@ from bridge.ancestry_simulation import (
     build_rate_map_per_locus,
     build_samples_argument,
     build_sex_stratified_samples_argument,
-    build_sex_stratified_samples_argument_dna,
+    build_sex_stratified_samples_argument_ms_dna,
     build_transition_matrix,
     count_loci_per_group,
-    dna_ancestry_parameters_for_heritage,
     dna_mutation_simulation_per_locus,
     microsat_mutation_simulation_per_locus,
+    ms_dna_ancestry_parameters_for_heritage,
     observed_maf,
     simulate_genotypes_for_locus_type,
     simulate_independent_loci,
@@ -693,7 +693,7 @@ def test_dna_mutation_simulation_per_locus(header_text_te2, header_text_te2_XY):
     assert ts2.tables.edges == ts3.tables.edges
 
 
-def test_dna_ancestry_parameters_for_heritage(header_text_te2):
+def test_ms_dna_ancestry_parameters_for_heritage(header_text_te2):
     """Vérifie le dispatch démographie/ploïdie par type d'héritage pour les
     loci ADN, exactement le même que celui de simulate_genotypes_for_locus_type
     côté SNP : <A> -- démographie inchangée, ploidy=2 ; <H>/<M> -- démographie
@@ -704,14 +704,14 @@ def test_dna_ancestry_parameters_for_heritage(header_text_te2):
     )
     sex_ratio = 0.4
 
-    resolved_demography, ploidy = dna_ancestry_parameters_for_heritage(
+    resolved_demography, ploidy = ms_dna_ancestry_parameters_for_heritage(
         "A", demography, sex_ratio
     )
     assert ploidy == 2
     assert resolved_demography is demography
 
     for heritage in ("H", "M", "X", "Y"):
-        rescaled_demography, ploidy = dna_ancestry_parameters_for_heritage(
+        rescaled_demography, ploidy = ms_dna_ancestry_parameters_for_heritage(
             heritage, demography, sex_ratio
         )
         assert ploidy == 1
@@ -785,11 +785,11 @@ def test_build_group_local_param_per_locus_from_values(header_text_te2):
     assert result["Locus_S_A_11_"][0] > 0.0
 
 
-def test_build_sex_stratified_samples_argument_dna(header_text_te2_XY):
+def test_build_sex_stratified_samples_argument_ms_dna(header_text_te2_XY):
     """Vérifie que build_sex_stratified_samples construit bien la liste de SampleSet attendue par msprime.sim_ancestry,"""
     liste_loci = parse_loci_description(header_text_te2_XY)
     locus_name = "Locus_M_A_1_"
-    samples = build_sex_stratified_samples_argument_dna(
+    samples = build_sex_stratified_samples_argument_ms_dna(
         OBSERVED_MSS_FILE_TE2_XY, liste_loci, locus_name
     )
 
@@ -800,12 +800,12 @@ def test_build_sex_stratified_samples_argument_dna(header_text_te2_XY):
         assert sample_set.ploidy in {1, 2}  # M=1, F=2
 
 
-def test_build_male_only_samples_argument_dna(header_text_te2_XY):
+def test_build_male_only_samples_argument_ms_dna(header_text_te2_XY):
     """Vérifie que build_male_only_samples_argument construit bien un dict {population: nombre_de_mâles} (PAS une liste de SampleSet, contrairement à build_sex_stratified_samples"""
 
     liste_loci = parse_loci_description(header_text_te2_XY)
     locus_name = "Locus_M_A_1_"
-    samples = build_male_only_samples_argument_dna(
+    samples = build_male_only_samples_argument_ms_dna(
         OBSERVED_MSS_FILE_TE2_XY, liste_loci, locus_name
     )
     assert samples == {"pop1": 1, "pop2": 0}
@@ -1010,7 +1010,7 @@ def test_microsat_mutation_simulation_per_locus_ploidy_matches_heritage(
     ts_Y = mutated_tree_sequences["Locus_M_A_10_"]
 
     num_samples_male_only = sum(
-        build_male_only_samples_argument_dna(
+        build_male_only_samples_argument_ms_dna(
             OBSERVED_MSS_FILE_TE2_XY, list_loci, "Locus_M_A_10_"
         ).values()
     )
