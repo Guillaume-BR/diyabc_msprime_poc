@@ -1246,7 +1246,8 @@ def _run_single_particle_microsat_from_values(
 
     Rejoue (scenario_index, values, group_priors_values) tels que
     fournis -- typiquement issus de
-    parse_real_reftable_paramscompute_summary_statistics_microsat_from_values_with_group_priors.
+    parse_real_reftable_params et
+    compute_summary_statistics_microsat_from_values.
 
     Args:
         particle_index: L'index de la particule (0-based).
