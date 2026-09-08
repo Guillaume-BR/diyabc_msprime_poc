@@ -45,6 +45,7 @@ from bridge.pipeline import (
     compute_summary_statistics_dna_from_values,
     compute_summary_statistics_from_values,
     compute_summary_statistics_microsat,
+    compute_summary_statistics_microsat_from_values,
     read_header_text,
 )
 from bridge.prior_parser import (
@@ -1227,3 +1228,124 @@ def run_reftable_simulation_microsat(
             results_by_index[particle_index] = future.result()
 
     return [results_by_index[i] for i in range(nrec)]
+
+
+# Rejeu des tirages réels de DIYABC pour les microsatellites (comparaison appariée)
+
+
+def _run_single_particle_microsat_from_values(
+    particle_index: int,
+    reference_directory: Path,
+    scenario_index: int,
+    values: dict[str, float],
+    group_priors_values: dict[str, float],
+    *,
+    stats_filter: str,
+) -> ParticleResult:
+    """Variante de _run_single_particle_microsat qui NE TIRE AUCUN paramètre.
+
+    Rejoue (scenario_index, values, group_priors_values) tels que
+    fournis -- typiquement issus de
+    parse_real_reftable_paramscompute_summary_statistics_microsat_from_values_with_group_priors.
+
+    Args:
+        particle_index: L'index de la particule (0-based).
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        scenario_index: L'index 1-based du scénario déjà tiré par
+            DIYABC pour cette particule.
+        values: Les valeurs de paramètres historiques déjà connues,
+            {nom: valeur}.
+        group_priors_values: Les valeurs de priors de groupe déjà
+            connues, {nom_colonne: valeur} (voir
+            compute_summary_statistics_dna_from_values).
+        stats_filter: "ALL" ou "HEADER".
+
+    Returns:
+        Le ParticleResult de cette particule.
+    """
+    seed = particle_index + 1
+    summary_statistics = compute_summary_statistics_microsat_from_values(
+        reference_directory=reference_directory,
+        scenario_index=scenario_index,
+        values=values,
+        group_priors_values=group_priors_values,
+        seed=seed,
+        stats_filter=stats_filter,
+    )
+    return ParticleResult(
+        particle_index=particle_index,
+        scenario_index=scenario_index,
+        parameter_values=values,
+        summary_statistics=summary_statistics,
+    )
+
+
+def replay_reftable_simulation_microsat(
+    reference_directory: str | Path,
+    priors: list,
+    group_priors_names: list[str],
+    scenarios: list[Scenario],
+    real_reftable_path: str | Path,
+    stats_filter: str = "ALL",
+    max_workers: int | None = None,
+) -> list[ParticleResult]:
+    """Rejoue, particule par particule, les tirages RÉELS de DIYABC (équivalent microsat de replay_reftable_simulation).
+
+    Lit un reftable réel existant (scénario, paramètres historiques ET
+    priors de groupe RÉELLEMENT tirés par DIYABC) et rejoue chaque
+    particule côté msprime avec EXACTEMENT les mêmes valeurs -- permet
+    une comparaison appariée ligne à ligne, pas seulement une
+    comparaison de distributions agrégées.
+
+    Args:
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        priors: Les priors historiques déclarés dans header.txt.
+        group_priors_names: Les noms de colonnes de priors de groupe
+            (voir group_prior_column_names).
+        scenarios: Les scénarios candidats.
+        real_reftable_path: Chemin du reftable réel à rejouer.
+        stats_filter: "ALL" ou "HEADER".
+        max_workers: Le nombre de process en parallèle.
+
+    Returns:
+        Les ParticleResult dans le MÊME ORDRE que les lignes du fichier
+        réel.
+    """
+    reference_directory = Path(reference_directory)
+
+    # On lit les sorties de diyabc (scénario tiré + valeurs de paramètres RÉELLEMENT tirées) pour
+    # les rejouer ensuite côté msprime, afin de comparer les deux simulateurs sur EXACTEMENT
+    # les mêmes tirages de priors.
+
+    rows = parse_real_reftable_params_with_group_priors(
+        path=real_reftable_path,
+        priors=priors,
+        scenarios=scenarios,
+        group_priors_names=group_priors_names,
+    )
+
+    results_by_index: dict[int, ParticleResult] = {}
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _run_single_particle_microsat_from_values,
+                particle_index,
+                reference_directory,
+                scenario_index,
+                values,
+                group_priors_values,
+                stats_filter=stats_filter,
+            ): particle_index
+            for particle_index, (
+                scenario_index,
+                values,
+                group_priors_values,
+            ) in enumerate(rows)
+        }
+
+        for future in as_completed(futures):
+            particle_index = futures[future]
+            results_by_index[particle_index] = future.result()
+    return [results_by_index[i] for i in range(len(rows))]

@@ -30,6 +30,7 @@ from bridge.ancestry_simulation import (
     dna_mutation_simulation_per_locus,
     dna_mutation_simulation_per_locus_from_values,
     microsat_mutation_simulation_per_locus,
+    microsat_mutation_simulation_per_locus_from_values,
     simulate_genotypes_for_locus_type,
     simulate_poolseq_reads_with_mrc_filter,
 )
@@ -679,32 +680,32 @@ def compute_summary_statistics_dna_from_values(
 ) -> dict[str, float]:
     """Variante de compute_summary_statistics_dna qui ne tire AUCUNE valeur de prior.
 
-    Reprend telles quelles des valeurs de paramètres déjà connues,
-    typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
-    reftable_loop.replay_reftable_simulation) -- permet de comparer
-    DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
-    biais possible de deux tirages indépendants.
+       Reprend telles quelles des valeurs de paramètres déjà connues,
+       typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
+       reftable_loop.replay_reftable_simulation) -- permet de comparer
+       DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
+       biais possible de deux tirages indépendants.
+    cette approche pourra ensuite être appliquée à des jeux de don
+       Args:
+           reference_directory: Le dossier contenant header.txt et le
+               fichier .mss observé.
+           scenario_index: L'index 1-based du scénario à utiliser.
+           values: Les valeurs de paramètres historiques déjà connues,
+               {nom: valeur}.
+           group_priors_values: Dict {nom_param: valeur} pour tous les
+               groupes ADN déclarés dans header.txt. Ce sont les valeurs
+               que dna_mutation_simulation_per_locus aurait tirées en
+               interne si on avait appelé la variante "random"
+               (compute_summary_statistics_dna) -- elles ne sont pas
+               capturées par le dict `values` retourné par cette fonction
+               (voir compute_summary_statistics_dna).
+           seed: La graine du tirage par-locus (second niveau, généalogie,
+               mutation).
+           stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics.
 
-    Args:
-        reference_directory: Le dossier contenant header.txt et le
-            fichier .mss observé.
-        scenario_index: L'index 1-based du scénario à utiliser.
-        values: Les valeurs de paramètres historiques déjà connues,
-            {nom: valeur}.
-        group_priors_values: Dict {nom_param: valeur} pour tous les
-            groupes ADN déclarés dans header.txt. Ce sont les valeurs
-            que dna_mutation_simulation_per_locus aurait tirées en
-            interne si on avait appelé la variante "random"
-            (compute_summary_statistics_dna) -- elles ne sont pas
-            capturées par le dict `values` retourné par cette fonction
-            (voir compute_summary_statistics_dna).
-        seed: La graine du tirage par-locus (second niveau, généalogie,
-            mutation).
-        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics.
-
-    Returns:
-        Le dict summary_statistics (pas de `values` en retour,
-        puisqu'ils sont déjà connus de l'appelant).
+       Returns:
+           Le dict summary_statistics (pas de `values` en retour,
+           puisqu'ils sont déjà connus de l'appelant).
     """
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
@@ -793,6 +794,74 @@ def compute_summary_statistics_microsat(
         header_text,
         mss_path,
         demography,
+        seed,
+    )
+
+    population_names = list(observed_count_population(mss_path).keys())
+    summary_stats = compute_all_statistics_microsat(
+        header_text, mutated, population_names
+    )
+    summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
+
+    return summary_stats, values
+
+
+# rejeu de tirages DIYABC pour microsats : on ne tire plus rien, on rejoue les valeurs déjà connues
+
+
+def compute_summary_statistics_microsat_from_values(
+    reference_directory: str | Path,
+    scenario_index: int,
+    values: dict[str, float],
+    group_priors_values: dict[str, float],
+    *,
+    seed: int,
+    stats_filter: str = "ALL",
+) -> dict[str, float]:
+    """Variante de compute_summary_statistics_microsat qui ne tire AUCUNE valeur de prior.
+
+    Reprend telles quelles des valeurs de paramètres déjà connues,
+    typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
+    reftable_loop.replay_reftable_simulation) -- permet de comparer
+    DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
+    biais possible de deux tirages indépendants.
+
+    Args:
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        scenario_index: L'index 1-based du scénario à utiliser.
+        values: Les valeurs de paramètres historiques déjà connues,
+            {nom: valeur}.
+        group_priors_values: Dict {nom_param: valeur} pour tous les
+            groupes microsat déclarés dans header.txt. Ce sont les
+            valeurs que microsat_mutation_simulation_per_locus aurait
+            tirées en interne si on avait appelé la variante "random"
+            (compute_summary_statistics_microsat) -- elles ne sont pas
+            capturées par le dict `values` retourné par cette fonction
+            (voir compute_summary_statistics_microsat).
+        seed: La graine du tirage par-locus (second niveau, généalogie,
+            mutation).
+        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics.
+
+    Returns:
+        Le dict summary_statistics (pas de `values` en retour,
+        puisqu'ils sont déjà connus de l'appelant).
+    """
+
+    reference_directory = Path(reference_directory)
+    header_text = read_header_text(reference_directory)
+    mss_filename = header_text.splitlines()[0].strip()
+    mss_path = reference_directory / mss_filename
+
+    demography, values = build_random_demography_for_scenario_index(
+        header_text, scenario_index, seed
+    )
+
+    mutated = microsat_mutation_simulation_per_locus_from_values(
+        header_text,
+        mss_path,
+        demography,
+        group_priors_values,
         seed,
     )
 
