@@ -854,7 +854,7 @@ def compute_summary_statistics_microsat_from_values(
     mss_path = reference_directory / mss_filename
 
     demography, values = build_demography_for_scenario_index(
-        header_text, scenario_index, seed, values
+        header_text, scenario_index, values
     )
 
     mutated = microsat_mutation_simulation_per_locus_from_values(
