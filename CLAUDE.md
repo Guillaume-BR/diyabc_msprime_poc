@@ -490,7 +490,7 @@ completed 2026-09-04 to 2026-09-07 — see "MicroSat GSM mutation model"
 below; only the MicroSat-specific summary statistics catalog (`NAL`/
 `HET`/... from `statdefs.cpp`) remains, deferred to a future session.
 
-### MicroSat GSM mutation model (2026-09-04 to 2026-09-07, mentor mode — user-driven, reviewed/debugged with the assistant)
+### MicroSat GSM mutation model (2026-09-04 to 2026-09-08, mentor mode — user-driven, reviewed/debugged with the assistant)
 
 Picked up as the natural continuation of "MicroSat / sequences-mut
 header parsing" above (parsing was complete, simulation wasn't started
@@ -688,6 +688,136 @@ from population 2 vs. the reverse), needs verifying against
 `statdefs.cpp`/`sumstat.cpp` before writing any code, not assumed.
 SNI mutation channel remains deferred too (placeholder comment already
 in place in `build_microsat_local_param_per_locus`, see above).
+
+**Update 2026-09-08 — MicroSat `_from_values` replay chain done, mirroring
+the DNA-sequence one.** Before tackling the stats catalog above, the
+user chose to first build MicroSat's `_from_values` sibling chain (same
+architecture as "DIYABC-replay pipeline for DNA sequences" below),
+since it shares a lot of structure with the DNA-sequence one and stays
+useful groundwork regardless of when the stats themselves get written.
+
+- **Two `reftable_loop.py` functions needed ZERO changes** —
+  `group_prior_column_names` and `parse_real_reftable_params_with_
+  group_priors` already handle MicroSat groups generically (confirmed
+  by re-reading them, not assumed): the former's `else` branch already
+  emits `µmic_N`/`pmic_N`/`snimic_N`, the latter never inspects
+  `ms_or_seq` at all, just splits columns positionally by count.
+- **Five new sibling functions were needed**, each a direct structural
+  mirror of its DNA-sequence counterpart (same "two generations of
+  architecture" duplication choice as SNP→DNA→MicroSat elsewhere in
+  this file — see [[project_dry_vs_duplication_reftable_loop]] project
+  memory for the explicit discussion that reaffirmed this, this time
+  specifically about whether `_group_prior_values_from_columns` should
+  gain an `if ms_or_seq=="S" elif =="M"` branch instead of a sibling
+  function — decided against it: unlike the identical `_run_single_
+  particle_dna`/`_microsat` pair, this function's DNA and MicroSat
+  branches have genuinely different shapes (conditional `k1`/`k2`
+  model dispatch vs. flat `mut_rate`/`Pgeom`), and it's already part of
+  the DNA replay chain validated against a real 1000-particle DIYABC
+  reftable — modifying it in place, even for a low-risk addition,
+  breaks the project's "never touch an already-validated original"
+  rule for no strong enough reason):
+  `ancestry_simulation._group_prior_values_microsat_from_columns`,
+  `build_group_local_param_per_locus_microsat_from_values`,
+  `build_matrix_microsat_per_locus_from_values`, `microsat_mutation_
+  simulation_per_locus_from_values`, and `pipeline.compute_summary_
+  statistics_microsat_from_values` + `reftable_loop._run_single_
+  particle_microsat_from_values`/`replay_reftable_simulation_microsat`.
+  **No MicroSat equivalent of `build_rate_map_per_locus_from_values`**
+  — per-site rate heterogeneity (`RateMap`) is a DNA-sequence-only
+  concept; a MicroSat locus has `sequence_length=1` and a single
+  scalar `mut_rate`, so there's nothing to mirror there.
+- **Renamed `build_sex_stratified_samples_argument_dna`/`build_male_
+  only_samples_argument_dna` to `..._ms_dna`** (all call sites in
+  `ancestry_simulation.py` and `tests/test_ancestry_simulation.py`
+  updated, confirmed via `grep`, 142/142 tests green): both were
+  already used by MicroSat's `.mss`-based sex dispatch too, so the
+  `_dna` suffix was misleading — `_ms_dna` reflects "the `.mss`-file
+  path" (MicroSat+DNA sequence), distinct from the SNP `.snp`-based
+  originals (`build_sex_stratified_samples_argument`/`build_male_only_
+  samples_argument`, no suffix, unchanged).
+- **Several bugs caught by direct execution, not just reading the
+  diff** (consistent with this whole MicroSat effort's review style):
+  - `random.Random(seed + _MICROSAT_SNI_SEED_OFFSET)` referenced a
+    constant that didn't exist in `configuration.py` at all —
+    `ImportError` at module load, breaking every test in the file.
+    Fixed by commenting the line out (matching the existing deferred-
+    SNI placeholder convention in `build_microsat_local_param_per_
+    locus`) rather than adding a real unused constant.
+  - `f"µmiq_{group_number}"` typo (real column name is `µmic_`,
+    confirmed against `group_prior_column_names`) — `KeyError` the
+    first time a real column name was used.
+  - `params_per_locus[locus.name] = (mut_rate, Pgeom)` in `build_
+    group_local_param_per_locus_microsat_from_values` assigned the
+    **whole per-group dicts** returned by `sampling_group_local_param`
+    to every locus, instead of indexing them by `locus.name`
+    (`mut_rate[locus.name]`, `Pgeom[locus.name]`) — every locus in a
+    group would have ended up with the identical `(dict, dict)` pair
+    instead of its own scalar values. Confirmed by inspecting
+    `sampling_group_local_param`'s actual return type directly.
+  - Return type hint said `tuple[float, float, float]` (copy-pasted
+    from the DNA version's `k1`/`k2`/`mus_rate`), but the function
+    returns 2-tuples (`mut_rate`, `Pgeom`).
+  - **Duplicate function definitions, three separate times in this
+    session** (`build_matrix_microsat_per_locus_from_values`, `dna_
+    mutation_simulation_per_locus_from_values`, `microsat_mutation_
+    simulation_per_locus_from_values`) — a leftover copy-paste block
+    left underneath a freshly-written correct one, same name, so
+    Python's module-level namespace silently kept whichever one was
+    defined LAST. In the `microsat_mutation_simulation_per_locus_
+    from_values` case this was actively dangerous: the correct version
+    was first, the leftover broken copy-paste (calling `build_matrix_
+    microsat_per_locus_from_values` with a missing argument) was
+    second, so the BROKEN one was the one actually callable — caught
+    only by executing the function directly (`TypeError: missing 1
+    required positional argument: 'seed'`), not by reading the diff.
+    `grep -n "^def name" file.py` before declaring a function "done"
+    is now the standing suggestion to the user for catching this
+    early.
+  - **The most consequential bug**: `compute_summary_statistics_
+    microsat_from_values` initially called `build_random_demography_
+    for_scenario_index(header_text, scenario_index, seed)` — the
+    RANDOM-draw variant — and reassigned its own `values` parameter
+    with that function's freshly-drawn return value, silently
+    discarding the real DIYABC values the caller had passed in. Since
+    this whole `_from_values` chain exists specifically to compare
+    DIYABC and msprime on IDENTICAL draws, this bug would have made
+    every such comparison meaningless without raising any error.
+    Caught by direct execution with deliberately recognizable
+    placeholder values (`{"N1": 999999.0, "ta": 12345.0}`) and
+    confirming the constructed demography used freshly-drawn values
+    instead (`{"N1": 6398.0, "ta": 2758.0, ...}`) — the bug produced no
+    exception, only silently wrong behavior, so this is the kind of
+    thing that must be verified by executing with recognizable inputs,
+    not just checked for absence of errors. Fixed in two more passes
+    (first fixing the wrong function but with a wrong argument count/
+    order — `build_demography_for_scenario_index` takes `(header_text,
+    scenario_index, values)`, no `seed`; then fixing an incorrect
+    2-tuple unpacking of its single-`Demography` return value) before
+    landing on the correct one-liner, matching `compute_summary_
+    statistics_dna_from_values`'s existing pattern exactly.
+  - An unrelated accidental edit to `compute_summary_statistics_dna_
+    from_values`'s docstring (the already-validated DNA sibling, edited
+    by mistake while working on the MicroSat function right below it in
+    the same file) — its indentation was shifted and a stray truncated
+    line ("cette approche pourra ensuite être appliquée à des jeux de
+    don") was inserted mid-docstring. Not a functional bug (docstrings
+    tolerate arbitrary indentation), but a reminder that editing near
+    an already-validated function carries a real risk of unintentional
+    collateral changes — caught by reading the diff, not by any test.
+- **Validated by direct execution up to the expected stopping point**:
+  the full chain (`_run_single_particle_microsat_from_values` →
+  `compute_summary_statistics_microsat_from_values` → real `values`-based
+  demography → `microsat_mutation_simulation_per_locus_from_values` →
+  `compute_all_statistics_microsat`) runs cleanly and raises
+  `NotImplementedError` only at the final, expected point (the stats
+  catalog itself, deliberately not yet implemented) — confirming
+  everything upstream of the stats is correctly wired. **Not yet
+  validated against an actual real MicroSat DIYABC reftable** (no such
+  reference file has been used in this session — `replay_reftable_
+  simulation_microsat` is wired but untested end-to-end against real
+  data, unlike its DNA-sequence sibling which IS cross-validated
+  against a real 1000-particle reftable).
 
 ### DNA sequence substitution model (started 2026-07-29, mutation placement done 2026-07-31)
 

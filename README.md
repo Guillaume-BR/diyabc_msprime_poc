@@ -7,7 +7,7 @@ Démontrer la faisabilité de remplacer le simulateur génétique de DIYABC
 résumées, entièrement en Python, produisant un `reftable.bin`
 structurellement et statistiquement équivalent à celui du vrai DIYABC.
 
-## État actuel (2026-09-07)
+## État actuel (2026-09-08)
 
 **Côté SNP** (format condensé de `loci description`) : COMPLET et validé
 contre le vrai DIYABC sur `human`, `toy_example3`/`4`/`5` :
@@ -24,14 +24,18 @@ mitochondriaux (`<M>`) — généalogie non partagée entre loci — a été
 diagnostiqué et corrigé le 2026-09-02 (voir `notes/exploration.md`).
 
 **MicroSat** : parsing du header complet ; le modèle de mutation GSM
-(stepwise, via `msprime.TPM`) est maintenant simulé de bout en bout
-(généalogie + mutation par locus, dispatch ploïdie/sexe `<A>/<X>/<Y>`,
-orchestration `pipeline.py`/`reftable_loop.py` calquée sur le chemin
-ADN) — voir "MicroSat GSM mutation model" dans `CLAUDE.md`. Seules les
+(stepwise, via `msprime.TPM`) est simulé de bout en bout (généalogie +
+mutation par locus, dispatch ploïdie/sexe `<A>/<X>/<Y>`, orchestration
+`pipeline.py`/`reftable_loop.py` calquée sur le chemin ADN), et la
+chaîne de rejeu `_from_values` (mêmes tirages réels que DIYABC, pour
+une comparaison appariée) est également complète depuis le 2026-09-08
+— voir "MicroSat GSM mutation model" dans `CLAUDE.md`. Seules les
 statistiques résumées spécifiques (`NAL`/`HET`/`VAR`/`MGW`/`N2P`/`H2P`/
 `V2P`/`FST`/`LIK`/`DAS`/`DM2`) restent à implémenter (squelette en
 place, lève `NotImplementedError`) ; le canal de mutation SNI reste
-également différé.
+également différé, et le rejeu `_from_values` n'a pas encore été
+comparé à un vrai reftable DIYABC microsat (aucun disponible pour
+l'instant).
 
 Voir `CLAUDE.md` pour l'architecture détaillée et l'historique complet
 des investigations, `notes/exploration.md` pour le journal de recherche
@@ -45,8 +49,8 @@ brut (citations de code source, diagnostics, bugs trouvés/corrigés).
   - `loci_parser.py` — parsing de la description des loci (formats condensé et détaillé)
   - `demography_builder.py` — construction de la `Demography` msprime
   - `observed_data.py` — lecture des fichiers observés (`.snp`/`.mss`), mapping population
-  - `ancestry_simulation.py` — coalescence + mutation (SNP et séquences ADN)
-  - `summary_statistics.py` — statistiques résumées (SNP, PoolSeq, ADN)
+  - `ancestry_simulation.py` — coalescence + mutation (SNP, séquences ADN et MicroSat)
+  - `summary_statistics.py` — statistiques résumées (SNP, PoolSeq, ADN ; MicroSat en squelette)
   - `stats_group_parser.py` — filtrage des colonnes de stats réellement demandées
   - `snp_writer.py` / `statobs_parser.py` — écriture/lecture au format DIYABC (chemin de validation croisée, plus le chemin par défaut)
   - `pipeline.py` — orchestration de haut niveau
