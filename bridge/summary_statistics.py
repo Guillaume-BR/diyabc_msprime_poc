@@ -2209,6 +2209,92 @@ def compute_HST(
 
 
 # ---------------------------------------------------------------------------
+# Statistiques pour les Microsatellites (microsat)
+# ---------------------------------------------------------------------------
+
+# Helper nécessaire pour le reste des stattistiques
+
+
+def _length_by_population(
+    tree_sequence: tskit.TreeSequence,
+) -> dict[str, list[tuple[int, int]]]:
+    """Construit un dict {nom_population: [(longueur, nb_sequence), ...]}.
+
+    Args:
+        tree_sequence: Un TreeSequence muté du groupe (un locus [M]).
+
+    Returns:
+        Un dict {nom_population: [(longueur, compte), ...]}.
+    """
+    length_by_pop = {}
+    layout = compute_population_layout(tree_sequence)  # liste(tuple(pop:array(indice)))
+    variant = next(tree_sequence.variants())
+    tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
+    for pop_name, sample_ids in layout:
+        length_by_pop[pop_name] = []
+        for taille in variant.alleles:
+            taille_int = int(taille)
+            length_by_pop[pop_name].append(
+                (taille_int, list(tailles[sample_ids]).count(taille_int))
+            )
+
+    return length_by_pop
+
+
+# NAL : mean number of alleles across loci
+
+
+def count_alleles_per_population(
+    length_by_pop: dict[str, list[tuple[int, int]]],
+) -> dict[str, int]:
+    """Compte le nombre de tuples ayant un compte > 0.
+
+    Args:
+        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}.
+
+    Returns:
+        Dict {nom_population: nombre d'allèles distincts}.
+    """
+    allele_counts = {}
+    for pop_name in length_by_pop:
+        allele_counts[pop_name] = len(
+            [result for result in length_by_pop[pop_name] if result[1] > 0]
+        )
+    return allele_counts
+
+
+def compute_NAL(
+    tree_sequences: list[tskit.TreeSequence], population_names: list[str]
+) -> dict[str, float]:
+    """Calcule NAL_i : pour chaque population, la moyenne du nombre d'allèles distincts
+    sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
+
+    Args:
+        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        population_names: Liste des noms de population.
+    Returns:
+        Dict {nom_population: NAL}.
+    """
+
+    allele_counts = {pop_name: 0.0 for pop_name in population_names}
+    valid_loci_count = {pop_name: 0 for pop_name in population_names}
+    for ts in tree_sequences:
+        length_by_pop = _length_by_population(ts)
+        counts = count_alleles_per_population(length_by_pop)
+        for pop_name in counts:
+            allele_counts[pop_name] += counts[pop_name]
+            valid_loci_count[pop_name] += 1
+
+    # Calcul de la moyenne pour chaque population
+    for pop_name in population_names:
+        allele_counts[pop_name] /= (
+            valid_loci_count[pop_name] if valid_loci_count[pop_name] > 0 else 1
+        )
+
+    return allele_counts
+
+
+# ---------------------------------------------------------------------------
 # Point d'entrée principal
 # ---------------------------------------------------------------------------
 

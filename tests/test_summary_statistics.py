@@ -22,6 +22,7 @@ from bridge.loci_parser import parse_loci_description
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.summary_statistics import (
     _genotype_matrix_by_population,
+    _length_by_population,
     _prepare_matrices_poolseq,
     compute_all_statistics_dna,
     compute_all_statistics_microsat,
@@ -32,6 +33,7 @@ from bridge.summary_statistics import (
     compute_MP2,
     compute_MPB,
     compute_MPD,
+    compute_NAL,
     compute_NH2,
     compute_NHA,
     compute_NS2,
@@ -39,6 +41,7 @@ from bridge.summary_statistics import (
     compute_PSS,
     compute_VNS,
     compute_VPD,
+    count_alleles_per_population,
 )
 
 
@@ -701,6 +704,81 @@ def test_compute_all_statistics_dna(header_text_te2):
 # -----------------------------------------------------------------------
 # Pour les microsat
 # -----------------------------------------------------------------------
+
+
+def test_length_by_population(header_text_te2_XY):
+    """Vérifie _length_by_population sur un locus microsat (Locus_M_A_1_).
+
+    Convertit les codes de génotype en tailles réelles (pb) via
+    variant.alleles, puis compte les copies de gène par taille et par
+    population -- couvre les deux populations pour éviter de repasser
+    silencieusement au bug de découpage corrigé pendant l'écriture de
+    cette fonction (indexation par sample_ids plutôt que par un
+    intervalle [first_index, last_index] supposé contigu)."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+    mutated = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    ts = mutated["Locus_M_A_1_"]
+    results = _length_by_population(ts)
+
+    assert results.keys() == {"pop1", "pop2"}
+    assert results["pop1"] == [
+        (201, 0),
+        (203, 31),
+        (197, 1),
+        (193, 7),
+        (199, 0),
+        (189, 0),
+    ]
+    assert results["pop2"] == [
+        (201, 0),
+        (203, 18),
+        (197, 0),
+        (193, 20),
+        (199, 1),
+        (189, 1),
+    ]
+
+
+def test_count_alleles_per_population():
+    length_per_population = {
+        "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
+        "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
+    }
+
+    results = count_alleles_per_population(length_per_population)
+
+    assert results.keys() == {"pop1", "pop2"}
+    assert results["pop1"] == 3
+    assert results["pop2"] == 4
+
+
+def test_compute_NAL(header_text_te2_XY):
+    """Vérifie compute_NAL sur toy_example2_ms_dna_xy."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+    mutated = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    population_names = ["pop1", "pop2"]
+
+    results = compute_NAL(mutated.values(), population_names)
+
+    assert results.keys() == {"pop1", "pop2"}
+    assert results["pop1"] == 9.1
+    assert pytest.approx(results["pop2"]) == 79 / 9
 
 
 def test_compute_all_statistics_microsat(header_text_te2_XY):
