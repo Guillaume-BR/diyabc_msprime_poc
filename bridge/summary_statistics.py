@@ -2535,6 +2535,97 @@ def compute_MGW(
     return mgw_values
 
 
+# N2P - mean number of alleles across loci (two samples)
+
+
+def _combined_alleles_for_two_populations(
+    pop_a: list[tuple[int, int]], pop_b: list[tuple[int, int]]
+) -> float:
+    """Calcule N2P_ij pour une paire de populations à partir des listes de tuples (longueur, nb_sequence).
+
+    Args:
+        pop_a: Liste de tuples (longueur, nb_sequence) pour la première population.
+        pop_b: Liste de tuples (longueur, nb_sequence) pour la seconde population.
+
+    Returns:
+        La moyenne du nombre d'allèles distincts entre les deux populations.
+    """
+    alleles_a = {length for length, count in pop_a if count > 0}
+    alleles_b = {length for length, count in pop_b if count > 0}
+    combined_alleles = alleles_a.union(alleles_b)
+    return len(combined_alleles)
+
+
+def _count_combined_alleles_for_one_locus(
+    length_by_pop: dict[str, list[tuple[int, int]]], population_names: list[str]
+) -> dict[str, float]:
+    """Calcule le nombre total d'allèles distincts pour un locus donné.
+
+    Args:
+        length_by_pop: Dictionnaire {nom_population: [tuples (longueur, nb_sequence)]}.
+
+    Returns:
+        Le nombre total d'allèles distincts.
+    """
+    combined_alleles = {}
+    for i in range(len(population_names)):
+        for j in range(i + 1, len(population_names)):
+            if (
+                population_names[i] in length_by_pop
+                and population_names[j] in length_by_pop
+            ):
+                lengths_a = length_by_pop[f"pop{i + 1}"]
+                lengths_b = length_by_pop[f"pop{j + 1}"]
+                combined_alleles.setdefault(f"{i + 1}.{j + 1}", 0.0)
+                combined_alleles[f"{i + 1}.{j + 1}"] += (
+                    _combined_alleles_for_two_populations(lengths_a, lengths_b)
+                )
+            elif population_names[i] in length_by_pop:
+                lengths_a = length_by_pop[f"pop{i + 1}"]
+                combined_alleles.setdefault(f"{i + 1}.{j + 1}", 0.0)
+                combined_alleles[f"{i + 1}.{j + 1}"] += count_alleles_per_population(
+                    length_by_pop
+                )[population_names[i]]
+            elif population_names[j] in length_by_pop:
+                lengths_b = length_by_pop[f"pop{j + 1}"]
+                combined_alleles.setdefault(f"{i + 1}.{j + 1}", 0.0)
+                combined_alleles[f"{i + 1}.{j + 1}"] += count_alleles_per_population(
+                    length_by_pop
+                )[population_names[j]]
+    return combined_alleles
+
+
+def compute_N2P(
+    tree_sequences: list[tskit.TreeSequence], population_names: list[str]
+) -> dict[str, float]:
+    """Calcule N2P_i_j : pour chaque paire de populations, la moyenne du nombre d'allèles distincts
+    sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
+
+    Args:
+        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        population_names: Liste des noms de population.
+    Returns:
+        Dict {"i.j": N2P}.
+    """
+    valid_loci = {}
+    all_combined_alleles = {}
+    for ts in tree_sequences:
+        length_by_pop = _length_by_population(ts)
+        combined_alleles = _count_combined_alleles_for_one_locus(
+            length_by_pop, population_names
+        )
+        for key in combined_alleles:
+            valid_loci.setdefault(key, 0)
+            valid_loci[key] += 1
+            all_combined_alleles.setdefault(key, 0.0)
+            all_combined_alleles[key] += combined_alleles[key]
+
+    for key in all_combined_alleles:
+        all_combined_alleles[key] /= valid_loci[key]
+
+    return all_combined_alleles
+
+
 # ---------------------------------------------------------------------------
 # Point d'entrée principal
 # ---------------------------------------------------------------------------

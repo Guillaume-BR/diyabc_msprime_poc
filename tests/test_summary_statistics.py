@@ -21,8 +21,10 @@ from bridge.ancestry_simulation import (
 from bridge.loci_parser import parse_loci_description
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.summary_statistics import (
+    _combined_alleles_for_two_populations,
     _compute_MGW_by_locus,
     _compute_VAR_for_one_population,
+    _count_combined_alleles_for_one_locus,
     _genotype_matrix_by_population,
     _length_by_population,
     _prepare_matrices_poolseq,
@@ -38,6 +40,7 @@ from bridge.summary_statistics import (
     compute_MP2,
     compute_MPB,
     compute_MPD,
+    compute_N2P,
     compute_NAL,
     compute_NH2,
     compute_NHA,
@@ -998,3 +1001,46 @@ def test_compute_all_statistics_microsat(header_text_te2_XY):
         assert compute_all_statistics_microsat(
             header_text_te2_XY, mutated, population_names
         )
+
+
+def test_combined_alleles_for_two_populations():
+    """Vérifie que la fonction combine_alleles_for_two_populations fonctionne correctement."""
+    alleles_pop1 = [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)]
+    alleles_pop2 = [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)]
+
+    combined_alleles = _combined_alleles_for_two_populations(alleles_pop1, alleles_pop2)
+
+    assert combined_alleles == 5
+
+
+def test_count_combined_alleles_for_one_locus():
+    """Vérifie que la fonction _count_combined_alleles_for_one_locus fonctionne correctement."""
+    length_by_population = {
+        "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
+        "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
+    }
+
+    combined_alleles_count = _count_combined_alleles_for_one_locus(
+        length_by_population, ["pop1", "pop2"]
+    )
+
+    assert combined_alleles_count == {"1.2": 5.0}
+
+
+def test_compute_N2P(header_text_te2_XY):
+    """Vérifie compute_N2P sur toy_example2_ms_dna_xy."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+    mutated = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    population_names = ["pop1", "pop2"]
+
+    results = compute_N2P(mutated.values(), population_names)
+
+    assert results == {"1.2": 10.8}
