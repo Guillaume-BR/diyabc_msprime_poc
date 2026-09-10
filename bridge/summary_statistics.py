@@ -2294,6 +2294,247 @@ def compute_NAL(
     return allele_counts
 
 
+# HET : mean gene diversity across loci
+
+
+def total_genes_copies_per_population(
+    length_by_pop: dict[str, list[tuple[int, int]]],
+) -> dict[str, int]:
+    """Compte le nombre total d'allèles distincts pour chaque population.
+
+    Args:
+        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}.
+
+    Returns:
+        Dict {nom_population: nombre total d'allèles distincts}.
+    """
+    total_counts = {}
+    for pop_name in length_by_pop:
+        total_counts[pop_name] = sum([result[1] for result in length_by_pop[pop_name]])
+    return total_counts
+
+
+def _compute_HET_for_one_population(
+    total_count: int, _lengths_counts: list[tuple[int, int]]
+) -> float:
+    """Calcule HET pour une population donnée à partir du nombre total d'allèles et des comptes par longueur.
+
+    Args:
+        total_count: Nombre total d'allèles distincts pour la population.
+        _lengths_counts: Liste de tuples (longueur, nb_sequence) pour la population.
+
+    Returns:
+        La diversité génétique HET pour la population.
+    """
+    if total_count <= 1:
+        return 0.0
+    return (
+        1 - sum((count / total_count) ** 2 for _, count in _lengths_counts if count > 0)
+    ) * (total_count / (total_count - 1))
+
+
+def compute_HET(
+    tree_sequences: list[tskit.TreeSequence], population_names: list[str]
+) -> dict[str, float]:
+    """Calcule HET_i : pour chaque population, la moyenne de la diversité génétique
+    sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci
+    séquence d'un même `group Gx` du header).
+
+    Args:
+        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        population_names: Liste des noms de population.
+    Returns:
+        Dict {nom_population: HET}.
+    """
+    gene_diversity = {pop_name: 0.0 for pop_name in population_names}
+    valid_loci_count = {pop_name: 0 for pop_name in population_names}
+    for ts in tree_sequences:
+        length_by_pop = _length_by_population(ts)
+        total_counts = total_genes_copies_per_population(length_by_pop)
+        for pop_name in total_counts:
+            if total_counts[pop_name] > 1:
+                gene_diversity[pop_name] += _compute_HET_for_one_population(
+                    total_counts[pop_name], length_by_pop[pop_name]
+                )
+                valid_loci_count[pop_name] += 1
+    # Calcul de la moyenne pour chaque population
+    for pop_name in population_names:
+        gene_diversity[pop_name] /= (
+            valid_loci_count[pop_name] if valid_loci_count[pop_name] > 0 else 1
+        )
+
+    return gene_diversity
+
+
+# VAR : mean allele size variance across loci
+
+
+def _VAR_constants(
+    length_by_pop: dict[str, list[tuple[int, int]]],
+) -> tuple[dict[str, float], dict[str, int], dict[str, int]]:
+    """Calcule s = somme des tailles brutes (en pb, pas les comptes par valeur distincte), v = somme des tailles brutes au carré
+    et n = nombre total d'allèles.
+
+    Args:
+        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}.
+        motif_size: Taille du motif pour le locus.
+
+    Returns:
+        Tuple de trois dictionnaires : {nom_population: s}, {nom_population: v}, {nom_population: n}.
+    """
+    raw_sizes = {
+        pop_name: sum(
+            length * count for length, count in length_by_pop[pop_name] if count > 0
+        )
+        for pop_name in length_by_pop
+    }
+    raw_square_sizes = {
+        pop_name: sum(
+            length**2 * count for length, count in length_by_pop[pop_name] if count > 0
+        )
+        for pop_name in length_by_pop
+    }
+    total_counts = total_genes_copies_per_population(length_by_pop)
+    return raw_sizes, raw_square_sizes, total_counts
+
+
+def _compute_VAR_for_one_population(
+    raw_sizes: float, raw_square_sizes: float, total_count: int, motif_size: int
+) -> float:
+    """Calcule VAR pour une population donnée à partir des sommes brutes et du nombre total d'allèles.
+
+    Args:
+        raw_sizes: Somme des tailles brutes (en pb) pour la population.
+        raw_square_sizes: Somme des tailles brutes au carré pour la population.
+        total_count: Nombre total d'allèles distincts pour la population.
+        motif_size: Taille du motif pour le locus.
+
+    Returns:
+        La variance de la taille des allèles VAR pour la population.
+    """
+    if total_count <= 1:
+        return 0.0
+    return (
+        (raw_square_sizes - (raw_sizes**2) / total_count)
+        / (total_count - 1)
+        / (motif_size**2)
+    )
+
+
+def compute_VAR(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+    list_motif_sizes: list[int],
+) -> dict[str, float]:
+    """Calcule VAR_i : pour chaque population, la moyenne de la variance de la taille des allèles
+    sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
+
+    Args:
+        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        population_names: Liste des noms de population.
+        list_motif_sizes: Liste des tailles de motifs pour chaque locus.
+
+    Returns:
+        Dict {nom_population: VAR}.
+    """
+
+    allele_size_variance = {pop_name: 0.0 for pop_name in population_names}
+    valid_loci_count = {pop_name: 0 for pop_name in population_names}
+    for ts, motif_size in zip(tree_sequences, list_motif_sizes, strict=True):
+        length_by_pop = _length_by_population(ts)
+        raw_sizes, raw_square_sizes, total_counts = _VAR_constants(length_by_pop)
+        for pop_name in length_by_pop:
+            if total_counts[pop_name] > 1:
+                allele_size_variance[pop_name] += _compute_VAR_for_one_population(
+                    raw_sizes[pop_name],
+                    raw_square_sizes[pop_name],
+                    total_counts[pop_name],
+                    motif_size,
+                )
+                valid_loci_count[pop_name] += 1
+
+    # Calcul de la moyenne pour chaque population
+    for pop_name in population_names:
+        allele_size_variance[pop_name] /= (
+            valid_loci_count[pop_name] if valid_loci_count[pop_name] > 0 else 1
+        )
+
+    return allele_size_variance
+
+
+# MGW : mean M index across loci
+
+
+def _compute_MGW_by_locus(
+    length_by_pop: dict[str, list[tuple[int, int]]], motif_size: int
+) -> dict[str, tuple[float, float]]:
+    """Calcule (num, den) de MGW pour un locus, par population.
+
+    cal_mgw1p accumule num et den séparément sur tous les loci du groupe
+    et ne divise qu'une seule fois à la fin (num_total/den_total) --
+    PAS une moyenne des ratios num/den par locus. Cette brique retourne
+    donc les deux termes séparés plutôt qu'un ratio déjà calculé, pour
+    que compute_MGW puisse les accumuler correctement.
+
+    Args:
+        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}.
+        motif_size: Taille du motif pour ce locus.
+
+    Returns:
+        Dict {nom_population: (num, den)}.
+    """
+    result = {}
+    for pop_name in length_by_pop:
+        lengths_present = [
+            length for length, count in length_by_pop[pop_name] if count > 0
+        ]
+        if not lengths_present:
+            continue
+        num_alleles = len(lengths_present)
+        den = 1 + (max(lengths_present) - min(lengths_present)) / motif_size
+        result[pop_name] = (num_alleles, den)
+    return result
+
+
+def compute_MGW(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+    list_motif_sizes: list[int],
+) -> dict[str, float]:
+    """Calcule MGW_i : pour chaque population, la moyenne de l'indice M
+    sur tous les loci du groupe passé en argument (un groupe = les
+    TreeSequences des loci séquence d'un même `group Gx` du header).
+
+    Args:
+        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        population_names: Liste des noms de population.
+        list_motif_sizes: Liste des tailles de motifs pour chaque locus.
+
+    Returns:
+        Dict {nom_population: MGW}.
+    """
+    num_sum = {pop_name: 0.0 for pop_name in population_names}
+    den_sum = {pop_name: 0.0 for pop_name in population_names}
+    for ts, motif_size in zip(tree_sequences, list_motif_sizes, strict=True):
+        length_by_pop = _length_by_population(ts)
+        for pop_name, (num, den) in _compute_MGW_by_locus(
+            length_by_pop, motif_size
+        ).items():
+            num_sum[pop_name] += num
+            den_sum[pop_name] += den
+
+    # cal_mgw1p : un seul ratio num_total/den_total, pas une moyenne de
+    # ratios par locus -- voir docstring de _compute_MGW_by_locus.
+    mgw_values = {
+        pop_name: num_sum[pop_name] / den_sum[pop_name]
+        if den_sum[pop_name] > 0
+        else 0.0
+        for pop_name in population_names
+    }
+
+    return mgw_values
+
+
 # ---------------------------------------------------------------------------
 # Point d'entrée principal
 # ---------------------------------------------------------------------------
@@ -2405,8 +2646,6 @@ _DNA_PAIRWISE_STATS = {
     "HST": compute_HST,
 }
 
-_MICROSAT_STATS = {}
-
 
 def compute_all_statistics_dna(
     header_text: str,
@@ -2471,6 +2710,9 @@ def compute_all_statistics_dna(
                 results[key] = value
 
     return results
+
+
+_MICROSAT_STATS = {}
 
 
 def compute_all_statistics_microsat(
