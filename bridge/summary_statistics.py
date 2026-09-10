@@ -2369,7 +2369,7 @@ def compute_HET(
 # VAR : mean allele size variance across loci
 
 
-def _VAR_constants(
+def _compute_VAR_constants(
     length_by_pop: dict[str, list[tuple[int, int]]],
 ) -> tuple[dict[str, float], dict[str, int], dict[str, int]]:
     """Calcule s = somme des tailles brutes (en pb, pas les comptes par valeur distincte), v = somme des tailles brutes au carré
@@ -2442,7 +2442,9 @@ def compute_VAR(
     valid_loci_count = {pop_name: 0 for pop_name in population_names}
     for ts, motif_size in zip(tree_sequences, list_motif_sizes, strict=True):
         length_by_pop = _length_by_population(ts)
-        raw_sizes, raw_square_sizes, total_counts = _VAR_constants(length_by_pop)
+        raw_sizes, raw_square_sizes, total_counts = _compute_VAR_constants(
+            length_by_pop
+        )
         for pop_name in length_by_pop:
             if total_counts[pop_name] > 1:
                 allele_size_variance[pop_name] += _compute_VAR_for_one_population(
@@ -2538,7 +2540,7 @@ def compute_MGW(
 # N2P - mean number of alleles across loci (two samples)
 
 
-def _combined_alleles_for_two_populations(
+def _compute_N2P_for_one_pair(
     pop_a: list[tuple[int, int]], pop_b: list[tuple[int, int]]
 ) -> float:
     """Calcule N2P_ij pour une paire de populations à partir des listes de tuples (longueur, nb_sequence).
@@ -2556,7 +2558,7 @@ def _combined_alleles_for_two_populations(
     return len(combined_alleles)
 
 
-def _count_combined_alleles_for_one_locus(
+def _compute_N2P_for_one_locus(
     length_by_pop: dict[str, list[tuple[int, int]]], population_names: list[str]
 ) -> dict[str, float]:
     """Calcule le nombre total d'allèles distincts pour un locus donné.
@@ -2574,20 +2576,20 @@ def _count_combined_alleles_for_one_locus(
                 population_names[i] in length_by_pop
                 and population_names[j] in length_by_pop
             ):
-                lengths_a = length_by_pop[f"pop{i + 1}"]
-                lengths_b = length_by_pop[f"pop{j + 1}"]
+                lengths_a = length_by_pop[population_names[i]]
+                lengths_b = length_by_pop[population_names[j]]
                 combined_alleles.setdefault(f"{i + 1}.{j + 1}", 0.0)
-                combined_alleles[f"{i + 1}.{j + 1}"] += (
-                    _combined_alleles_for_two_populations(lengths_a, lengths_b)
+                combined_alleles[f"{i + 1}.{j + 1}"] += _compute_N2P_for_one_pair(
+                    lengths_a, lengths_b
                 )
             elif population_names[i] in length_by_pop:
-                lengths_a = length_by_pop[f"pop{i + 1}"]
+                lengths_a = length_by_pop[population_names[i]]
                 combined_alleles.setdefault(f"{i + 1}.{j + 1}", 0.0)
                 combined_alleles[f"{i + 1}.{j + 1}"] += count_alleles_per_population(
                     length_by_pop
                 )[population_names[i]]
             elif population_names[j] in length_by_pop:
-                lengths_b = length_by_pop[f"pop{j + 1}"]
+                lengths_b = length_by_pop[population_names[j]]
                 combined_alleles.setdefault(f"{i + 1}.{j + 1}", 0.0)
                 combined_alleles[f"{i + 1}.{j + 1}"] += count_alleles_per_population(
                     length_by_pop
@@ -2611,9 +2613,7 @@ def compute_N2P(
     all_combined_alleles = {}
     for ts in tree_sequences:
         length_by_pop = _length_by_population(ts)
-        combined_alleles = _count_combined_alleles_for_one_locus(
-            length_by_pop, population_names
-        )
+        combined_alleles = _compute_N2P_for_one_locus(length_by_pop, population_names)
         for key in combined_alleles:
             valid_loci.setdefault(key, 0)
             valid_loci[key] += 1
@@ -2624,6 +2624,242 @@ def compute_N2P(
         all_combined_alleles[key] /= valid_loci[key]
 
     return all_combined_alleles
+
+
+# H2P - mean gene diversity across loci (two samples)
+
+
+def _pool_allele_counts_for_two_populations(
+    pop_1: list[tuple[int, int]], pop_2: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    """Fusionne les comptes bruts de deux populations, allèle par allèle.
+
+    Ne calcule ni H2P ni une fréquence -- juste n_i·freq_i + n_j·freq_j
+    (= compte_i + compte_j, la division par n_i/n_j s'annulant avec la
+    multiplication), pour que _compute_H2P_for_one_pair puisse
+    réutiliser _compute_HET_for_one_population dessus (qui fait
+    lui-même la division par le total).
+
+    Args:
+        pop_1: Liste de tuples (longueur, nb_sequence) pour la population 1.
+        pop_2: Liste de tuples (longueur, nb_sequence) pour la population 2.
+
+    Returns:
+        Liste de tuples (longueur, compte poolé) pour chaque allèle.
+    """
+    pooled_counts = []
+    n1 = sum(count for _, count in pop_1)
+    n2 = sum(count for _, count in pop_2)
+    n = n1 + n2
+    if n <= 1:
+        return [(0, 0.0)]
+    else:
+        for length, count_1 in pop_1:
+            count_2 = next((count for len, count in pop_2 if len == length), 0)
+            total = count_1 + count_2
+            pooled_counts.append((length, total))
+
+    return pooled_counts
+
+
+def _compute_H2P_for_one_pair(
+    length_by_pop: dict[str, list[tuple[int, int]]], pop_a: str, pop_b: str
+) -> float:
+    """Calcule H2P_ij pour une paire de populations à partir des listes de tuples (longueur, nb_sequence).
+
+    Args:
+        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}.
+        pop_a: Nom de la première population.
+        pop_b: Nom de la seconde population.
+
+    Returns:
+        La diversité génétique H2P pour la paire de populations.
+    """
+    if pop_a not in length_by_pop or pop_b not in length_by_pop:
+        raise KeyError(
+            "L'une des populations n'est pas présente dans les matrices de génotypes."
+        )
+    pooled_counts = _pool_allele_counts_for_two_populations(
+        length_by_pop[pop_a], length_by_pop[pop_b]
+    )
+    total_count = sum(count for _, count in pooled_counts)
+    if total_count <= 1:
+        return 0.0
+    return (
+        1 - sum((count / total_count) ** 2 for _, count in pooled_counts if count > 0)
+    ) * (total_count / (total_count - 1))
+
+
+def compute_H2P(
+    tree_sequences: list[tskit.TreeSequence], population_names: list[str]
+) -> dict[str, float]:
+
+    H2P_values = {}
+    for ts in tree_sequences:
+        length_by_pop = _length_by_population(ts)
+        for i in range(len(population_names)):
+            for j in range(i + 1, len(population_names)):
+                if (
+                    population_names[i] in length_by_pop
+                    and population_names[j] in length_by_pop
+                ):
+                    H2P_value = _compute_H2P_for_one_pair(
+                        length_by_pop, population_names[i], population_names[j]
+                    )
+                    H2P_values.setdefault(f"{i + 1}.{j + 1}", []).append(H2P_value)
+                else:
+                    total_counts = total_genes_copies_per_population(length_by_pop)
+                    if population_names[i] in length_by_pop:
+                        _lengths_counts = length_by_pop[population_names[i]]
+                        H2P_value = _compute_HET_for_one_population(
+                            total_counts[population_names[i]], _lengths_counts
+                        )
+                        H2P_values.setdefault(f"{i + 1}.{j + 1}", []).append(H2P_value)
+                    elif population_names[j] in length_by_pop:
+                        _lengths_counts = length_by_pop[population_names[j]]
+                        H2P_value = _compute_HET_for_one_population(
+                            total_counts[population_names[j]], _lengths_counts
+                        )
+                        H2P_values.setdefault(f"{i + 1}.{j + 1}", []).append(H2P_value)
+    for key in H2P_values:
+        H2P_values[key] = (
+            sum(H2P_values[key]) / len(H2P_values[key])
+            if len(H2P_values[key]) > 0
+            else 0.0
+        )
+    return H2P_values
+
+
+# V2P : mean allele size variance across loci (two samples)
+
+
+def _compute_V2P_constants(
+    population1: str,
+    population2: str,
+    raw_sizes: dict[str, float],
+    raw_square_sizes: dict[str, int],
+    total_counts: dict[str, int],
+) -> tuple[float, float, int]:
+    """
+    Calcule les constantes nécessaires pour V2P pour une paire de populations.
+
+    Args:
+        population1: Nom de la première population.
+        population2: Nom de la seconde population.
+        raw_sizes: Dict {nom_population: somme des tailles brutes}.
+        raw_square_sizes: Dict {nom_population: somme des tailles brutes au carré}.
+        total_counts: Dict {nom_population: nombre total d'allèles distincts}.
+
+    Returns:
+        Tuple (raw_size_sum, raw_square_size_sum, total_count_sum) pour la paire
+    """
+
+    raw_size_sum = raw_sizes.get(population1, 0.0) + raw_sizes.get(population2, 0.0)
+    raw_square_size_sum = raw_square_sizes.get(population1, 0) + raw_square_sizes.get(
+        population2, 0
+    )
+    total_count_sum = total_counts.get(population1, 0) + total_counts.get(
+        population2, 0
+    )
+    return raw_size_sum, raw_square_size_sum, total_count_sum
+
+
+def compute_V2P(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+    list_motif_sizes: list[int],
+) -> dict[str, float]:
+
+    V2P_values = {}
+    for ts, motif_size in zip(tree_sequences, list_motif_sizes, strict=True):
+        length_by_pop = _length_by_population(ts)
+        raw_sizes, raw_square_sizes, total_counts = _compute_VAR_constants(
+            length_by_pop
+        )
+        for i in range(len(population_names)):
+            for j in range(i + 1, len(population_names)):
+                pop_a = population_names[i]
+                pop_b = population_names[j]
+                raw_size_sum, raw_square_size_sum, total_count_sum = (
+                    _compute_V2P_constants(
+                        pop_a, pop_b, raw_sizes, raw_square_sizes, total_counts
+                    )
+                )
+                if total_count_sum > 1:
+                    V2P_value = _compute_VAR_for_one_population(
+                        raw_size_sum, raw_square_size_sum, total_count_sum, motif_size
+                    )
+                    V2P_values.setdefault(f"{i + 1}.{j + 1}", []).append(V2P_value)
+
+    for key in V2P_values:
+        V2P_values[key] = (
+            sum(V2P_values[key]) / len(V2P_values[key])
+            if len(V2P_values[key]) > 0
+            else 0.0
+        )
+
+    return V2P_values
+
+
+# [DAS] - shared allele distance between two samples (Chakraborty and Jin 1993)
+
+
+def _compute_identical_pair_for_one_pair(
+    length_by_pop: dict[str, list[tuple[int, int]]], pop_a: str, pop_b: str
+) -> tuple[int, int]:
+    """Calcule le nombre de paires d'allèles identiques et le nombre total de paires possibles pour une paire de populations.
+
+    Args:
+        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}.
+        pop_a: Nom de la première population.
+        pop_b: Nom de la seconde population.
+
+    Returns:
+        Tuple (identical_count, total_count) pour la paire de populations.
+    """
+    counts_a = {
+        length: count for length, count in length_by_pop.get(pop_a, []) if count > 0
+    }
+    counts_b = {
+        length: count for length, count in length_by_pop.get(pop_b, []) if count > 0
+    }
+    identical_count = sum(
+        counts_a.get(length, 0) * counts_b.get(length, 0)
+        for length in set(counts_a) | set(counts_b)
+    )
+    total_count = sum(counts_a.values()) * sum(
+        counts_b.values()
+    )  # nombre total de paires possibles
+    return identical_count, total_count
+
+
+def compute_DAS(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+
+    pairs = [
+        (i, j)
+        for i in range(len(population_names))
+        for j in range(i + 1, len(population_names))
+    ]
+    identical_sum = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
+    total_sum = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
+
+    for ts in tree_sequences:
+        length_by_pop = _length_by_population(ts)
+        for i, j in pairs:
+            key = f"{i + 1}.{j + 1}"
+            identical_count, total_count = _compute_identical_pair_for_one_pair(
+                length_by_pop, population_names[i], population_names[j]
+            )
+            identical_sum[key] += identical_count
+            total_sum[key] += total_count
+
+    return {
+        key: identical_sum[key] / total_sum[key] if total_sum[key] > 0 else 0.0
+        for key in identical_sum
+    }
 
 
 # ---------------------------------------------------------------------------

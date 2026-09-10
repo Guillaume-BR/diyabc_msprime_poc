@@ -21,18 +21,24 @@ from bridge.ancestry_simulation import (
 from bridge.loci_parser import parse_loci_description
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.summary_statistics import (
-    _combined_alleles_for_two_populations,
+    _compute_H2P_for_one_pair,
+    _compute_identical_pair_for_one_pair,
     _compute_MGW_by_locus,
+    _compute_N2P_for_one_locus,
+    _compute_N2P_for_one_pair,
+    _compute_V2P_constants,
+    _compute_VAR_constants,
     _compute_VAR_for_one_population,
-    _count_combined_alleles_for_one_locus,
     _genotype_matrix_by_population,
     _length_by_population,
+    _pool_allele_counts_for_two_populations,
     _prepare_matrices_poolseq,
-    _VAR_constants,
     compute_all_statistics_dna,
     compute_all_statistics_microsat,
     compute_all_statistics_poolseq,
+    compute_DAS,
     compute_DTA,
+    compute_H2P,
     compute_HET,
     compute_HST,
     compute_MGW,
@@ -47,6 +53,7 @@ from bridge.summary_statistics import (
     compute_NS2,
     compute_NSS,
     compute_PSS,
+    compute_V2P,
     compute_VAR,
     compute_VNS,
     compute_VPD,
@@ -849,7 +856,10 @@ def test_compute_HET(header_text_te2_XY):
     assert pytest.approx(results["pop2"]) == 7.244601889338731 / 9
 
 
-def test_VAR_constants(header_text_te2_XY):
+# tests pour la stat VAR (Variance of Repeat Number) pour microsatellites
+
+
+def test_compute_VAR_constants(header_text_te2_XY):
     """Vérifie que les constantes de compute_VAR sont correctes."""
     demography, _ = build_random_demography_for_scenario_index(
         header_text_te2_XY, scenario_index=1, seed=42
@@ -862,7 +872,9 @@ def test_VAR_constants(header_text_te2_XY):
     )
 
     length_by_population = _length_by_population(mutated["Locus_M_A_1_"])
-    raw_sizes, raw_square_sizes, total_counts = _VAR_constants(length_by_population)
+    raw_sizes, raw_square_sizes, total_counts = _compute_VAR_constants(
+        length_by_population
+    )
 
     assert raw_sizes.keys() == {"pop1", "pop2"}
     assert raw_square_sizes.keys() == {"pop1", "pop2"}
@@ -895,7 +907,7 @@ def test_compute_VAR_for_one_population(header_text_te2_XY):
         seed=42,
     )
 
-    s, v, n = _VAR_constants(_length_by_population(mutated["Locus_M_A_1_"]))
+    s, v, n = _compute_VAR_constants(_length_by_population(mutated["Locus_M_A_1_"]))
     result = _compute_VAR_for_one_population(s["pop1"], v["pop1"], n["pop1"], 2)
 
     s1, v1, n1 = (
@@ -930,6 +942,9 @@ def test_compute_VAR(header_text_te2_XY):
     assert results.keys() == {"pop1", "pop2"}
     assert pytest.approx(results["pop1"]) == 154.90377867746088 / 10
     assert pytest.approx(results["pop2"]) == 132.11953441295188 / 9
+
+
+# tests pour la stat MGW (Mean Gene Width) pour microsatellites
 
 
 def test_compute_MGW_by_locus(header_text_te2_XY):
@@ -1003,24 +1018,24 @@ def test_compute_all_statistics_microsat(header_text_te2_XY):
         )
 
 
-def test_combined_alleles_for_two_populations():
-    """Vérifie que la fonction combine_alleles_for_two_populations fonctionne correctement."""
+def test_compute_N2P_for_one_pair():
+    """Vérifie que la fonction _compute_N2P_for_one_pair fonctionne correctement."""
     alleles_pop1 = [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)]
     alleles_pop2 = [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)]
 
-    combined_alleles = _combined_alleles_for_two_populations(alleles_pop1, alleles_pop2)
+    combined_alleles = _compute_N2P_for_one_pair(alleles_pop1, alleles_pop2)
 
     assert combined_alleles == 5
 
 
-def test_count_combined_alleles_for_one_locus():
-    """Vérifie que la fonction _count_combined_alleles_for_one_locus fonctionne correctement."""
+def test_compute_N2P_for_one_locus():
+    """Vérifie que la fonction _compute_N2P_for_one_locus fonctionne correctement."""
     length_by_population = {
         "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
         "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
     }
 
-    combined_alleles_count = _count_combined_alleles_for_one_locus(
+    combined_alleles_count = _compute_N2P_for_one_locus(
         length_by_population, ["pop1", "pop2"]
     )
 
@@ -1044,3 +1059,174 @@ def test_compute_N2P(header_text_te2_XY):
     results = compute_N2P(mutated.values(), population_names)
 
     assert results == {"1.2": 10.8}
+
+
+# tests relatifs à la stat H2P
+
+
+def test_pool_allele_counts_for_two_populations():
+    """Vérifie que la fonction _pool_allele_counts_for_two_populations fonctionne correctement."""
+    alleles_pop1 = [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)]
+    alleles_pop2 = [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)]
+
+    pooled_counts = _pool_allele_counts_for_two_populations(alleles_pop1, alleles_pop2)
+
+    expected_pooled_counts = [
+        (201, 0.0),
+        (203, 49.0),
+        (197, 1.0),
+        (193, 27.0),
+        (199, 1.0),
+        (189, 1.0),
+    ]
+    assert pooled_counts == expected_pooled_counts
+
+
+def test_compute_H2P_for_one_pair():
+    """Vérifie que la fonction _compute_H2P_for_one_pair fonctionne correctement."""
+    length_by_pop = {
+        "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
+        "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
+    }
+
+    h2p_value = _compute_H2P_for_one_pair(length_by_pop, "pop1", "pop2")
+
+    expected_h2p_value = (
+        79
+        / 78
+        * (
+            1
+            - (49 / 79) ** 2
+            - (1 / 79) ** 2
+            - (27 / 79) ** 2
+            - (1 / 79) ** 2
+            - (1 / 79) ** 2
+        )
+    )
+    assert pytest.approx(h2p_value) == expected_h2p_value
+
+    with pytest.raises(KeyError, match="L'une des populations n'est pas"):
+        _compute_H2P_for_one_pair(length_by_pop, "pop1", "pop3")
+
+
+def test_compute_H2P(header_text_te2_XY):
+    """Vérifie compute_H2P sur toy_example2_ms_dna_xy."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+    mutated = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    population_names = ["pop1", "pop2"]
+
+    results = compute_H2P(mutated.values(), population_names)
+
+    assert pytest.approx(results["1.2"]) == 0.8132570166897283
+
+
+# tests relatifs à la stat V2P
+
+
+def test_compute_V2P_constants():
+    """Vérifie que les constantes de compute_V2P sont correctes."""
+    length_by_population = {
+        "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
+        "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
+    }
+
+    s, v, n = _compute_VAR_constants(length_by_population)
+
+    s1, v1, n1 = _compute_V2P_constants("pop1", "pop2", s, v, n)
+
+    assert (
+        s1
+        == 203 * 31
+        + 197 * 1
+        + 193 * 7
+        + 199 * 0
+        + 189 * 0
+        + 203 * 18
+        + 197 * 0
+        + 193 * 20
+        + 199 * 1
+        + 189 * 1
+    )
+    assert (
+        v1
+        == 203**2 * 31
+        + 197**2 * 1
+        + 193**2 * 7
+        + 199**2 * 0
+        + 189**2 * 0
+        + 203**2 * 18
+        + 197**2 * 0
+        + 193**2 * 20
+        + 199**2 * 1
+        + 189**2 * 1
+    )
+    assert n1 == 39 + 40
+
+
+def test_compute_V2P(header_text_te2_XY):
+    """Vérifie compute_V2P sur toy_example2_ms_dna_xy."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+    mutated = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    list_loci = parse_loci_description(header_text_te2_XY)
+    list_motif_sizes = [
+        locus.motif_size for locus in list_loci if locus.ms_or_seq == "M"
+    ]
+    population_names = ["pop1", "pop2"]
+
+    results = compute_V2P(mutated.values(), population_names, list_motif_sizes)
+
+    assert pytest.approx(results["1.2"]) == 15.091707024376934
+
+
+# tests relatifs à la stat DAS
+
+
+def test_compute_identical_pair_for_one_pair():
+    """Vérifie que la fonction _compute_identical_pair_for_one_pair fonctionne correctement."""
+    length_by_pop = {
+        "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
+        "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
+    }
+    pop_a, pop_b = "pop1", "pop2"
+
+    identical_count, total_count = _compute_identical_pair_for_one_pair(
+        length_by_pop, pop_a, pop_b
+    )
+
+    assert total_count == 39 * 40
+    assert identical_count == 31 * 18 + 7 * 20
+
+
+def test_compute_DAS(header_text_te2_XY):
+    """Vérifie compute_DAS sur toy_example2_ms_dna_xy."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+    mutated = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    population_names = ["pop1", "pop2"]
+
+    results = compute_DAS(mutated.values(), population_names)
+
+    assert pytest.approx(results["1.2"]) == 0.17150455927051672
