@@ -21,15 +21,23 @@ from bridge.ancestry_simulation import (
 from bridge.loci_parser import parse_loci_description
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.summary_statistics import (
+    _compute_DM2_for_one_locus,
+    _compute_FST_constants_for_two_populations_combined,
+    _compute_FST_constants_on_all_alleles_for_two_populations,
     _compute_H2P_for_one_pair,
     _compute_identical_pair_for_one_pair,
+    _compute_LIK_for_one_locus,
     _compute_MGW_by_locus,
     _compute_N2P_for_one_locus,
     _compute_N2P_for_one_pair,
+    _compute_ni_nA_AA_for_one_population,
+    _compute_num_den_lik_for_one_individual,
     _compute_V2P_constants,
     _compute_VAR_constants,
     _compute_VAR_for_one_population,
     _genotype_matrix_by_population,
+    _genotypes_by_pop_and_individuals,
+    _length_by_pop_and_individuals,
     _length_by_population,
     _pool_allele_counts_for_two_populations,
     _prepare_matrices_poolseq,
@@ -37,10 +45,13 @@ from bridge.summary_statistics import (
     compute_all_statistics_microsat,
     compute_all_statistics_poolseq,
     compute_DAS,
+    compute_DM2,
     compute_DTA,
+    compute_FST,
     compute_H2P,
     compute_HET,
     compute_HST,
+    compute_LIK,
     compute_MGW,
     compute_MNS,
     compute_MP2,
@@ -1230,3 +1241,328 @@ def test_compute_DAS(header_text_te2_XY):
     results = compute_DAS(mutated.values(), population_names)
 
     assert pytest.approx(results["1.2"]) == 0.17150455927051672
+
+
+# tests relatifs à la stat DM2
+
+
+def test_compute_DM2_for_one_locus():
+    """Vérifie que la fonction _compute_DM2_for_one_locus fonctionne correctement."""
+    # test sur un locus où les deux populations sont présentes
+    length_by_population = {
+        "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
+        "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
+    }
+
+    raw_sizes, _, total_counts = _compute_VAR_constants(length_by_population)
+
+    contribution, new_moy, was_valid = _compute_DM2_for_one_locus(
+        "pop1", "pop2", 2, length_by_population, raw_sizes, total_counts, None
+    )
+
+    moy_1 = raw_sizes["pop1"] / total_counts["pop1"]
+    moy_2 = raw_sizes["pop2"] / total_counts["pop2"]
+    assert contribution == ((moy_2 - moy_1) / 2) ** 2
+    assert pytest.approx(new_moy) == (moy_1, moy_2)
+    assert was_valid
+
+    # test sur un locus où une des populations est absente.
+    length_by_population_2 = {
+        "pop1": [
+            (208, 1),
+            (212, 4),
+            (210, 0),
+            (214, 2),
+            (206, 0),
+            (202, 0),
+            (204, 0),
+            (198, 6),
+            (200, 3),
+            (218, 0),
+            (216, 2),
+            (196, 2),
+        ]
+    }
+
+    raw_sizes_2, _, total_counts_2 = _compute_VAR_constants(length_by_population_2)
+
+    contribution_2, new_moy_2, was_valid_2 = _compute_DM2_for_one_locus(
+        "pop1",
+        "pop2",
+        2,
+        length_by_population_2,
+        raw_sizes_2,
+        total_counts_2,
+        (100.0, 105.0),
+    )
+
+    assert contribution_2 == ((105.0 - 100.0) / 2) ** 2
+    assert new_moy_2 == (100.0, 105.0)
+    assert not was_valid_2
+
+
+def test_compute_DM2(header_text_te2_XY):
+    """Vérifie compute_DM2 sur toy_example2_ms_dna_xy."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+    mutated = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    list_loci = parse_loci_description(header_text_te2_XY)
+    list_motif_sizes = [
+        locus.motif_size for locus in list_loci if locus.ms_or_seq == "M"
+    ]
+    population_names = ["pop1", "pop2"]
+
+    results = compute_DM2(mutated.values(), population_names, list_motif_sizes)
+
+    assert pytest.approx(results["1.2"]) == 0.7197632222952716
+
+
+# test relatifs à la stat FST
+def test_length_by_pop_and_individuals(header_text_te2_XY):
+    """Vérifie _length_by_pop_and_individuals sur un locus microsat (Locus_M_A_1_).
+
+    Convertit les codes de génotype en tailles réelles (pb) via
+    variant.alleles, puis compte les copies de gène par taille et par
+    population -- couvre les deux populations pour éviter de repasser
+    silencieusement au bug de découpage corrigé pendant l'écriture de
+    cette fonction (indexation par sample_ids plutôt que par un
+    intervalle [first_index, last_index] supposé contigu)."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+    mutated = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    ts = mutated["Locus_M_A_1_"]
+    results = _length_by_pop_and_individuals(ts)
+
+    assert results.keys() == {"pop1", "pop2"}
+    assert results["pop1"] == [
+        (203, 203),
+        (203, 203),
+        (203, 193),
+        (203, 203),
+        (203, 203),
+        (203, 193),
+        (203, 203),
+        (203, 203),
+        (203, 203),
+        (203, 193),
+        (203, 203),
+        (193, 193),
+        (203, 203),
+        (203, 193),
+        (197, 203),
+        (203, 193),
+        (203, 203),
+        (203, 203),
+        (203, 203),
+        (203, 203),
+    ]
+
+
+def test_compute_ni_nA_AA_for_one_population():
+    """Vérifie que la fonction _compute_ni_nA_AA_for_one_population fonctionne correctement."""
+    alleles_per_individual = [(203, 203), (203, 203), (203, 193), (203, 203)]
+
+    ni, nA, AA = _compute_ni_nA_AA_for_one_population(alleles_per_individual, 203)
+
+    assert ni == 4
+    assert nA == 7
+    assert AA == 3
+
+
+def test_compute_FST_constants_for_two_populations_combined():
+    pairs_1 = [(203, 203), (203, 203), (203, 193), (203, 203)]
+    pairs_2 = [(203, 203), (203, 193), (197, 203), (203, 193)]
+
+    s2G, s2I, s2p = _compute_FST_constants_for_two_populations_combined(
+        pairs_1, pairs_2, 203
+    )
+
+    assert s2G == 8
+    assert s2I == 6
+    assert s2p == 3
+
+    # second test avec une allele non_presente
+    s2G, s2I, s2p = _compute_FST_constants_for_two_populations_combined(
+        pairs_1, pairs_2, 58
+    )
+    assert s2G == 0
+    assert s2I == 0
+    assert s2p == 0
+
+
+def test_compute_FST_constants_on_all_alleles_for_two_populations():
+    """Vérifie que la fonction _compute_constants_on_all_alleles_for_two_populations fonctionne correctement."""
+    length_by_pop = {
+        "pop1": [(203, 203), (203, 203), (203, 193), (203, 203)],
+        "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
+    }
+
+    s1l, s2l, s3l = _compute_FST_constants_on_all_alleles_for_two_populations(
+        length_by_pop, "pop1", "pop2"
+    )
+
+    assert pytest.approx(s1l) == 0.005208333333333332
+    assert pytest.approx(s2l) == -0.078125
+    assert pytest.approx(s3l) == 0.421875
+
+    # nouveau test avec des pop non présente
+    s1l, s2l, s3l = _compute_FST_constants_on_all_alleles_for_two_populations(
+        length_by_pop, "pop3", "pop4"
+    )
+
+    assert s1l == 0.0
+    assert s2l == 0.0
+    assert s3l == 0.0
+
+
+def test_compute_FST(header_text_te2_XY):
+    """Vérifie compute_FST sur toy_example2_ms_dna_xy."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+    mutated = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    population_names = ["pop1", "pop2"]
+
+    results = compute_FST(mutated.values(), population_names)
+
+    assert pytest.approx(results["1.2"]) == 0.0053703676256255965
+
+
+# tests relatif à la stat LIK
+
+
+def test_genotypes_by_pop_and_individuals(header_text_te2_XY):
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+    mutated = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    ts = mutated["Locus_M_A_1_"]
+    results = _genotypes_by_pop_and_individuals(ts)
+
+    assert results.keys() == {"pop1", "pop2"}
+    assert results["pop1"] == [
+        (203, 203),
+        (203, 203),
+        (203, 193),
+        (203, 203),
+        (203, 203),
+        (203, 193),
+        (203, 203),
+        (203, 203),
+        (203, 203),
+        (203, 193),
+        (203, 203),
+        (193, 193),
+        (203, 203),
+        (203, 193),
+        (197, 203),
+        (203, 193),
+        (203, 203),
+        (203, 203),
+        (203, 203),
+        (203,),
+    ]
+
+
+def test_compute_num_den_lik_for_one_individual():
+    """Vérifie que la fonction _compute_num_den_lik_for_one_individual fonctionne correctement."""
+    count = {203: 1, 200: 1, 197: 1}
+    total_count = 3
+    b = 1
+
+    # test haploïde
+    genotype_haploid = (203,)
+    num, den = _compute_num_den_lik_for_one_individual(
+        genotype_haploid, count, total_count, b
+    )
+    assert num == 2
+    assert den == 4
+
+    # test diploïde homozygote
+    genotype_diploid_homo = (203, 203)
+    num, den = _compute_num_den_lik_for_one_individual(
+        genotype_diploid_homo, count, total_count, b
+    )
+    assert num == 6
+    assert den == 20
+
+    # test diploïde heteozygote
+    genotype_diploid_hetero = (203, 200)
+    num, den = _compute_num_den_lik_for_one_individual(
+        genotype_diploid_hetero, count, total_count, b
+    )
+    assert num == 8
+    assert den == 20
+
+
+def test_compute_LIK_for_one_locus():
+    length_by_pop = {
+        "pop1": [(203, 203), (203, 203), (203, 193), (203, 203)],
+        "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
+    }
+    genotypes_by_pop = {
+        "pop1": [(203, 203), (203, 203), (203, 193), (203,)],
+        "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
+    }
+
+    lik, present = _compute_LIK_for_one_locus(
+        length_by_pop, genotypes_by_pop, "pop1", "pop2"
+    )
+    assert pytest.approx(lik) == 1.1175620386325875
+    assert present
+
+    # test avec une population absente
+    lik, present = _compute_LIK_for_one_locus(
+        length_by_pop, genotypes_by_pop, "pop3", "pop2"
+    )
+    assert pytest.approx(lik) == 0.0
+    assert not present
+
+
+def test_compute_LIK(header_text_te2_XY):
+    """Vérifie compute_LIK sur toy_example2_ms_dna_xy."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+    mutated = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    population_names = ["pop1", "pop2"]
+
+    results = compute_LIK(mutated.values(), population_names)
+
+    assert len(results) == 2
+    assert (
+        results["1.2"] != results["2.1"]
+    )  # pas de garanti que ce soit vrai sur tous les datasets
+    assert pytest.approx(results["1.2"]) == 2.36209962972902

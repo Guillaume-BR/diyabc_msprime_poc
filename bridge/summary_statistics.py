@@ -2862,6 +2862,500 @@ def compute_DAS(
     }
 
 
+# [DM2] - distance between two samples (Goldstein et al. 1995)
+
+
+def _compute_DM2_for_one_locus(
+    pop_a: str,
+    pop_b: str,
+    motif_size: int,
+    length_by_pop: dict[str, list[tuple[int, int]]],
+    raw_sizes: dict[str, float],
+    total_counts: dict[str, int],
+    previous_moy: tuple[float, float] | None,
+) -> tuple[float, tuple[float, float] | None, bool]:
+    """Calcule la contribution de DM2 à UN locus, pour une paire de populations.
+
+    Reproduit fidèlement un bug de cal_dmu2p (sumstat.cpp) : dans le
+    C++, le buffer moy[] est alloué UNE SEULE FOIS avant la boucle sur
+    les loci, et n'est réécrit que si les deux populations ont des
+    échantillons à ce locus (sasize*sasize1 > 0) -- sinon il garde les
+    valeurs (moy_a, moy_b) du DERNIER locus valide. Mais la ligne
+    d'accumulation (dmu2 += sqr((moy[1]-moy[0])/motif_size)) est en
+    dehors du if qui protège le calcul de moy[] -- elle s'exécute donc
+    à CHAQUE locus, y compris avec des valeurs de moy[] périmées (d'un
+    autre locus), divisées par le motif_size du locus COURANT. `nl`,
+    lui, n'est incrémenté que quand les deux populations sont
+    présentes -- numérateur et dénominateur sont donc désynchronisés
+    dès qu'un tel locus existe.
+
+    Ce n'est pas un choix statistique voulu (aucune justification
+    biologique à réutiliser le delta-mu d'un locus différent) mais un
+    bug de portée de variable en C++, de la même famille que le bug
+    mutsit/sitefix déjà documenté pour sample_site_rates (header.cpp)
+    -- confirmé avec l'utilisateur le 2026-09-11. Reproduit ici pour
+    coller bit à bit à la sortie réelle de DIYABC ; la version "voulue"
+    (sauter proprement le locus invalide) est gardée en commentaire
+    ci-dessous, au cas où une future décision serait de corriger plutôt
+    que reproduire ce comportement.
+
+    Args:
+        pop_a: Nom de la première population.
+        pop_b: Nom de la seconde population.
+        motif_size: Taille du motif pour CE locus.
+        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}
+            pour CE locus.
+        raw_sizes: Dict {nom_population: somme des tailles brutes} pour
+            CE locus (sortie de _compute_VAR_constants).
+        total_counts: Dict {nom_population: nombre total de copies de
+            gène} pour CE locus (sortie de _compute_VAR_constants).
+        previous_moy: Le (moy_a, moy_b) du dernier locus valide
+            rencontré pour cette paire, ou None si aucun locus valide
+            n'a encore été rencontré (tout premier locus du groupe --
+            cas non observé sur nos datasets, où le premier locus a
+            toujours les deux populations présentes).
+
+    Returns:
+        Tuple (contribution, new_moy, was_valid) :
+            contribution: le terme à ajouter à la somme dmu2 pour ce
+                locus (0.0 si previous_moy vaut encore None).
+            new_moy: (moy_a, moy_b) mis à jour -- recalculé si les deux
+                populations sont présentes à ce locus, sinon identique
+                à previous_moy (le bug reproduit).
+            was_valid: True si les deux populations étaient présentes à
+                ce locus (donc si ce locus doit compter dans nl).
+    """
+    both_present = pop_a in length_by_pop and pop_b in length_by_pop
+
+    if both_present:
+        moy_a = raw_sizes[pop_a] / total_counts[pop_a]
+        moy_b = raw_sizes[pop_b] / total_counts[pop_b]
+        new_moy = (moy_a, moy_b)
+    else:
+        # BUG REPRODUIT (cal_dmu2p) : moy[] n'est pas recalculé, on
+        # réutilise les valeurs périmées du dernier locus valide.
+        # Version "voulue" (non utilisée ici) :
+        #     return 0.0, previous_moy, False
+        new_moy = previous_moy
+
+    if new_moy is None:
+        return 0.0, new_moy, both_present
+
+    moy_a, moy_b = new_moy
+    contribution = ((moy_b - moy_a) / motif_size) ** 2
+    return contribution, new_moy, both_present
+
+
+def compute_DM2(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+    list_motif_sizes: list[int],
+) -> dict[str, float]:
+    """Calcule DM2_i_j : (delta mu)^2 de Goldstein et al. (1995), pour
+    chaque paire de populations, sur tous les loci du groupe passé en
+    argument.
+
+    Reproduit fidèlement le bug d'accumulation de cal_dmu2p -- voir le
+    docstring de _compute_DM2_for_one_locus. L'ORDRE d'itération sur
+    les loci compte ici, contrairement aux autres stats microsat de ce
+    fichier : chaque locus peut réutiliser l'état (moy) du précédent,
+    donc `tree_sequences`/`list_motif_sizes` doivent être dans l'ordre
+    réel du groupe (celui du header), pas un ordre arbitraire.
+
+    Args:
+        tree_sequences: Liste de TreeSequences, DANS L'ORDRE du groupe.
+        population_names: Liste des noms de population.
+        list_motif_sizes: Liste des tailles de motifs, un par locus,
+            dans le même ordre que tree_sequences.
+
+    Returns:
+        Dict {"i.j": DM2}.
+    """
+    pairs = [
+        (i, j)
+        for i in range(len(population_names))
+        for j in range(i + 1, len(population_names))
+    ]
+    dmu2_sum = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
+    valid_loci_count = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
+    previous_moy: dict[str, tuple[float, float] | None] = {
+        f"{i + 1}.{j + 1}": None for i, j in pairs
+    }
+
+    for ts, motif_size in zip(tree_sequences, list_motif_sizes, strict=True):
+        length_by_pop = _length_by_population(ts)
+        raw_sizes, _, total_counts = _compute_VAR_constants(length_by_pop)
+        for i, j in pairs:
+            key = f"{i + 1}.{j + 1}"
+            pop_a, pop_b = population_names[i], population_names[j]
+            contribution, new_moy, was_valid = _compute_DM2_for_one_locus(
+                pop_a,
+                pop_b,
+                motif_size,
+                length_by_pop,
+                raw_sizes,
+                total_counts,
+                previous_moy[key],
+            )
+            dmu2_sum[key] += contribution
+            previous_moy[key] = new_moy
+            if was_valid:
+                valid_loci_count[key] += 1
+
+    return {
+        key: dmu2_sum[key] / valid_loci_count[key] if valid_loci_count[key] > 0 else 0.0
+        for key in dmu2_sum
+    }
+
+
+# FST : between two samples (Weir and Cockerham 1984)
+
+
+def _length_by_pop_and_individuals(
+    tree_sequence: tskit.TreeSequence,
+) -> dict[str, list[tuple[int, int]]]:
+    """Calcule la longueur des séquences pour chaque individupar population.
+    La ploidie de l'individu est détectée par le nombre de noeud dans l'arbre via tree_sequence.individuals().
+    On retournera à chaque fois un tuple (longueur_1,longueur_2) pour chaque individu et
+    longueur_1 sera répétée si l'individu est haploïde.
+
+    Args:
+        tree_sequence: Un objet TreeSequence de tskit.
+
+    Returns:
+        Dict {nom_population: [(longueur_1, longueur_2), ...]}.
+    """
+    population_layout = compute_population_layout(tree_sequence)
+    length_by_pop = {pop: [] for pop, _ in population_layout}
+    variant = next(tree_sequence.variants())
+    tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
+    for ind in tree_sequence.individuals():
+        nodes = ind.nodes
+        population = next(pop for pop, inds in population_layout if nodes[0] in inds)
+        if len(nodes) == 1:
+            length_by_pop[population].append((tailles[nodes[0]], tailles[nodes[0]]))
+        else:
+            length_by_pop[population].append((tailles[nodes[0]], tailles[nodes[1]]))
+
+    return length_by_pop
+
+
+def _compute_ni_nA_AA_for_one_population(
+    pairs: list[tuple[int, int]], al: int
+) -> tuple[int, int, int]:
+    """Calcule ni, nA et AA pour une population donnée à partir des paires d'allèles.
+
+    Args:
+        pairs: Liste de tuples (longueur_1, longueur_2) pour chaque individu.
+        al: Longueur de l'allèle considéré.
+
+    Returns:
+        Un tuple (ni, nA, AA) où
+            - ni est le nombre d'individus,
+            - nA est la somme par individus du nombre d'éléments de sa paire égaux
+            - AA est le nb d'individus dont les deux éléments d ela paire valent al
+    """
+    ni = len(pairs)
+    nA = sum((p[0] == al) + (p[1] == al) for p in pairs)
+    AA = sum(1 for p in pairs if p[0] == al and p[1] == al)
+    return ni, nA, AA
+
+
+def _compute_FST_constants_for_two_populations_combined(
+    pairs_1: list[tuple[int, int]], pairs_2: list[tuple[int, int]], al: int
+) -> tuple[int, int, int]:
+    """Calcule les constantes nécessaires pour FST pour une paire de populations combinées.
+
+    Args:
+        pairs_1: Liste de tuples (longueur_1, longueur_2) pour la première population.
+        pairs_2: Liste de tuples (longueur_1, longueur_2) pour la seconde population.
+        al: Longueur de l'allèle considéré.
+
+    Returns:
+        Un tuple (s2G,s2I, s2P)
+    """
+    ni_1, nA_1, AA_1 = _compute_ni_nA_AA_for_one_population(pairs_1, al)
+    ni_2, nA_2, AA_2 = _compute_ni_nA_AA_for_one_population(pairs_2, al)
+
+    sni = ni_1 + ni_2
+    sni2 = ni_1**2 + ni_2**2
+    sniA = nA_1 + nA_2
+    sniAA = AA_1 + AA_2
+    s2A = nA_1**2 / (2 * ni_1) + nA_2**2 / (2 * ni_2) if ni_1 > 0 and ni_2 > 0 else 0.0
+
+    nc = sni - (sni2 / sni) if sni > 0 else 0.0
+
+    if (sni * nc) > 0:
+        MSG = (0.5 * sniA - sniAA) / sni
+        MSI = (0.5 * sniA + sniAA - s2A) / (sni - 2.0)
+        MSP = s2A - 0.5 * sniA**2 / sni
+        s2G = MSG
+        s2I = 0.5 * (MSI - MSG)
+        s2P = (MSP - MSI) / (2.0 * nc)
+        return s2G, s2I, s2P
+    else:
+        return 0.0, 0.0, 0.0
+
+
+def _compute_FST_constants_on_all_alleles_for_two_populations(
+    length_by_pop: dict[str, list[tuple[int, int]]], pop_a: str, pop_b: str
+) -> tuple[float, float, float]:
+    """Calcule les constantes nécessaires pour FST pour une paire de populations sur tous les allèles.
+
+    Args:
+        length_by_pop: Dict {nom_population: [(longueur_1, longueur_2), ...]}.
+        pop_a: Nom de la première population.
+        pop_b: Nom de la seconde population.
+
+    Returns:
+        Un tuple (s2G_total, s2I_total, s2P_total) pour la paire de populations.
+    """
+
+    pairs_1 = length_by_pop.get(pop_a, [])
+    pairs_2 = length_by_pop.get(pop_b, [])
+
+    unique_alleles = set(length for pair in pairs_1 + pairs_2 for length in pair)
+
+    s1l = 0.0
+    s2l = 0.0
+    s3l = 0.0
+
+    for al in unique_alleles:
+        s2G, s2I, s2P = _compute_FST_constants_for_two_populations_combined(
+            pairs_1, pairs_2, al
+        )
+        s1l += s2P
+        s2l += s2P + s2I
+        s3l += s2P + s2I + s2G
+
+    return s1l, s2l, s3l
+
+
+def compute_FST(
+    tree_sequences: list[tskit.TreeSequence], population_names: list[str]
+) -> dict[str, float]:
+    """Calcule FST_i_j : pour chaque paire de populations, la moyenne de FST sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
+
+    Args:
+        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        population_names: Liste des noms de population.
+
+    Returns:
+        Dict {"i.j": FST}.
+    """
+    pairs = [
+        (i, j)
+        for i in range(len(population_names))
+        for j in range(i + 1, len(population_names))
+    ]
+    s1 = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
+    # s2_sum = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
+    s3 = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
+    for ts in tree_sequences:
+        length_by_pop = _length_by_pop_and_individuals(ts)
+        for i, j in pairs:
+            key = f"{i + 1}.{j + 1}"
+            pop_a, pop_b = population_names[i], population_names[j]
+            # calcul de nc
+            ni_1 = len(length_by_pop.get(pop_a, []))
+            ni_2 = len(length_by_pop.get(pop_b, []))
+            sni = ni_1 + ni_2
+            sni2 = ni_1**2 + ni_2**2
+            nc = sni - sni2 / sni if sni > 0 else 0.0
+            # mise à jour des constantes
+            s1l, _, s3l = _compute_FST_constants_on_all_alleles_for_two_populations(
+                length_by_pop, pop_a, pop_b
+            )
+            s1[key] += s1l * nc
+            s3[key] += s3l * nc
+    return {key: s1[key] / s3[key] if s3[key] > 0 else 0.0 for key in s1}
+
+
+# [LIK] - mean index of classification (two samples) (Rannala and Moutain 1997; Pascual et al. 2007)
+
+
+def _genotypes_by_pop_and_individuals(
+    tree_sequence: tskit.TreeSequence,
+) -> dict[str, list[tuple[int, int] | tuple[int]]]:
+    """Calcule les tailles d'allèles de chaque individu, par population.
+
+    Contrairement à _length_by_pop_and_individuals (qui duplique la
+    valeur des individus haploïdes en une paire), on garde ici la
+    VRAIE ploïdie -- un tuple à 1 élément pour un individu haploïde, à
+    2 éléments pour un diploïde -- puisque cal_lik2p applique une
+    formule différente selon le cas, pas une formule unique qui se
+    prête à la duplication.
+
+    Args:
+        tree_sequence: Un objet TreeSequence de tskit.
+
+    Returns:
+        Dict {nom_population: [(longueur_1, longueur_2) ou (longueur_1,), ...]}.
+    """
+    population_layout = compute_population_layout(tree_sequence)
+    genotype_by_pop = {pop: [] for pop, _ in population_layout}
+    variant = next(tree_sequence.variants())
+    tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
+    for ind in tree_sequence.individuals():
+        nodes = ind.nodes
+        population = next(pop for pop, inds in population_layout if nodes[0] in inds)
+        if len(nodes) == 1:
+            genotype_by_pop[population].append((tailles[nodes[0]],))
+        else:
+            genotype_by_pop[population].append((tailles[nodes[0]], tailles[nodes[1]]))
+
+    return genotype_by_pop
+
+
+def _compute_num_den_lik_for_one_individual(
+    genotype: tuple[int] | tuple[int, int],
+    count_j: dict[int, int],
+    total_count_j: int,
+    b: float,
+) -> tuple[float, float]:
+    """Calcule (num_lik, den_lik) de LIK pour un individu, selon sa ploïdie.
+
+    Reproduit cal_lik2p (sumstat.cpp) : trois formules distinctes selon
+    que l'individu est haploïde, diploïde homozygote ou diploïde
+    hétérozygote -- pas une formule unique applicable aux trois cas
+    (contrairement à FST, voir _genotypes_by_pop_and_individuals).
+
+    Args:
+        genotype: Tailles d'allèles de l'individu -- un tuple à 1
+            élément s'il est haploïde, à 2 s'il est diploïde.
+        count_j: Dict {taille: compte} pour la population de référence
+            (pop_j, celle dont on utilise les fréquences).
+        total_count_j: Nombre total de copies de gène dans pop_j.
+        b: Pseudo-compte (1/nal, nal = nombre d'allèles distincts dans
+            le dataset à ce locus).
+
+    Returns:
+        Tuple (num_lik, den_lik) pour cet individu.
+    """
+
+    if len(genotype) == 1:  # haploid
+        num_lik = count_j.get(genotype[0], 0) + b
+        den_lik = total_count_j + 1
+    elif len(genotype) == 2 and genotype[0] == genotype[1]:  # homozygous diploid
+        num_lik = (1 + b + count_j.get(genotype[0], 0)) * (
+            count_j.get(genotype[0], 0) + b
+        )
+        den_lik = (total_count_j + 2) * (total_count_j + 1)
+    elif len(genotype) == 2 and genotype[0] != genotype[1]:  # heterozygous diploid
+        num_lik = (
+            2 * (b + count_j.get(genotype[0], 0)) * (b + count_j.get(genotype[1], 0))
+        )
+        den_lik = (total_count_j + 2) * (total_count_j + 1)
+    else:
+        raise ValueError(f"Problème avec le génotype de l'individu : {genotype}")
+
+    return num_lik, den_lik
+
+
+def _compute_LIK_for_one_locus(
+    length_by_pop: dict[str, list[tuple[int, int]]],
+    genotypes_by_pop: dict[str, list[tuple[int, ...]]],
+    pop_i: str,
+    pop_j: str,
+) -> tuple[float, bool]:
+    """Calcule la contribution de LIK_i_j à UN locus (sens i -> j uniquement).
+
+    Teste les individus de pop_i (population testée) contre les
+    fréquences de pop_j (population de référence) -- ASYMÉTRIQUE,
+    contrairement à toutes les autres stats microsat à deux
+    populations : LIK_i_j et LIK_j_i utilisent des rôles inversés et ne
+    sont pas censées être égales. `nal`/`b` sont calculés sur l'union
+    des allèles de pop_i et pop_j présents à ce locus (comme il n'y a
+    que 2 populations dans ce projet, ça correspond exactement à
+    `nal` du C++, qui pool en théorie sur TOUTES les populations du
+    dataset).
+
+    Args:
+        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}
+            pour CE locus (sortie de _length_by_pop_and_individuals).
+        genotypes_by_pop: Dict {nom_population: [génotype par individu, ...]}
+            pour CE locus (sortie de _genotypes_by_pop_and_individuals).
+        pop_i: Population testée.
+        pop_j: Population de référence (dont on utilise les fréquences).
+
+    Returns:
+        Tuple (contribution, was_valid) : la contribution de ce locus
+        (déjà multipliée par a = 1/nombre d'individus de pop_i), et
+        True si pop_i ET pop_j ont des données à ce locus (sinon ce
+        locus doit être exclu, contribution=0.0).
+    """
+    if pop_i not in length_by_pop or pop_j not in length_by_pop:
+        return 0.0, False
+
+    count_i = {length: count for length, count in length_by_pop[pop_i]}
+    count_j = {length: count for length, count in length_by_pop[pop_j]}
+    total_count_j = sum(count_j.values())
+    nb_allele = len(set(count_i.keys()).union(set(count_j.keys())))
+    b = 1 / nb_allele if nb_allele > 0 else 0.0
+    a = 1 / len(genotypes_by_pop[pop_i]) if len(genotypes_by_pop[pop_i]) > 0 else 0.0
+
+    likelihood = 0
+
+    for genotype in genotypes_by_pop[pop_i]:
+        num_lik, den_lik = _compute_num_den_lik_for_one_individual(
+            genotype, count_j, total_count_j, b
+        )
+        likelihood -= np.log10(num_lik / den_lik)
+
+    return likelihood * a, True
+
+
+def compute_LIK(
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+) -> dict[str, float]:
+    """Calcule LIK_i_j : indice de vraisemblance d'assignation (Rannala &
+    Mountain 1997 ; Pascual et al. 2007), pour chaque paire ORDONNÉE de
+    populations, moyenné sur tous les loci du groupe.
+
+    Contrairement à NAL/HET/VAR/N2P/H2P/V2P/DAS/DM2/FST (paires non
+    ordonnées i<j), LIK est asymétrique : `pairs` couvre toutes les
+    paires ordonnées i != j (donc "i.j" ET "j.i" pour chaque
+    combinaison), pas seulement i<j. Moyenne par locus (comme
+    NAL/HET/VAR), pas un ratio de sommes (comme MGW/DAS/FST).
+
+    Args:
+        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        population_names: Liste des noms de population.
+
+    Returns:
+        Dict {"i.j": LIK}, une entrée par paire ORDONNÉE de populations.
+    """
+
+    pairs = [
+        (i, j)
+        for i in range(len(population_names))
+        for j in range(len(population_names))
+        if i != j
+    ]
+    likelihood_sum = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
+    valid_loci_count = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
+
+    for ts in tree_sequences:
+        length_by_pop = _length_by_pop_and_individuals(ts)
+        genotypes_by_pop = _genotypes_by_pop_and_individuals(ts)
+        for i, j in pairs:
+            key = f"{i + 1}.{j + 1}"
+            pop_i, pop_j = population_names[i], population_names[j]
+            likelihood, both_present = _compute_LIK_for_one_locus(
+                length_by_pop, genotypes_by_pop, pop_i, pop_j
+            )
+            likelihood_sum[key] += likelihood
+            if both_present:
+                valid_loci_count[key] += 1
+    return {
+        key: likelihood_sum[key] / valid_loci_count[key]
+        if valid_loci_count[key] > 0
+        else 0.0
+        for key in likelihood_sum
+    }
+
+
 # ---------------------------------------------------------------------------
 # Point d'entrée principal
 # ---------------------------------------------------------------------------
@@ -2873,7 +3367,7 @@ def compute_all_statistics(
 ) -> dict[str, float]:
     """Calcule les 130 statistiques résumées SNP (IndSeq).
 
-    Les matrices (npop × nloci) de comptes et fréquences sont construites
+    Les matrices (npop x nloci) de comptes et fréquences sont construites
     une seule fois (_prepare_matrices) et transmises à toutes les familles
     de statistiques via _mats.
 
