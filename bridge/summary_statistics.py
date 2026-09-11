@@ -3499,12 +3499,14 @@ def compute_all_statistics_dna(
         Un dict {nom_colonne_diyabc: valeur}.
     """
     loci_by_group: dict[str, list[str]] = {}
-    for locus in parse_loci_description(header_text):
+    list_loci = parse_loci_description(header_text)
+    for locus in list_loci:
         if locus.ms_or_seq != "S":
             continue
         loci_by_group.setdefault(locus.group, []).append(locus.name)
 
-    multi_group = len(loci_by_group) > 1
+    all_groups = {locus.group for locus in list_loci}
+    multi_group = len(all_groups) > 1
 
     results = {}
     for group_label, locus_names in loci_by_group.items():
@@ -3533,7 +3535,28 @@ def compute_all_statistics_dna(
     return results
 
 
-_MICROSAT_STATS = {}
+_MICROSAT_PER_POPULATION_WITHOUT_MOTIF_SIZE = {
+    "NAL": compute_NAL,
+    "HET": compute_HET,
+}
+
+_MICROSAT_PAIRWISE_WITHOUT_MOTIF_SIZE = {
+    "N2P": compute_N2P,
+    "H2P": compute_H2P,
+    "DAS": compute_DAS,
+    "FST": compute_FST,
+    "LIK": compute_LIK,
+}
+
+_MICROSAT_PER_POPULATION_WITH_MOTIF_SIZE = {
+    "VAR": compute_VAR,
+    "MGW": compute_MGW,
+}
+
+_MICROSAT_PAIRWISE_WITH_MOTIF_SIZE = {
+    "V2P": compute_V2P,
+    "DM2": compute_DM2,
+}
 
 
 def compute_all_statistics_microsat(
@@ -3563,21 +3586,17 @@ def compute_all_statistics_microsat(
         Un dict {nom_colonne_diyabc: valeur}.
     """
 
-    if not _MICROSAT_STATS:
-        raise NotImplementedError(
-            "Les statistiques microsat ne sont pas encore implémentées."
-        )
-
     loci_by_group: dict[str, list[str]] = {}
-    for locus in parse_loci_description(header_text):
+    motif_sizes_by_locus: dict[str, int] = {}
+    list_loci = parse_loci_description(header_text)
+    for locus in list_loci:
         if locus.ms_or_seq != "M":
             continue
         loci_by_group.setdefault(locus.group, []).append(locus.name)
+        motif_sizes_by_locus[locus.name] = locus.motif_size
 
-    if not loci_by_group:
-        return {}
-
-    multi_group = len(loci_by_group) > 1
+    all_groups = {locus.group for locus in list_loci}
+    multi_group = len(all_groups) > 1
 
     results = {}
 
@@ -3585,7 +3604,7 @@ def compute_all_statistics_microsat(
         group_number = group_label[1:]  # "G2" -> "2", comme stats_group_parser.py
         tree_sequences = [tree_sequences_by_locus[name] for name in locus_names]
 
-        for stat_name, stat_fn in _MICROSAT_STATS.items():
+        for stat_name, stat_fn in _MICROSAT_PER_POPULATION_WITHOUT_MOTIF_SIZE.items():
             for pop_name, value in stat_fn(tree_sequences, population_names).items():
                 pop_index = population_names.index(pop_name) + 1
                 key = (
@@ -3594,5 +3613,35 @@ def compute_all_statistics_microsat(
                     else f"{stat_name}_{pop_index}"
                 )
                 results[key] = value
+        for stat_name, stat_fn in _MICROSAT_PAIRWISE_WITHOUT_MOTIF_SIZE.items():
+            for stat_index, value in stat_fn(tree_sequences, population_names).items():
+                key = (
+                    f"{stat_name}_{group_number}_{stat_index}"
+                    if multi_group
+                    else f"{stat_name}_{stat_index}"
+                )
+                results[key] = value
 
+        motif_sizes = [motif_sizes_by_locus[name] for name in locus_names]
+        for stat_name, stat_fn in _MICROSAT_PER_POPULATION_WITH_MOTIF_SIZE.items():
+            for pop_name, value in stat_fn(
+                tree_sequences, population_names, motif_sizes
+            ).items():
+                pop_index = population_names.index(pop_name) + 1
+                key = (
+                    f"{stat_name}_{group_number}_{pop_index}"
+                    if multi_group
+                    else f"{stat_name}_{pop_index}"
+                )
+                results[key] = value
+        for stat_name, stat_fn in _MICROSAT_PAIRWISE_WITH_MOTIF_SIZE.items():
+            for stat_index, value in stat_fn(
+                tree_sequences, population_names, motif_sizes
+            ).items():
+                key = (
+                    f"{stat_name}_{group_number}_{stat_index}"
+                    if multi_group
+                    else f"{stat_name}_{stat_index}"
+                )
+                results[key] = value
     return results

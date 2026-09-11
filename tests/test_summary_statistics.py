@@ -1006,27 +1006,7 @@ def test_compute_MGW(header_text_te2_XY):
     assert pytest.approx(results["pop2"]) == 0.7117117117117117
 
 
-def test_compute_all_statistics_microsat(header_text_te2_XY):
-    """Vérifie compute_all_statistics_microsat sur toy_example2_ms_dna."""
-    demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
-    )
-    mutated = microsat_mutation_simulation_per_locus(
-        demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
-        seed=42,
-    )
-
-    population_names = ["pop1", "pop2"]
-
-    with pytest.raises(
-        NotImplementedError,
-        match="Les statistiques microsat ne sont pas encore implémentées",
-    ):
-        assert compute_all_statistics_microsat(
-            header_text_te2_XY, mutated, population_names
-        )
+## tests pour la stat N2P (Number of Private Alleles) pour microsatellites
 
 
 def test_compute_N2P_for_one_pair():
@@ -1391,9 +1371,9 @@ def test_compute_FST_constants_for_two_populations_combined():
         pairs_1, pairs_2, 203
     )
 
-    assert s2G == 8
-    assert s2I == 6
-    assert s2p == 3
+    assert s2G == 0.25
+    assert s2I == -0.0625
+    assert s2p == 0.015625
 
     # second test avec une allele non_presente
     s2G, s2I, s2p = _compute_FST_constants_for_two_populations_combined(
@@ -1566,3 +1546,30 @@ def test_compute_LIK(header_text_te2_XY):
         results["1.2"] != results["2.1"]
     )  # pas de garanti que ce soit vrai sur tous les datasets
     assert pytest.approx(results["1.2"]) == 2.36209962972902
+
+
+# Test pour la fonction d'entrée principale de calcul des stats microsatellites
+def test_compute_all_statistics_microsat(header_text_te2_XY):
+    """Vérifie compute_all_statistics_microsat sur toy_example2_ms_dna."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te2_XY, scenario_index=1, seed=42
+    )
+    mutated = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        header_text=header_text_te2_XY,
+        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        seed=42,
+    )
+
+    population_names = ["pop1", "pop2"]
+
+    results = compute_all_statistics_microsat(
+        header_text_te2_XY, mutated, population_names
+    )
+
+    expected_keys = {"LIK_1_1.2", "MGW_1_1", "FST_1_1.2"}
+
+    assert len(results) == 16
+    assert expected_keys.issubset(results.keys())
+    assert pytest.approx(results["HET_1_1"]) == 7.929892037786773 / 10
+    assert pytest.approx(results["LIK_1_1.2"]) == 2.36209962972902
