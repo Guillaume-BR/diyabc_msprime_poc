@@ -163,6 +163,9 @@ def parse_loci_description(
         )
 
 
+# fonction plus très utile
+
+
 def rewrite_loci_count(header_text: str, new_total_loci: int) -> str:
     """Remplace le nombre de loci déclaré dans 'loci description'.
 

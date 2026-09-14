@@ -2227,18 +2227,24 @@ def _length_by_population(
         Un dict {nom_population: [(longueur, compte), ...]}.
     """
     length_by_pop = {}
-    layout = compute_population_layout(tree_sequence)  # liste(tuple(pop:array(indice)))
-    variant = next(tree_sequence.variants())
-    tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
-    for pop_name, sample_ids in layout:
-        length_by_pop[pop_name] = []
-        for taille in variant.alleles:
-            taille_int = int(taille)
-            length_by_pop[pop_name].append(
-                (taille_int, list(tailles[sample_ids]).count(taille_int))
-            )
+    layout = compute_population_layout(tree_sequence)  # liste(tuple(pop,array(indice)))
+    # si locus est monomorphe
+    if tree_sequence.num_sites == 0:
+        for pop_name, sample_ids in layout:
+            length_by_pop[pop_name] = [(0, len(sample_ids))]
+        return length_by_pop
+    else:
+        variant = next(tree_sequence.variants())
+        tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
+        for pop_name, sample_ids in layout:
+            length_by_pop[pop_name] = []
+            for taille in variant.alleles:
+                taille_int = int(taille)
+                length_by_pop[pop_name].append(
+                    (taille_int, list(tailles[sample_ids]).count(taille_int))
+                )
 
-    return length_by_pop
+        return length_by_pop
 
 
 # NAL : mean number of alleles across loci
@@ -3027,6 +3033,15 @@ def _length_by_pop_and_individuals(
     """
     population_layout = compute_population_layout(tree_sequence)
     length_by_pop = {pop: [] for pop, _ in population_layout}
+    if tree_sequence.num_sites == 0:
+        for ind in tree_sequence.individuals():
+            nodes = ind.nodes
+            population = next(
+                pop for pop, inds in population_layout if nodes[0] in inds
+            )
+            length_by_pop[population].append((0, 0))
+        return length_by_pop
+
     variant = next(tree_sequence.variants())
     tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
     for ind in tree_sequence.individuals():
@@ -3194,17 +3209,30 @@ def _genotypes_by_pop_and_individuals(
     """
     population_layout = compute_population_layout(tree_sequence)
     genotype_by_pop = {pop: [] for pop, _ in population_layout}
-    variant = next(tree_sequence.variants())
-    tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
-    for ind in tree_sequence.individuals():
-        nodes = ind.nodes
-        population = next(pop for pop, inds in population_layout if nodes[0] in inds)
-        if len(nodes) == 1:
-            genotype_by_pop[population].append((tailles[nodes[0]],))
-        else:
-            genotype_by_pop[population].append((tailles[nodes[0]], tailles[nodes[1]]))
+    if tree_sequence.num_sites == 0:
+        for ind in tree_sequence.individuals():
+            nodes = ind.nodes
+            population = next(
+                pop for pop, inds in population_layout if nodes[0] in inds
+            )
+            genotype_by_pop[population].append((0, 0))
+        return genotype_by_pop
+    else:
+        variant = next(tree_sequence.variants())
+        tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
+        for ind in tree_sequence.individuals():
+            nodes = ind.nodes
+            population = next(
+                pop for pop, inds in population_layout if nodes[0] in inds
+            )
+            if len(nodes) == 1:
+                genotype_by_pop[population].append((tailles[nodes[0]],))
+            else:
+                genotype_by_pop[population].append(
+                    (tailles[nodes[0]], tailles[nodes[1]])
+                )
 
-    return genotype_by_pop
+        return genotype_by_pop
 
 
 def _compute_num_den_lik_for_one_individual(
@@ -3337,7 +3365,7 @@ def compute_LIK(
     valid_loci_count = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
 
     for ts in tree_sequences:
-        length_by_pop = _length_by_pop_and_individuals(ts)
+        length_by_pop = _length_by_population(ts)
         genotypes_by_pop = _genotypes_by_pop_and_individuals(ts)
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"

@@ -871,4 +871,4 @@ def compute_summary_statistics_microsat_from_values(
     )
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 
-    return summary_stats, values
+    return summary_stats
