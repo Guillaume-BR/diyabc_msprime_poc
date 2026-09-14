@@ -292,9 +292,13 @@ def test_compute_summary_statistics_dna():
 
 def test_compute_summary_statistics_microsat():
 
-    with pytest.raises(NotImplementedError, match="Les statistiques microsat"):
-        compute_summary_statistics_microsat(
-            reference_directory=REFERENCE_DIR.parent / "toy_example2_ms_dna_XY",
-            scenario_index=1,
-            seed=42,
-        )
+    summary_stats, _ = compute_summary_statistics_microsat(
+        reference_directory=REFERENCE_DIR.parent / "toy_example2_ms_dna_XY",
+        scenario_index=1,
+        seed=42,
+    )
+
+    assert len(summary_stats) == 16
+    assert summary_stats["FST_1_1.2"] == pytest.approx(0.0053703676256255965)
+    assert summary_stats["LIK_1_1.2"] == pytest.approx(2.36209962972902)
+    assert summary_stats["LIK_1_2.1"] == pytest.approx(2.6206639211902742)
