@@ -1194,3 +1194,196 @@ corriger et recompiler `do_sequence` pour obtenir une vraie référence
 reste ouverte, toujours à trancher avec l'encadrant si une validation
 face au vrai DIYABC devient nécessaire un jour.
 
+## 2026-09-08 à 2026-09-11 — Statistiques résumées MicroSat (les 11 dernières pièces du chantier MicroSat)
+
+Reprise du chantier MicroSat là où "MicroSat GSM mutation model" et le
+rejeu `_from_values` l'avaient laissé : `compute_all_statistics_
+microsat` existait comme squelette (`raise NotImplementedError`), les
+11 catégories réelles (`NAL`/`HET`/`VAR`/`MGW`/`N2P`/`H2P`/`V2P`/`FST`/
+`LIK`/`DAS`/`DM2`) avaient été identifiées via le header réel mais pas
+encore vérifiées contre `statdefs.cpp`/`sumstat.cpp`. Session en mode
+mentor (utilisateur au clavier sur `bridge/summary_statistics.py` et
+`tests/test_summary_statistics.py`, assistant en lecture de source
+C++/review/debug), une stat à la fois, dans l'ordre NAL → HET → VAR →
+MGW → N2P → H2P → V2P → DAS → DM2 → FST → LIK, plus le câblage final.
+Détail complet (formules, architecture, bugs) dans `CLAUDE.md`, section
+"MicroSat summary statistics" — ce qui suit est le résumé narratif des
+découvertes les plus notables.
+
+**La représentation des données a dû évoluer deux fois.** Le premier
+réflexe (`_length_by_population` : un dict `{pop: [(taille, compte),
+...]}`, un pool plat de copies de gène par population, converti depuis
+`variant.genotypes`/`variant.alleles` de tskit) a suffi pour 9 des 11
+stats. `FST` et `LIK` ont chacune forcé une brique de regroupement par
+INDIVIDU (via `tree_sequence.individuals()`, dont `.nodes` donne
+directement la ploïdie — vérifié empiriquement sur un locus `<A>` ET un
+locus haploïde avant d'écrire quoi que ce soit), mais avec deux formes
+différentes : `_length_by_pop_and_individuals` duplique un individu
+haploïde en paire `(taille, taille)` (légitime pour FST, dont la
+formule ANOVA traite déjà un haploïde matché comme "doublé") ;
+`_genotypes_by_pop_and_individuals` garde la vraie ploïdie (`(taille,)`
+vs `(taille1, taille2)`), nécessaire pour LIK dont la formule diffère
+réellement selon la ploïdie (pas unifiable par duplication).
+
+**Le bug `cal_dmu2p` (DM2)** : `moy[]` (moyenne des tailles par
+population) n'est recalculé que si les deux populations ont des
+échantillons à ce locus, mais la ligne qui l'utilise est en dehors de
+ce garde — donc sur le locus `<Y>` (pop2 absente) de
+`toy_example2_ms_dna_XY`, DIYABC réutilise silencieusement le `moy[]`
+du locus précédent, divisé par le `motif_size` du locus courant, sans
+compter ce locus dans `nl`. Discuté explicitement avec l'utilisateur le
+2026-09-11 : verdict commun que c'est un bug de portée de variable en
+C++ (même famille que `mutsit`/`sitefix`), pas un choix statistique —
+aucune autre fonction de `sumstat.cpp` ne sépare accumulation et
+compteur de cette façon, et il n'y a pas de justification biologique à
+réutiliser le delta-mu d'un autre locus. Décision : reproduire
+fidèlement (comme `sample_site_rates`), pas corriger. Vérifié par
+exécution directe sur le vrai dataset : le bug se déclenche exactement
+une fois (locus 10 réutilise le `moy` du locus 9).
+
+**FST** a demandé la décomposition la plus profonde (4 niveaux de
+briques, chacune testée séparément) — Weir & Cockerham par allèle, puis
+sommé sur tous les allèles d'un locus, puis sur tous les loci du
+groupe, pondéré par un `nc` par locus. Simplification trouvée avant
+d'écrire l'agrégateur final : `nc` ne dépend en réalité pas de
+l'allèle testé (aucune donnée manquante chez nous), donc calculable une
+seule fois par locus plutôt que recalculé à chaque allèle comme le fait
+le C++ ; et une population absente fait naturellement tomber `nc` à 0,
+ce qui exclut le locus des deux sommes sans compteur `valid_loci`
+séparé — contrairement à toutes les stats "moyenne par locus"
+précédentes.
+
+**LIK** est la seule stat asymétrique du catalogue — confirmé dans le
+vrai header (`LIK 1.2 2.1`, les deux sens déclarés explicitement). Deux
+bugs sérieux attrapés avant validation : un brouillon calculait les
+deux sens (`i->j` ET `j->i`) dans la même accumulation, ce qui aurait
+rendu `LIK_1.2` et `LIK_2.1` numériquement identiques — détruisant
+l'intérêt même de la stat ; et le facteur de normalisation `a`
+utilisait `len(length_by_pop[pop_i])` (le nombre de tailles d'allèles
+DISTINCTES, une trentaine, fixe) au lieu de `len(genotypes_by_pop
+[pop_i])` (le vrai nombre d'individus, ~20) — deux ordres de grandeur
+différents.
+
+**Un bug de nommage de colonnes trouvé à la toute fin, avec une
+implication rétroactive sur le code ADN déjà validé.** En câblant
+`compute_all_statistics_microsat`, les colonnes produites ressemblaient
+à `NAL_pop1`/`HET_pop2` au lieu de `NAL_1`/`HET_2` (repéré en exécutant
+directement la fonction, pas en relisant le diff) — un oubli de la
+traduction nom→indice déjà présente côté ADN
+(`population_names.index(pop_name)+1`). En creusant `multi_group`
+(la logique "faut-il mettre le numéro de groupe dans le nom de
+colonne"), vérification contre le VRAI reftable de `toy_example2_
+ms_dna` (`first_records_of_the_reference_table_0.txt`, déjà
+cross-validé côté ADN) : les colonnes microsat sont bien `NAL_1_1`
+(avec le numéro de groupe), alors que G1 est le SEUL groupe microsat de
+ce header (les 2 autres, G2/G3, sont ADN) — donc la vraie règle DIYABC
+est "plusieurs groupes dans TOUT le header, tous types confondus", pas
+"plusieurs groupes de mon propre type". `compute_all_statistics_dna`
+(déjà en prod, déjà validé) calculait `multi_group` avec cette même
+règle fausse (filtrée à `ms_or_seq=="S"`) — invisible sur tous les
+datasets testés jusqu'ici uniquement parce qu'ils ont chacun 2+ groupes
+ADN de toute façon. Les deux corrigés ensemble ; suite complète
+(173 tests) rejouée après coup, 0 régression.
+
+**Statut final** : les 11 stats sont implémentées, testées (bricks
+vérifiées à la main quand c'était faisable, sinon vérification
+indépendante par l'assistant via un script séparé — voir `CLAUDE.md`
+pour le détail par stat), et câblées. `AML` (3 populations) et le canal
+SNI restent différés, aucun jeu de données ne les rendant testables
+pour l'instant.
+
+## 2026-09-14 — Première comparaison réelle des stats MicroSat contre un vrai reftable DIYABC
+
+Suite directe de la section précédente : le test cassé
+(`test_compute_summary_statistics_microsat`) corrigé, puis tentative de
+comparaison réelle DIYABC/msprime sur les 11 stats. Comme
+`toy_example2_ms_dna_XY` ne peut pas servir (le vrai binaire `diyabc`
+plante dessus, voir plus haut), la comparaison a été faite sur
+`toy_example2_ms_dna` (même groupe microsat G1, mais tout en `<A>`
+diploïde, un vrai reftable 1000 particules déjà disponible) via
+`scripts/replay_diyabc_priors_ms.py` (adapté du script ADN).
+
+**Confusion à garder à l'esprit** : ce dataset a un vrai canal SNI actif
+(`snimic_1` non négligeable dans le reftable réel), qu'on n'implémente
+toujours pas — un écart résiduel n'est donc pas forcément un bug.
+
+**Deux vrais bugs trouvés en creusant les écarts, avant de conclure "c'est
+SNI"** :
+1. `StopIteration` sur `next(tree_sequence.variants())` dans
+   `_length_by_population` ET les briques FST/LIK — des vrais `mut_rate`
+   DIYABC assez faibles pour qu'un locus n'ait aucune mutation du tout
+   (`num_sites==0`), jamais rencontré sur les données de test synthétiques.
+   Corrigé en traitant ce cas comme "tout le monde porte encore l'allèle
+   ancestral" (valeur arbitraire mais partagée). Piège en cours de route :
+   une première tentative sur `_length_by_pop_and_individuals` a copié le
+   pattern de `_length_by_population` (`[(0, len(sample_ids))]`, UNE ligne)
+   sans remarquer que cette fonction retourne UNE LIGNE PAR INDIVIDU — ça a
+   fait planter `MSI` de FST (`sni-2.0` à 0 exactement) en écrasant le vrai
+   effectif à 1 individu par population.
+2. `compute_LIK` appelait `_length_by_pop_and_individuals` (la brique de
+   FST, une ligne par individu) au lieu de `_length_by_population` (une
+   ligne par allèle distinct) — même arité de tuple des deux côtés, donc
+   aucune exception, juste un calcul de fréquences n'importe quoi. Trouvé
+   UNIQUEMENT en comparant au vrai reftable : nos deux sens de LIK
+   (`LIK_1_1.2`/`LIK_1_2.1`) sortaient presque identiques (~3.5 de moyenne
+   chacun) alors que le vrai DIYABC les a très différents (7.33 vs 3.08,
+   avec un écart-type de 11.44 dans un sens contre 1.92 dans l'autre) —
+   or LIK est justement censée être asymétrique. Corrigé, réduit l'écart
+   KS à ~0 sur les deux colonnes.
+
+**Après les deux corrections** : 9/11 familles de stats collent bien.
+Seul `FST_1_1.2` reste décalé (`KS≈0.245`, ~1.8× trop bas systématiquement
+— pas une différence de forme comme LIK, un décalage constant). Recherché
+un bug résiduel et rien trouvé : formule vérifiée à la main terme à terme
+plus tôt, ce dataset n'a aucun locus haploïde (donc la logique de
+duplication FST ne se déclenche jamais), et les loci monomorphes
+(`num_sites==0`) ne touchent que 13/1000 loci sur un échantillon de 100
+particules — bien trop rare pour expliquer un tel écart. Conclusion
+provisoire (pas prouvée) : le canal SNI manquant explique l'écart de FST
+— à confirmer une fois SNI implémenté et la comparaison relancée. Détail
+complet dans `CLAUDE.md`, section "MicroSat stats cross-validated
+against a real reftable".
+
+## 2026-09-14 (suite) — hypothèse SNI invalidée pour FST, cause réelle non trouvée
+
+L'hypothèse "c'est SNI" ci-dessus s'est révélée fausse. Deux tests de
+falsification (même méthode que l'investigation du déficit de variance
+G3 sur `<M>` côté ADN, 2026-08-27/31) l'ont réfutée :
+
+1. **`reference/toy_example2_ms_dna_weak_sni/`** : nouveau reftable réel
+   DIYABC généré avec `MEANSNI`/`GAMSNI` forcés très bas (`snimic_1` ≈1%
+   de `µmic_1` au lieu d'un ordre de grandeur comparable). Si SNI était
+   la cause, l'écart FST aurait dû se réduire nettement. Il n'a PAS
+   bougé du tout (`0.1429`/`0.0809` réel/simulé, identique au dataset
+   original `0.1440`/`0.0798`).
+2. **Isolation du scénario 2** (sans admixture `ta split`, contrairement
+   au scénario 1) sur le reftable déjà rejoué : FST diverge pareil.
+   Admixture écartée aussi.
+
+Poussé plus loin avec `scikit-allel` (implémentation indépendante de
+Weir & Cockerham 1984) : sur les mêmes données simulées, `scikit-allel`
+donne `FST≈0.0168`, nous `≈0.0077` — un facteur ~2×, du même ordre que
+l'écart contre le vrai DIYABC. Confirme un vrai problème numérique,
+indépendant de toute question DIYABC.
+
+Vérifications supplémentaires, toutes concluantes mais sans trouver LE
+bug :
+- Formule (`cal_Fst2p`) relue une 4e fois contre la source, caractère
+  pour caractère — toujours correcte.
+- Données reconstruites indépendamment (paires `(taille1, taille2)` par
+  individu, directement depuis `variant.genotypes`/`ts.individuals()`,
+  sans passer par `_length_by_pop_and_individuals`) et diffées contre
+  la sortie réelle de cette fonction sur les 40 individus d'un vrai
+  locus — 0 écart.
+
+**Piste non explorée, à creuser en priorité la prochaine fois** : FST
+est la seule stat basée sur une décomposition de variance ANOVA
+(`MSG`/`MSI`/`MSP`, sensible à l'INTERACTION hétérozygotie/structure de
+population), alors que `HET` (diversité) et `DAS`/`DM2` (comparaison
+directe des allèles entre populations) collent bien — le problème est
+donc spécifique à cette décomposition, pas à la diversité ou à la
+différenciation générale simulée (qui semblent correctes par ailleurs).
+Chantier mis de côté volontairement le 2026-09-14 plutôt que de
+continuer à deviner sans nouvelle piste — voir `CLAUDE.md` pour le
+détail complet des tests.
+

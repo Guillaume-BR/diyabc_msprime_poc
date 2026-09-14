@@ -56,16 +56,17 @@ end-to-end too — transition matrix construction (`msprime.TPM`-based),
 hierarchical `mut_rate`/`Pgeom` draws, and the full per-locus
 `sim_ancestry`+`sim_mutations` assembly, plus the `pipeline.py`/
 `reftable_loop.py` orchestration layer (mirroring the DNA-sequence
-path) — see "MicroSat GSM mutation model" below. The one missing piece
-is the MicroSat-specific summary statistics themselves (`NAL`/`HET`/
-`VAR`/`MGW`/`N2P`/`H2P`/`V2P`/`FST`/`LIK`/`DAS`/`DM2` from
-`statdefs.cpp`): `summary_statistics.compute_all_statistics_microsat`
-exists as a wired-but-unimplemented skeleton (raises
-`NotImplementedError` until the individual stat functions are written)
-— deliberately deferred to a future session. The SNI mutation channel
-(single nucleotide insertion/deletion alongside GSM) is also
-deliberately deferred, same as noted below. The goal is to demonstrate
-that a
+path) — see "MicroSat GSM mutation model" below. As of 2026-09-11, the
+MicroSat-specific summary statistics themselves are implemented and
+wired too (`NAL`/`HET`/`VAR`/`MGW`/`N2P`/`H2P`/`V2P`/`FST`/`LIK`/`DAS`/
+`DM2` from `statdefs.cpp` — `summary_statistics.compute_all_statistics_
+microsat` no longer raises `NotImplementedError`) — see "MicroSat
+summary statistics" below, including a deliberately-reproduced C++ bug
+in `DM2` and a column-naming bug (`multi_group`) found and fixed in
+both the MicroSat and the already-shipped DNA-sequence stats wiring.
+The SNI mutation channel (single nucleotide insertion/deletion
+alongside GSM) and the three-population `AML` stat remain deliberately
+deferred, same as noted below. The goal is to demonstrate that a
 `header.txt` → `msprime.Demography` → coalescent+mutation → summary
 statistics pipeline built in Python produces a `reftable.bin`
 structurally and statistically equivalent to the real DIYABC's.
@@ -671,21 +672,12 @@ real genealogy).
   (...):` block means the exception fires outside the context manager
   and is never caught at all.
 
-**Not yet done**: the actual MicroSat summary statistics
-(`compute_all_statistics_microsat`'s body). The real catalog needed on
-`toy_example2_ms_dna_XY` was enumerated via `stats_group_parser.parse_
-requested_statistic_names` (2026-09-07, not yet cross-checked against
-`statdefs.cpp`): **11 distinct categories**, not the 8 previously
-assumed elsewhere in this file (`NAL`/`HET`/`VAR`/`MGW`/`FST`/`LIK`/
-`DAS`/`DM2`) — `N2P`/`H2P`/`V2P` also appear (`N2P_1_1.2`/`H2P_1_1.2`/
-`V2P_1_1.2` on this dataset), likely the pairwise counterparts of
-`NAL`/`HET`/`VAR` by analogy with DNA sequence's `NH2`/`NS2` naming
-convention, but this is a hypothesis, not yet confirmed against source.
-Also flagged for the next session: `LIK` is ASYMMETRIC on this dataset
-(`LIK_1_1.2` ≠ `LIK_1_2.1`, unlike `FST`/`DAS`/`DM2`'s single `.1.2`
-value) — smells like a directional likelihood (population 1 deriving
-from population 2 vs. the reverse), needs verifying against
-`statdefs.cpp`/`sumstat.cpp` before writing any code, not assumed.
+**RESOLVED 2026-09-11** — the actual MicroSat summary statistics
+(`compute_all_statistics_microsat`'s body) are now fully implemented
+and wired — see "MicroSat summary statistics" below for the full
+account (formulas, architecture, bugs caught). The hypotheses below
+(11 categories including `N2P`/`H2P`/`V2P`, `LIK` asymmetric) were both
+confirmed correct against `statdefs.cpp`/`sumstat.cpp`.
 SNI mutation channel remains deferred too (placeholder comment already
 in place in `build_microsat_local_param_per_locus`, see above).
 
@@ -818,6 +810,355 @@ useful groundwork regardless of when the stats themselves get written.
   simulation_microsat` is wired but untested end-to-end against real
   data, unlike its DNA-sequence sibling which IS cross-validated
   against a real 1000-particle reftable).
+
+### MicroSat summary statistics (2026-09-08 to 2026-09-11, mentor mode — user-driven, reviewed/debugged with the assistant)
+
+All 11 MicroSat-specific summary statistics (`NAL`/`HET`/`VAR`/`MGW`
+per-population; `N2P`/`H2P`/`V2P`/`DAS`/`DM2`/`FST`/`LIK` per-pair) are
+now implemented in `bridge/summary_statistics.py`, tested, and wired
+into `compute_all_statistics_microsat` (the `NotImplementedError` guard
+is gone). Same two-tier "brick" pattern as the DNA-sequence stats (a
+stateless per-locus/per-pair formula function + an aggregator that
+loops over the group's loci), each formula's provenance documented via
+its `sumstat.cpp` function name, formulas hand-verified against real
+data before being trusted (see `notes/exploration.md` for the session
+narrative). See `notes/resume_stat_dna_ms.md` for the user's own
+biology-first summary of the 8 documented categories (NAL/HET/VAR/MGW/
+N2P/H2P/V2P/FST/LIK/DAS/DM2, with authors — Nei 1987, Garza & Williamson
+2001, Weir & Cockerham 1984, Rannala & Mountain 1997/Pascual et al.
+2007, Chakraborty & Jin 1993, Goldstein et al. 1995).
+
+- **Two distinct data representations needed, not one** — the flat
+  per-population `(taille, compte)` table from `_length_by_population`
+  (unchanged from the DNA-stats era) is sufficient for 9 of the 11
+  stats (everything except `FST`/`LIK`), since none of them need to
+  know which gene copies belong to the same individual. `FST` and
+  `LIK` both need individual-level, ploidy-aware genotypes instead —
+  but via two DIFFERENT new helpers, not one, because the two stats
+  treat ploidy differently:
+  - **`_length_by_pop_and_individuals`** (for `FST`): groups genotypes
+    by individual via `tskit.TreeSequence.individuals()` (`.nodes`
+    gives the sample node IDs of that individual — length 1 = haploid,
+    2 = diploid, confirmed empirically on both an `<X>` and a `<Y>`
+    locus of `toy_example2_ms_dna_XY` before writing any code), but
+    always returns a **2-tuple**, duplicating a haploid individual's
+    single allele into `(taille, taille)`. This is safe for `FST`
+    specifically because `cal_Fst2p`'s own C++ does the same thing
+    implicitly: a haploid individual matching allele `al` gets
+    `AA++` (as if homozygous) AND `nA += 2` (as if two copies) — i.e.
+    the ANOVA formula is already ploidy-invariant once you treat a
+    haploid copy as a "doubled" diploid-like pair, so duplicating at
+    the data layer lets the rest of the FST formula stay branch-free.
+  - **`_genotypes_by_pop_and_individuals`** (for `LIK`): keeps the
+    TRUE ploidy (`(taille,)` for haploid, `(taille1, taille2)` for
+    diploid, no duplication) because `cal_lik2p` genuinely applies a
+    DIFFERENT formula per ploidy (haploid: `num_lik = compte_j(al) +
+    b`, `den_lik = n_j+1`; diploid homozygote/heterozygote: two
+    different products, `den_lik = (n_j+2)(n_j+1)`) — not unifiable by
+    duplication the way FST's was. Trying to reuse the FST-style
+    duplicated representation here would have silently discarded the
+    ploidy distinction the formula actually needs.
+
+- **`FST`** (`cal_Fst2p`, Weir & Cockerham 1984): the densest formula
+  of the eleven, decomposed into 4 nested "brick" levels, each tested
+  separately (per-allele-per-population `ni`/`nA`/`AA` → per-allele
+  both-populations-combined variance components `s2G`/`s2I`/`s2P` via
+  `MSG`/`MSI`/`MSP` → summed over all alleles of one locus → summed
+  over all loci of the group, weighted by a locus-level `nc`, into a
+  single final ratio `s1/s3` — a ratio of sums like `MGW`/`DAS`, not a
+  mean of per-locus ratios). Two non-obvious simplifications found
+  before writing the aggregator, both saving real complexity:
+  `nc` is recomputed per-allele in the C++ but never actually varies
+  across alleles (it depends only on each population's individual
+  count, which doesn't depend on the allele being tested when there's
+  no missing data) — so it can be computed once per locus, not
+  tracked per-allele; and a population being entirely absent from a
+  locus naturally drives `nc` to exactly 0 (verified algebraically),
+  which alone excludes that locus from both the numerator and
+  denominator sums — no separate `valid_loci` counter needed here,
+  unlike every per-population-mean stat (`NAL`/`HET`/`VAR`/`MGW`/
+  `N2P`/`H2P`/`V2P`).
+
+- **`LIK`** (`cal_lik2p`, Rannala & Mountain 1997 / Pascual et al.
+  2007): the only ASYMMETRIC stat in the whole catalog — confirmed
+  directly in the real header (`LIK 1.2 2.1`, both directions declared
+  explicitly, unlike every other pairwise stat's single `.1.2`).
+  `compute_LIK` iterates ALL ordered pairs `i != j` (not `i < j`), and
+  the generic column-naming loop in `compute_all_statistics_microsat`
+  needed no special-casing for this — it already just uses whatever
+  keys a stat function returns, so `"1.2"`/`"2.1"` fall out for free.
+  `nal` (allele count for the pseudo-count `b=1/nal`) pools frequencies
+  across ALL populations of the dataset in the real C++, not just the
+  pair being tested — irrelevant here since this project's datasets
+  only ever have 2 populations total, so "pool the pair" and "pool
+  everything" coincide; flagged in the docstring as a scope note, not
+  fixed, since there's nothing to fix without a 3+-population dataset
+  to exercise the difference.
+
+- **`DM2`** (`cal_dmu2p`, Goldstein et al. 1995) — **a C++ bug
+  deliberately reproduced, not fixed**, after explicit discussion with
+  the user (2026-09-11): `moy[]` (mean allele size per population) is
+  allocated once before the locus loop and only recomputed when BOTH
+  populations have samples at that locus, but the line that consumes
+  it (`dmu2 += sqr((moy[1]-moy[0])/motif_size)`) sits OUTSIDE that
+  guard — so on a locus where one population is absent (the `<Y>`
+  locus of `toy_example2_ms_dna_XY`, where `pop2` has zero samples),
+  the C++ silently reuses the STALE `moy[]` from the last valid locus,
+  divided by the CURRENT locus's own `motif_size`, and adds it to the
+  sum — while `nl` (the denominator) does NOT count that locus. Same
+  bug class as the already-documented `mutsit`/`sitefix` bug in
+  `sample_site_rates` (a correctly-scoped variable whose consuming line
+  escaped its guard) — judged an unintentional C scoping mistake, not a
+  deliberate statistical choice (no biological rationale for reusing a
+  different locus's delta-mu; every other stat in `sumstat.cpp`
+  accumulates and increments its counter together, in the same guarded
+  block; the shape of the bug — a buffer declared outside the loop,
+  written conditionally inside it, read unconditionally outside the
+  `if` but still inside the loop — is a textbook C indentation/reset
+  slip). Reproduced via `_compute_DM2_for_one_locus`, which threads an
+  explicit `previous_moy` state between successive locus calls (order
+  of `tree_sequences` matters for this one stat, unlike all the
+  others) — direct execution on the real dataset confirmed the
+  mechanism triggers exactly once (locus 10, reusing locus 9's `moy`)
+  and produces the expected inflated sum. Verified this doesn't
+  recur at the very first locus of a group (which would hit an
+  uninitialized `previous_moy=None` with no real C++ equivalent to
+  reproduce) since `toy_example2_ms_dna_XY`'s only absent-population
+  locus is the LAST of the group, not the first.
+
+- **Aggregation falls into three distinct families**, easy to
+  conflate: mean-of-per-locus-value with a **per-population** or
+  **per-pair** valid-loci denominator (`NAL`/`HET`/`VAR`/`MGW`'s
+  per-population cousins reused directly for `N2P`/`H2P`/`V2P`/`LIK`'s
+  per-pair versions); a single **ratio of sums** with no per-locus
+  averaging at all (`MGW`, `DAS`, `FST`); and `DM2`'s stateful variant
+  of the first family. Getting the wrong one for a given stat produces
+  a plausible-looking but numerically wrong result with no exception —
+  caught repeatedly by direct execution (comparing against hand-picked
+  real allele counts) rather than by reading the code, e.g. an early
+  `compute_DAS` draft used a single shared scalar accumulator instead
+  of a per-pair dict (same recurring bug class as `feedback_pairwise_
+  actual_accumulator_bug`, invisible on this project's 2-population
+  datasets, would silently produce identical values for every pair on
+  3+ populations), and an early `compute_LIK` computed BOTH `i->j` and
+  `j->i` inside the same loop iteration and summed them into one
+  accumulator, which would have made `LIK_i_j` and `LIK_j_i` numerically
+  IDENTICAL — defeating the entire point of the stat — caught before
+  being trusted.
+
+- **Column-naming bug found in `compute_all_statistics_microsat`,
+  and an identical LATENT bug found in the already-shipped
+  `compute_all_statistics_dna`**: `multi_group` (whether a stat's
+  column name gets a `_<groupe>_` segment or stays bare) was computed
+  from `len(loci_by_group)` — but `loci_by_group` is built by first
+  filtering loci to the current stat family's own type (`ms_or_seq ==
+  "M"` for microsat, `== "S"` for DNA sequences). Checked directly
+  against the real reftable (`reference/toy_example2_ms_dna/first_
+  records_of_the_reference_table_0.txt`, already cross-validated for
+  the DNA-sequence path): microsat's columns are `NAL_1_1`/`NAL_1_2`/...
+  (group number `1` present) even though `G1` is the ONLY microsat
+  group in that header — proving the real rule is "more than one group
+  in the WHOLE header, any type", not "more than one group of my own
+  type". `compute_all_statistics_dna`'s existing `multi_group`
+  (filtering to `"S"` only) has the exact same latent bug — it only
+  ever produced the right answer by coincidence, because every dataset
+  tested so far happens to have 2+ DNA-sequence groups too. Both fixed
+  the same way: count distinct groups across the WHOLE
+  `parse_loci_description(header_text)` output, not a
+  pre-filtered subset. Full test suite (173 tests) re-run after the
+  fix: 0 regressions on any already-validated DNA/SNP dataset — the fix
+  only changes behavior for headers with exactly 1 group of a given
+  type mixed with other-typed groups, a case no prior test happened to
+  cover.
+
+- **Final wiring**: `compute_all_statistics_microsat` uses FOUR
+  catalog dicts, not two — crossing "per-population vs. per-pair"
+  (which needs the `population_names.index(pop_name) + 1` translation
+  from `compute_all_statistics_dna`'s existing per-population catalog,
+  vs. pairwise stats whose `"i.j"` keys are already numeric) with
+  "needs `motif_size` or not" (`VAR`/`MGW`/`V2P`/`DM2` do, the other 7
+  don't) — a microsat-specific second axis with no DNA-sequence
+  equivalent. An early draft used the DNA convention's single per-
+  population loop unconditionally, which is where the `NAL_pop1`/
+  `HET_pop2`-shaped (should be `NAL_1`/`HET_2`) column names were first
+  caught, by directly running `compute_all_statistics_microsat` end-to-
+  end rather than just reading the diff.
+
+- **`AML` (Choisy et al. 2004) deliberately deferred, not an
+  oversight**: it's a THREE-sample admixture coefficient, and every
+  MicroSat reference dataset in this project has exactly 2 populations
+  — structurally inapplicable here (confirmed absent from the real
+  header's `group G1 (16)` summary-statistics section too). Same
+  treatment as the SNI mutation channel: left out until a 3+-population
+  MicroSat dataset exists to exercise it.
+
+**Resolved 2026-09-14**: `tests/test_pipeline.py::test_compute_summary_
+statistics_microsat` fixed (mirrors the same fix already applied to
+`test_compute_all_statistics_microsat`) — full suite (173 tests) green.
+
+### MicroSat stats cross-validated against a real reftable (2026-09-14) — 9/11 clean, FST attributed to missing SNI, 1 real bug found and fixed
+
+First real DIYABC-vs-msprime comparison for the MicroSat stats, using
+`scripts/replay_diyabc_priors_ms.py` (adapted from the DNA-sequence
+replay script — swap `replay_reftable_simulation_dna` for `_microsat`)
+against `reference/toy_example2_ms_dna`'s existing real 1000-particle
+reftable (**not** `toy_example2_ms_dna_XY` — that dataset's `<X>`/`<Y>`
+DNA sequence loci make the real `diyabc` binary crash, per "DNA sequence
+`<X>`/`<Y>` support" above; `toy_example2_ms_dna` has the same G1
+MicroSat group, all `<A>`/diploid, no crash, and a real reftable already
+used for the DNA-sequence validation).
+
+**Known confound going in, not yet resolved**: this dataset's G1 group
+has a real, active `MEANSNI`/`GAMSNI` prior (`snimic_1` column in the
+real reftable has genuine non-negligible values, `~1e-8` to `~1e-5`,
+same order of magnitude as `µmic_1`) — the SNI mutation channel is
+still not implemented (see "MicroSat GSM mutation model" above), so our
+simulated particles are missing a real source of mutation that the real
+DIYABC ones include. Any residual gap could legitimately be attributed
+to this, not necessarily a port bug — this session's investigation was
+specifically about telling the two apart before concluding either way.
+
+Two real bugs found and fixed along the way, neither related to SNI:
+
+- **A crash, `StopIteration` from `next(tree_sequence.variants())`**,
+  hit in both `_length_by_population` and the FST/LIK individual-level
+  helpers (`_length_by_pop_and_individuals`/`_genotypes_by_pop_and_
+  individuals`) — never triggered on `toy_example2_ms_dna_XY`'s
+  synthetic test data, but real DIYABC-drawn `mut_rate` values replayed
+  here can be low enough that a locus gets literally zero mutations on
+  its genealogy (`ts.num_sites == 0`), which tskit represents as no
+  site at all rather than an invariant site. Biologically this just
+  means every individual in every population still carries the
+  ancestral allele — a real, valid, fully monomorphic locus. Fixed by
+  special-casing `num_sites == 0` in all three functions: return one
+  row per real sample/individual, but with an ARBITRARY placeholder
+  value (`0`) instead of crashing — mathematically safe here because
+  every stat's formula gives the objectively correct degenerate result
+  (`NAL=1`, `HET=0`, `VAR=0`, etc.) regardless of which specific
+  constant is used, as long as it's the same constant for every
+  population (true here since a `num_sites==0` locus means literally
+  no mutation occurred anywhere on the shared ancestry, so every
+  population is monomorphic for the identical ancestral value).
+  **One placeholder attempt was itself wrong before landing on this**:
+  a first pass at `_length_by_pop_and_individuals`'s fix copied
+  `_length_by_population`'s pattern verbatim (`[(0, len(sample_ids))]`)
+  — but that function's rows mean `(taille, compte)`, while `_length_
+  by_pop_and_individuals`'s rows mean **one individual's genotype**
+  (`(taille1, taille2)`) — using `len(sample_ids)` as a fake "count"
+  collapsed every population down to a SINGLE fake individual
+  regardless of its real size, which then made `sni` (total individuals
+  across both populations, used as FST's `MSI` denominator, `sni-2.0`)
+  equal exactly `2` for some particle/pair — a real `ZeroDivisionError`
+  in `MSI`, caught by running the real-reftable replay end-to-end
+  rather than a synthetic test (the synthetic FST tests all use
+  hand-picked datasets with plenty of individuals, so this exact
+  degenerate size never came up before). Fixed by appending one `(0,
+  0)` per REAL individual (same loop as the normal path, `tree_
+  sequence.individuals()`), not one row total.
+- **`compute_LIK` called the wrong helper** — `_length_by_pop_and_
+  individuals(ts)` (built for FST, one row per individual as `(taille1,
+  taille2)`) instead of `_length_by_population(ts)` (one row per
+  distinct allele value as `(taille, compte)`, what `_compute_LIK_
+  for_one_locus` actually expects and its own docstring says). Almost
+  certainly a copy-paste from `compute_FST`'s loop, not re-checked
+  against the different data shape `_compute_LIK_for_one_locus` needs.
+  Same tuple arity both ways (`(int, int)`), so `count_j = {length:
+  count for length, count in length_by_pop[pop_j]}` never raised —
+  it silently built a "frequency table" out of one individual's own
+  two allele values, both as key AND value, nonsense with no exception.
+  **Only found by comparing to real DIYABC data**, not by reading the
+  code or by any existing test: the smoking gun was that
+  `LIK_1_1.2`/`LIK_1_2.1` came out nearly IDENTICAL to each other in our
+  simulation (mean 3.52 both ways, max ~7 both ways) while the real
+  reftable shows them wildly different (`LIK_1_1.2`: mean 7.33, std
+  11.44, max 110.4; `LIK_1_2.1`: mean 3.08, std 1.92, max 12.8) — LIK is
+  supposed to be asymmetric (see above), and this near-symmetry was the
+  tell that something was still wrong even though the earlier "both
+  directions summed into one accumulator" bug had already been fixed
+  and verified. Fixed by swapping the call to `_length_by_population
+  (ts)`; re-ran the 1000-particle comparison, `LIK_1_1.2`/`LIK_1_2.1`
+  both dropped to KS `p` no longer near 0.
+
+**Result after both fixes**: 9 of 11 stat families (`NAL`/`HET`/`VAR`/
+`MGW`/`N2P`/`H2P`/`V2P`/`DAS`/`DM2`) match well; only `FST_1_1.2` still
+shows a real gap (`KS≈0.245`, sim mean `0.080` vs real mean `0.144` —
+consistently ~1.8x too low, not a shape mismatch like LIK's had been).
+Investigated for a residual code bug and found none: `_compute_FST_
+constants_for_two_populations_combined`'s formula matches `cal_Fst2p`
+term-for-term (independently hand-verified earlier, see the "MicroSat
+summary statistics" section above); this dataset's G1 loci are all
+`<A>`/diploid (checked directly in `headerRF.txt`), so the haploid-
+duplication logic in `_length_by_pop_and_individuals` never triggers at
+all here; and the new `num_sites==0` monomorphic-locus handling fires
+on only `13/1000` loci in a 100-particle sample — far too rare to
+explain a ~45% systematic shift across the whole distribution. With no
+remaining code-level hypothesis, the gap was provisionally attributed to
+the missing SNI channel.
+
+**SNI hypothesis FALSIFIED 2026-09-14, admixture hypothesis also
+falsified — root cause still OPEN, deliberately shelved for a future
+dedicated session.** The user tested both directly, mirroring the exact
+falsification methodology used for the earlier G3 (`<M>`) variance
+deficit (see "RESOLVED 2026-09-02" below):
+- **`reference/toy_example2_ms_dna_weak_sni/`**: a new real DIYABC
+  reftable generated with `MEANSNI`/`GAMSNI` forced to make `snimic_1`
+  ~1% of `µmic_1` (mean `2.4e-6` vs `2.8e-4`, vs. comparable orders of
+  magnitude in the original dataset). If SNI were the cause, the gap
+  should have shrunk sharply. It didn't move at all (real/sim FST mean
+  `0.1429`/`0.0809`, statistically identical to the original `0.1440`/
+  `0.0798`) — SNI ruled out.
+- **Scenario-2-only replay** (this dataset's second candidate scenario
+  has no `ta split` admixture event at all, unlike scenario 1): FST
+  still diverges the same way when isolating scenario-2 particles —
+  admixture ruled out too, same as it eventually was for the G3
+  investigation.
+- **Independent cross-check against `scikit-allel`'s own Weir &
+  Cockerham (1984) implementation** (`allel.weir_cockerham_fst`, a
+  different, independently-implemented convention of the same
+  estimator): on identical simulated data (one particle, all 10 loci,
+  genotypes fed as raw tskit allele codes so the comparison is
+  allele-identity-only, insensitive to bp-vs-code labeling), `scikit-
+  allel` gives `FST≈0.0168`, ours gives `≈0.0077` — a ~2x gap, same
+  order of magnitude as the gap against real DIYABC. Confirms a real
+  numerical discrepancy exists, independent of any DIYABC-specific
+  question.
+- **Raw data feeding the formula independently re-verified correct**:
+  reconstructed every individual's `(taille1, taille2)` pair directly
+  from `variant.genotypes`/`ts.individuals()`, bypassing `_length_by_
+  pop_and_individuals` entirely, and diffed against its actual output
+  for all 40 individuals (20 per population) of a real locus — zero
+  mismatches. Rules out a data-construction bug in the one helper only
+  `FST` still consumes (since the earlier `compute_LIK` fix moved LIK
+  off this same helper, a bug here would now be invisible to every
+  other stat's test).
+- **Formula re-verified against `cal_Fst2p` a fourth time**, fresh
+  re-fetch of the source, matched term-for-term again.
+
+**Net position**: formula transcription verified, input data verified,
+SNI ruled out, admixture ruled out, and yet a genuine ~2x discrepancy
+exists against BOTH real DIYABC output and an independent third-party
+WC84 implementation, in the same direction. Leading open question,
+not yet investigated: `FST` is the only stat built on a variance-
+components ANOVA decomposition (`MSG`/`MSI`/`MSP` sensitive to the
+interaction between heterozygosity and population structure) rather
+than a direct comparison of allele counts/frequencies — `HET`
+(diversity) and `DAS`/`DM2` (direct inter-population allele
+comparisons) all match well, so whatever is wrong is specific to that
+decomposition, not to underlying simulated diversity or differentiation
+levels being generally in the right ballpark. Deliberately shelved
+2026-09-14 rather than guessing further without new evidence — pick up
+as a dedicated investigation, not a quick fix.
+
+**Not yet done**: SNI itself (see "MicroSat GSM mutation model" above
+for the exact mechanism — `mute` in `particuleC.cpp`, a single combined
+Poisson process at rate `mut_rate+sni_rate`, classified per-event as a
+GSM step or an SNI step by a Bernoulli draw, SNI being an ±1bp step
+independent of `motif_size` — needs a denser allele grid than the
+current `motif_size`-spaced one, plus a hand-built mixture transition
+matrix, not reusable `msprime.TPM` output directly). Confirming FST's
+gap actually closes once SNI exists. No real MicroSat DIYABC reftable
+has been used yet for `toy_example2_ms_dna_XY` specifically (impossible,
+see above) — this validation is on `toy_example2_ms_dna` only.
 
 ### DNA sequence substitution model (started 2026-07-29, mutation placement done 2026-07-31)
 
@@ -1441,11 +1782,15 @@ point (mirrors `compute_all_statistics`), now wired into `pipeline.py`
 `stats_group_parser.py` docstring's old "dedup deferred, unclear if
 legitimate" framing is stale, ignore it.
 
-**Not yet done**: MicroSat's own stats (`NAL`/`HET`/`VAR`/`MGW`/`FST`/
-`LIK`/`DAS`/`DM2`) not started at all — different data shape (allele
-sizes, not tskit genotypes), no simulation side either. See
-`notes/resume_stat_dna.md` for a biology-first (not code-first)
-explanation of what each of the 13 DNA stats measures.
+**Resolved 2026-09-11**: MicroSat's own stats (`NAL`/`HET`/`VAR`/`MGW`/
+`N2P`/`H2P`/`V2P`/`FST`/`LIK`/`DAS`/`DM2`) are now implemented too — see
+"MicroSat summary statistics" above. They needed a different data shape
+than tskit genotype matrices (allele sizes from `_length_by_population`,
+plus individual/ploidy-aware genotypes for `FST`/`LIK` specifically),
+confirming the original note below was right that this wasn't a simple
+reuse of the DNA-sequence bricks. See `notes/resume_stat_dna_ms.md` for
+a biology-first (not code-first) explanation of what each of the 13 DNA
+stats and 11 MicroSat stats measures.
 
 ### DIYABC-replay pipeline for DNA sequences (2026-08-26) — cross-validated against a real reftable
 
