@@ -15,8 +15,11 @@ from conftest import (
 )
 
 from bridge.ancestry_simulation import (
+    _distribution_from_position,
     _group_prior_values_from_columns,
+    _place_gsm_row_on_dense_grid,
     _reindex_reads_by_msprime_name,
+    _sni_row_on_dense_grid,
     build_group_local_param_per_locus,
     build_group_local_param_per_locus_from_values,
     build_male_only_samples_argument,
@@ -25,6 +28,7 @@ from bridge.ancestry_simulation import (
     build_matrix_per_locus,
     build_microsat_local_param_per_locus,
     build_microsat_transition_matrix,
+    build_microsat_transition_matrix_with_sni,
     build_rate_map,
     build_rate_map_per_locus,
     build_samples_argument,
@@ -814,6 +818,113 @@ def test_build_male_only_samples_argument_ms_dna(header_text_te2_XY):
 # ------------------------------------------------------
 # Tests sur les fonctions relatives aux microsatellites
 # ------------------------------------------------------
+def test_distribution_from_position():
+    """Vérifie que la fonction distribution_from_position retourne la bonne distribution de mutation pour un locus microsatellite donné."""
+    # Test avec un exemple simple
+    position = 5
+    kmin = 0
+    kmax = 10
+    motif_size = 2
+    Pgeom = 0.5
+    epsilon = 1e-16
+
+    distribution = _distribution_from_position(
+        position, kmin, kmax, motif_size, Pgeom, epsilon
+    )
+
+    assert isinstance(distribution, np.ndarray)
+    assert distribution.shape == ((kmax - kmin) // motif_size,)
+    assert np.allclose(
+        distribution.sum(), 1.0
+    )  # La somme des probabilités doit être égale à 1
+
+
+def test_place_gsm_row_on_dense_grid():
+    """Vérifie que la fonction place_gsm_row_on_dense_grid retourne la bonne ligne de matrice de transition pour un locus microsatellite donné."""
+    local_distribution = np.array([0.05, 0.05, 0.2, 0.3, 0.4])
+    position = 3
+    kmin = 0
+    kmax = 10
+    motif_size = 2
+    result = _place_gsm_row_on_dense_grid(
+        local_distribution, position, kmin, kmax, motif_size
+    )
+
+    assert np.allclose(
+        result, np.array([0.0, 0.05, 0.0, 0.05, 0.0, 0.2, 0, 0.3, 0, 0.4, 0])
+    )
+
+
+def test_sni_row_on_dense_grid():
+    """Vérifie que la fonction sni_row_on_dense_grid retourne la bonne ligne de matrice de transition pour un locus microsatellite donné."""
+
+    kmin = 0
+    kmax = 5
+
+    # test sur une position intermédiaire
+    position1 = 3
+    result1 = _sni_row_on_dense_grid(position1, kmin, kmax)
+    assert np.allclose(result1, np.array([0, 0, 0.5, 0, 0.5, 0]))
+
+    # test sur une position à l'extrémité
+    position2 = kmin
+    result2 = _sni_row_on_dense_grid(position2, kmin, kmax)
+    assert np.allclose(result2, np.array([0.5, 0.5, 0, 0, 0, 0]))
+
+    position3 = kmax
+    result3 = _sni_row_on_dense_grid(position3, kmin, kmax)
+    assert np.allclose(result3, np.array([0, 0, 0, 0, 0.5, 0.5]))
+
+
+def test_build_microsat_transition_matrix_with_sni():
+    """Vérifie que la fonction build_microsat_transition_matrix_with_sni retourne la bonne matrice de transition pour les loci microsatellites."""
+    kmin = 0
+    kmax = 6
+    motif_size = 2
+    Pgeom = 0.2
+    sni_rate = 0.1
+    mut_rate = 0.5
+
+    matrix = build_microsat_transition_matrix_with_sni(
+        kmin=kmin,
+        kmax=kmax,
+        motif_size=motif_size,
+        Pgeom=Pgeom,
+        sni_rate=sni_rate,
+        mut_rate=mut_rate,
+    ).transition_matrix
+
+    assert matrix.shape == (kmax - kmin + 1, kmax - kmin + 1)
+    assert np.allclose(matrix.sum(axis=1), 1.0)  # Chaque ligne doit sommer à 1
+
+    # test pour savoir si on obtient la mêm chose sans sni avec sni_rate =0
+    model_without_sni = build_microsat_transition_matrix(
+        kmin=kmin,
+        kmax=kmax,
+        motif_size=motif_size,
+        Pgeom=Pgeom,
+        epsilon=1e-16,
+    )
+    matrix_without_sni = model_without_sni.transition_matrix
+
+    sni_rate = 0
+    matrix_with_sni = build_microsat_transition_matrix_with_sni(
+        kmin=kmin,
+        kmax=kmax,
+        motif_size=motif_size,
+        Pgeom=Pgeom,
+        sni_rate=sni_rate,
+        mut_rate=mut_rate,
+    ).transition_matrix
+
+    alleles = model_without_sni.alleles
+    numeric_allele = [int(a) for a in alleles]
+    expected_index = [numeric_allele[i] - kmin for i in range(len(numeric_allele))]
+    ixgrid = np.ix_(expected_index, expected_index)
+
+    extracted_matrix_with_sni = matrix_with_sni[ixgrid]
+
+    assert np.allclose(matrix_without_sni, extracted_matrix_with_sni)
 
 
 def test_build_microsat_transition_matrix():
@@ -880,17 +991,24 @@ def test_build_microsat_local_param_per_locus(header_text_te2_XY):
             None,
         )
         assert locus_type == "M", f"Locus {locus} n'est pas un microsatellite"
+
     assert len(params_per_locus) == 10
     all_mus_rate_values = [k[0] for k in params_per_locus.values()]
     assert len(set(all_mus_rate_values)) == 10  # Tous les mus_rate sont différents
+    all_Pgeom_values = [k[1] for k in params_per_locus.values()]
+    assert len(set(all_Pgeom_values)) == 10  # Tous les Pgeom sont différents
+    all_sni_rate_values = [k[2] for k in params_per_locus.values()]
+    assert len(set(all_sni_rate_values)) == 10  # Tous les sni_rate sont différents
 
     for locus in params_per_locus:
-        assert len(params_per_locus[locus]) == 2
+        assert len(params_per_locus[locus]) == 3
         assert params_per_locus[locus][0] > 0.0
         assert params_per_locus[locus][1] >= 0.0 and params_per_locus[locus][1] <= 1.0
+        assert params_per_locus[locus][2] >= 0.0
 
     assert params_per_locus["Locus_M_A_1_"][0] == 0.00010313460804143706
     assert params_per_locus["Locus_M_A_1_"][1] == 0.4820860729990509
+    assert params_per_locus["Locus_M_A_1_"][2] == 3.1999081859003997e-07
 
     # test de reproductibilité avec la même graine
     params_per_locus_2 = build_microsat_local_param_per_locus(
@@ -917,7 +1035,7 @@ def test_build_matrix_microsat_per_locus(header_text_te2_XY):
         )
         assert locus_type == "M", f"Locus {locus} n'est pas un microsatellite"
     assert len(matrix_per_locus) == 10
-    assert matrix_per_locus["Locus_M_A_1_"].transition_matrix.shape == (39, 39)
+    assert matrix_per_locus["Locus_M_A_1_"].transition_matrix.shape == (79, 79)
 
     matrix_per_locus2 = build_matrix_microsat_per_locus(
         header_text_te2_XY, OBSERVED_MSS_FILE_TE2_XY, seed=42
