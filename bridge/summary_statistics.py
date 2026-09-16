@@ -2575,31 +2575,32 @@ def _compute_N2P_for_one_locus(
     Returns:
         Le nombre total d'allèles distincts.
     """
-    combined_alleles = {}
-    for i in range(len(population_names)):
-        for j in range(i + 1, len(population_names)):
-            if (
-                population_names[i] in length_by_pop
-                and population_names[j] in length_by_pop
-            ):
-                lengths_a = length_by_pop[population_names[i]]
-                lengths_b = length_by_pop[population_names[j]]
-                combined_alleles.setdefault(f"{i + 1}.{j + 1}", 0.0)
-                combined_alleles[f"{i + 1}.{j + 1}"] += _compute_N2P_for_one_pair(
-                    lengths_a, lengths_b
-                )
-            elif population_names[i] in length_by_pop:
-                lengths_a = length_by_pop[population_names[i]]
-                combined_alleles.setdefault(f"{i + 1}.{j + 1}", 0.0)
-                combined_alleles[f"{i + 1}.{j + 1}"] += count_alleles_per_population(
-                    length_by_pop
-                )[population_names[i]]
-            elif population_names[j] in length_by_pop:
-                lengths_b = length_by_pop[population_names[j]]
-                combined_alleles.setdefault(f"{i + 1}.{j + 1}", 0.0)
-                combined_alleles[f"{i + 1}.{j + 1}"] += count_alleles_per_population(
-                    length_by_pop
-                )[population_names[j]]
+    pairs = pairs = [
+        (i, j)
+        for i in range(len(population_names))
+        for j in range(i + 1, len(population_names))
+    ]
+
+    combined_alleles = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
+    for i, j in pairs:
+        key = f"{i + 1}.{j + 1}"
+        if (
+            population_names[i] in length_by_pop
+            and population_names[j] in length_by_pop
+        ):
+            lengths_a = length_by_pop[population_names[i]]
+            lengths_b = length_by_pop[population_names[j]]
+            combined_alleles[key] += _compute_N2P_for_one_pair(lengths_a, lengths_b)
+        elif population_names[i] in length_by_pop:
+            lengths_a = length_by_pop[population_names[i]]
+            combined_alleles[key] += count_alleles_per_population(length_by_pop)[
+                population_names[i]
+            ]
+        elif population_names[j] in length_by_pop:
+            lengths_b = length_by_pop[population_names[j]]
+            combined_alleles[key] += count_alleles_per_population(length_by_pop)[
+                population_names[j]
+            ]
     return combined_alleles
 
 
@@ -2700,33 +2701,39 @@ def compute_H2P(
     tree_sequences: list[tskit.TreeSequence], population_names: list[str]
 ) -> dict[str, float]:
 
-    H2P_values = {}
+    pairs = [
+        (i, j)
+        for i in range(len(population_names))
+        for j in range(i + 1, len(population_names))
+    ]
+
+    H2P_values = {f"{i + 1}.{j + 1}": [] for i, j in pairs}
     for ts in tree_sequences:
         length_by_pop = _length_by_population(ts)
-        for i in range(len(population_names)):
-            for j in range(i + 1, len(population_names)):
-                if (
-                    population_names[i] in length_by_pop
-                    and population_names[j] in length_by_pop
-                ):
-                    H2P_value = _compute_H2P_for_one_pair(
-                        length_by_pop, population_names[i], population_names[j]
+        for i, j in pairs:
+            key = f"{i + 1}.{j + 1}"
+            if (
+                population_names[i] in length_by_pop
+                and population_names[j] in length_by_pop
+            ):
+                H2P_value = _compute_H2P_for_one_pair(
+                    length_by_pop, population_names[i], population_names[j]
+                )
+                H2P_values[key].append(H2P_value)
+            else:
+                total_counts = total_genes_copies_per_population(length_by_pop)
+                if population_names[i] in length_by_pop:
+                    _lengths_counts = length_by_pop[population_names[i]]
+                    H2P_value = _compute_HET_for_one_population(
+                        total_counts[population_names[i]], _lengths_counts
                     )
-                    H2P_values.setdefault(f"{i + 1}.{j + 1}", []).append(H2P_value)
-                else:
-                    total_counts = total_genes_copies_per_population(length_by_pop)
-                    if population_names[i] in length_by_pop:
-                        _lengths_counts = length_by_pop[population_names[i]]
-                        H2P_value = _compute_HET_for_one_population(
-                            total_counts[population_names[i]], _lengths_counts
-                        )
-                        H2P_values.setdefault(f"{i + 1}.{j + 1}", []).append(H2P_value)
-                    elif population_names[j] in length_by_pop:
-                        _lengths_counts = length_by_pop[population_names[j]]
-                        H2P_value = _compute_HET_for_one_population(
-                            total_counts[population_names[j]], _lengths_counts
-                        )
-                        H2P_values.setdefault(f"{i + 1}.{j + 1}", []).append(H2P_value)
+                    H2P_values[key].append(H2P_value)
+                elif population_names[j] in length_by_pop:
+                    _lengths_counts = length_by_pop[population_names[j]]
+                    H2P_value = _compute_HET_for_one_population(
+                        total_counts[population_names[j]], _lengths_counts
+                    )
+                    H2P_values[key].append(H2P_value)
     for key in H2P_values:
         H2P_values[key] = (
             sum(H2P_values[key]) / len(H2P_values[key])
