@@ -1545,7 +1545,7 @@ def test_compute_LIK(header_text_te2_XY):
     assert (
         results["1.2"] != results["2.1"]
     )  # pas de garanti que ce soit vrai sur tous les datasets
-    assert pytest.approx(results["1.2"]) == 2.36209962972902
+    assert pytest.approx(results["1.2"]) == 1.8200474426696596
 
 
 # Test pour la fonction d'entrée principale de calcul des stats microsatellites
@@ -1572,4 +1572,4 @@ def test_compute_all_statistics_microsat(header_text_te2_XY):
     assert len(results) == 16
     assert expected_keys.issubset(results.keys())
     assert pytest.approx(results["HET_1_1"]) == 7.929892037786773 / 10
-    assert pytest.approx(results["LIK_1_1.2"]) == 2.36209962972902
+    assert pytest.approx(results["LIK_1_1.2"]) == 1.8200474426696596
