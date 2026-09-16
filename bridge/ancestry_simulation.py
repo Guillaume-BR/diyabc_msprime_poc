@@ -2216,11 +2216,9 @@ def dna_mutation_simulation_per_locus_from_values(
 
 def _distribution_from_position(
     position: int,
+    transition_matrix: np.ndarray,
     kmin: int,
-    kmax: int,
     motif_size: int,
-    Pgeom: float,
-    epsilon: float = 1e-16,
 ) -> np.ndarray:
     """Construit la ligne GSM (stepwise) recentrée sur `position`, sur la grille LOCALE espacée de `motif_size`.
 
@@ -2247,12 +2245,10 @@ def _distribution_from_position(
         `(position - kmin) // motif_size` correspond à `position` lui-même.
     """
     n_minus = (position - kmin) // motif_size
-    n_plus = (kmax - position) // motif_size
-    n_alleles = n_minus + n_plus + 1
 
-    distribution = msprime.TPM(
-        p=epsilon, m=max(epsilon, min(1 - Pgeom, 1 - epsilon)), lo=0, hi=n_alleles - 1
-    ).transition_matrix[n_minus]  # Distribution de probabilité pour l'allèle racine
+    distribution = transition_matrix[
+        n_minus
+    ]  # Distribution de probabilité pour l'allèle racine
 
     return distribution
 
@@ -2350,7 +2346,7 @@ def build_microsat_transition_matrix_with_sni(
     sni_rate: float,
     mut_rate: float,
     epsilon: float = 1e-16,
-) -> np.ndarray:
+) -> msprime.MatrixMutationModel:
     """Construit la matrice de transition d'un locus microsatellite avec SNI.
 
     Args:
@@ -2368,11 +2364,22 @@ def build_microsat_transition_matrix_with_sni(
     # construction de la matrice de transition GSM+SNI sur la grille dense
     n_alleles = kmax - kmin + 1
     transition_matrix = np.zeros((n_alleles, n_alleles))
+
+    # calcul des matrices GSM pour chaque décalage de motif
+    matrices = {}
+    for i in range(motif_size):
+        n_plus_i = (kmax - (kmin + i)) // motif_size
+        hi = n_plus_i
+        matrices[i] = msprime.TPM(
+            p=epsilon, m=max(epsilon, min(1 - Pgeom, 1 - epsilon)), lo=0, hi=hi
+        ).transition_matrix
+
     for i in range(n_alleles):
         position = kmin + i
         sni_row = _sni_row_on_dense_grid(position, kmin, kmax)
+        r = (position - kmin) % motif_size
         local_distribution = _distribution_from_position(
-            position, kmin, kmax, motif_size, Pgeom, epsilon
+            position, matrices[r], kmin, motif_size
         )
         gsm_row = _place_gsm_row_on_dense_grid(
             local_distribution, position, kmin, kmax, motif_size
@@ -2616,22 +2623,23 @@ def _group_prior_values_microsat_from_columns(
 ) -> dict[str, dict[str, float]]:
     """Reconstruit le dict nested {groupe: {prior: valeur}} depuis les colonnes du reftable réel pour les microsats.
 
-    Reshape les colonnes plates du vrai reftable DIYABC (ex:
-    "mut_rate", "Pgeom") dans la forme nested que
-    draw_group_parameter_values produit normalement, pour que
-    build_group_local_param_per_locus_from_values puisse réutiliser
-    tel quel le corps de build_group_local_param_per_locus.
+        Reshape les colonnes plates du vrai reftable DIYABC (ex:
+        "mut_rate", "Pgeom") dans la forme nested que
+        draw_group_parameter_values produit normalement, pour que
+        build_group_local_param_per_locus_from_values puisse réutiliser
+        tel quel le corps de build_group_local_param_per_locus.
 
-    Args:
-        group_priors_values: Dict {nom_colonne: valeur} tel que lu
-            dans le vrai reftable (voir
-            reftable_loop.parse_real_reftable_params_with_group_priors).
-        group_priors: Dict {nom_groupe: [GroupPrior, ...]} (voir
-            prior_parser.parse_group_priors).
+        Args:
+            group_priors_values: Dict {nom_colonne: valeur} tel que lu
+                dans le vrai reftable (voir
+                reftable_loop.parse_real_reftable_params_with_group_priors).
+            group_priors: Dict {nom_groupe: [GroupPrior, ...]} (voir
+                prior_parser=
+    (diyabc_msprime) bernardr@cbgp-d-student1:~/Documents/Github/diyabc-msprime-poc$ .parse_group_priors).
 
-    Returns:
-        Un dict {nom_groupe: {nom_prior: valeur}}, pour les groupes de
-        loci microsat ([M]) uniquement -- les groupes ADN sont ignorés.
+        Returns:
+            Un dict {nom_groupe: {nom_prior: valeur}}, pour les groupes de
+            loci microsat ([M]) uniquement -- les groupes ADN sont ignorés.
     """
     group_values = {}
     for group, priors in group_priors.items():

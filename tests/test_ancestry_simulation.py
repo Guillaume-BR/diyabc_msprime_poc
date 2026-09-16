@@ -821,22 +821,19 @@ def test_build_male_only_samples_argument_ms_dna(header_text_te2_XY):
 def test_distribution_from_position():
     """Vérifie que la fonction distribution_from_position retourne la bonne distribution de mutation pour un locus microsatellite donné."""
     # Test avec un exemple simple
-    position = 5
-    kmin = 0
-    kmax = 10
+    position = 4
+    kmin = 1
     motif_size = 2
-    Pgeom = 0.5
-    epsilon = 1e-16
 
-    distribution = _distribution_from_position(
-        position, kmin, kmax, motif_size, Pgeom, epsilon
-    )
+    matrix = np.array(
+        np.arange(0, 12).reshape(3, 4)
+    )  # matrice de transition simple pour le test
+
+    distribution = _distribution_from_position(position, matrix, kmin, motif_size)
 
     assert isinstance(distribution, np.ndarray)
-    assert distribution.shape == ((kmax - kmin) // motif_size,)
-    assert np.allclose(
-        distribution.sum(), 1.0
-    )  # La somme des probabilités doit être égale à 1
+    assert distribution.shape == (4,)
+    assert np.array_equal(distribution, np.array([4, 5, 6, 7]))
 
 
 def test_place_gsm_row_on_dense_grid():
@@ -973,7 +970,7 @@ def test_build_microsat_transition_matrix():
 
 
 def test_build_microsat_local_param_per_locus(header_text_te2_XY):
-    """Vérifie que la fonction build_microsat_local_param_per_locus retourne le bon dictionnaire
+    """Vérifie que la fonction buiomparaison directe de forme), le raleld_microsat_local_param_per_locus retourne le bon dictionnaire
     Test de reproductibilité avec la même graine.
     """
     params_per_locus = build_microsat_local_param_per_locus(header_text_te2_XY, seed=42)
