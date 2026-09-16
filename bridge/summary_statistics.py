@@ -937,9 +937,9 @@ def compute_NEI(
     nloci = len(genotypes_per_locus)
     f, g = freq0, freq1
     norm = np.sqrt(f * f + g * g)  # (npop, nloci)
-
-    results = {}
     npop = len(population_names)
+    results = {}
+
     for i in range(npop):
         for j in range(i + 1, npop):
             denom = norm[i] * norm[j]
@@ -1855,25 +1855,24 @@ def compute_NH2(
         populations.
     """
     num_loci = len(tree_sequences)
-    mean_distinct_haplotypes = {}
-    for ia in range(len(population_names)):
-        for ib in range(ia + 1, len(population_names)):
-            key = f"{ia + 1}.{ib + 1}"
-            mean_distinct_haplotypes[key] = 0.0
+
+    pairs = [
+        (ia, ib)
+        for ia in range(len(population_names))
+        for ib in range(ia + 1, len(population_names))
+    ]
+    mean_distinct_haplotypes = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
 
     for ts in tree_sequences:
         genotype_matrices = _genotype_matrix_by_population(ts)
-        for ia in range(len(population_names)):
-            for ib in range(ia + 1, len(population_names)):
-                pop_a = population_names[ia]
-                pop_b = population_names[ib]
-                combined_matrix = np.hstack(
-                    (genotype_matrices[pop_a], genotype_matrices[pop_b])
-                )
-                key = f"{ia + 1}.{ib + 1}"
-                mean_distinct_haplotypes[key] += _count_distinct_haplotypes(
-                    combined_matrix
-                )
+        for ia, ib in pairs:
+            pop_a = population_names[ia]
+            pop_b = population_names[ib]
+            combined_matrix = np.hstack(
+                (genotype_matrices[pop_a], genotype_matrices[pop_b])
+            )
+            key = f"{ia + 1}.{ib + 1}"
+            mean_distinct_haplotypes[key] += _count_distinct_haplotypes(combined_matrix)
 
     if num_loci > 0:
         for key in mean_distinct_haplotypes:
@@ -1911,24 +1910,24 @@ def compute_NS2(
         Un dict {"i.j": valeur_moyenne}, une entrée par paire de
         populations.
     """
+    pairs = [
+        (ia, ib)
+        for ia in range(len(population_names))
+        for ib in range(ia + 1, len(population_names))
+    ]
+    mean_segregating_sites = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
     num_loci = len(tree_sequences)
-    mean_segregating_sites = {}
-    for ia in range(len(population_names)):
-        for ib in range(ia + 1, len(population_names)):
-            key = f"{ia + 1}.{ib + 1}"
-            mean_segregating_sites[key] = 0.0
 
     for ts in tree_sequences:
         genotype_matrices = _genotype_matrix_by_population(ts)
-        for ia in range(len(population_names)):
-            for ib in range(ia + 1, len(population_names)):
-                pop_a = population_names[ia]
-                pop_b = population_names[ib]
-                combined_matrix = np.hstack(
-                    (genotype_matrices[pop_a], genotype_matrices[pop_b])
-                )
-                key = f"{ia + 1}.{ib + 1}"
-                mean_segregating_sites[key] += _count_segregating_sites(combined_matrix)
+        for ia, ib in pairs:
+            pop_a = population_names[ia]
+            pop_b = population_names[ib]
+            combined_matrix = np.hstack(
+                (genotype_matrices[pop_a], genotype_matrices[pop_b])
+            )
+            key = f"{ia + 1}.{ib + 1}"
+            mean_segregating_sites[key] += _count_segregating_sites(combined_matrix)
 
     if num_loci > 0:
         for key in mean_segregating_sites:
@@ -1996,25 +1995,25 @@ def compute_MP2(
         Un dict {"i.j": valeur_moyenne}, une entrée par paire de
         populations.
     """
+    pairs = [
+        (ia, ib)
+        for ia in range(len(population_names))
+        for ib in range(ia + 1, len(population_names))
+    ]
+    mean_pairwise_differences = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
     num_loci = len(tree_sequences)
-    mean_pairwise_differences = {}
-    for ia in range(len(population_names)):
-        for ib in range(ia + 1, len(population_names)):
-            key = f"{ia + 1}.{ib + 1}"
-            mean_pairwise_differences[key] = 0.0
 
     for ts in tree_sequences:
         genotype_matrices = _genotype_matrix_by_population(ts)
-        for ia in range(len(population_names)):
-            for ib in range(ia + 1, len(population_names)):
-                pop_a = population_names[ia]
-                pop_b = population_names[ib]
-                key = f"{ia + 1}.{ib + 1}"
-                mean_pairwise_differences[key] += (
-                    _mean_pairwise_differences_within_per_locus(
-                        genotype_matrices, pop_a, pop_b
-                    )
+        for ia, ib in pairs:
+            pop_a = population_names[ia]
+            pop_b = population_names[ib]
+            key = f"{ia + 1}.{ib + 1}"
+            mean_pairwise_differences[key] += (
+                _mean_pairwise_differences_within_per_locus(
+                    genotype_matrices, pop_a, pop_b
                 )
+            )
 
     if num_loci > 0:
         for key in mean_pairwise_differences:
@@ -2113,24 +2112,24 @@ def compute_MPB(
         Un dict {"i.j": valeur_moyenne}, une entrée par paire de
         populations.
     """
+    pairs = [
+        (ia, ib)
+        for ia in range(len(population_names))
+        for ib in range(ia + 1, len(population_names))
+    ]
+    mean_pairwise_differences_between = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
     num_loci = len(tree_sequences)
-    mean_pairwise_differences_between = {}
-    for ia in range(len(population_names)):
-        for ib in range(ia + 1, len(population_names)):
-            key = f"{ia + 1}.{ib + 1}"
-            mean_pairwise_differences_between[key] = 0.0
 
     for ts in tree_sequences:
         genotype_matrices = _genotype_matrix_by_population(ts)
-        for ia in range(len(population_names)):
-            for ib in range(ia + 1, len(population_names)):
-                pop_a = population_names[ia]
-                pop_b = population_names[ib]
-                key = f"{ia + 1}.{ib + 1}"
-                distances_between = _pairwise_hamming_distances_between(
-                    genotype_matrices[pop_a], genotype_matrices[pop_b]
-                )
-                mean_pairwise_differences_between[key] += distances_between.mean()
+        for ia, ib in pairs:
+            pop_a = population_names[ia]
+            pop_b = population_names[ib]
+            key = f"{ia + 1}.{ib + 1}"
+            distances_between = _pairwise_hamming_distances_between(
+                genotype_matrices[pop_a], genotype_matrices[pop_b]
+            )
+            mean_pairwise_differences_between[key] += distances_between.mean()
 
     if num_loci > 0:
         for key in mean_pairwise_differences_between:
@@ -2175,31 +2174,29 @@ def compute_HST(
     Returns:
         Un dict {"i.j": valeur}, une entrée par paire de populations.
     """
-    mean_hst = {}
-    num = {}
-    den = {}
-    for ia in range(len(population_names)):
-        for ib in range(ia + 1, len(population_names)):
-            key = f"{ia + 1}.{ib + 1}"
-            mean_hst[key] = 0.0
-            num[key] = 0.0
-            den[key] = 0.0
+    pairs = [
+        (ia, ib)
+        for ia in range(len(population_names))
+        for ib in range(ia + 1, len(population_names))
+    ]
+    mean_hst = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
+    num = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
+    den = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
 
     for ts in tree_sequences:
         genotype_matrices = _genotype_matrix_by_population(ts)
-        for ia in range(len(population_names)):
-            for ib in range(ia + 1, len(population_names)):
-                pop_a = population_names[ia]
-                pop_b = population_names[ib]
-                key = f"{ia + 1}.{ib + 1}"
-                mpb = _mean_pairwise_differences_between_per_locus(
-                    genotype_matrices, pop_a, pop_b
-                )
-                mpw = _mean_pairwise_differences_within_per_locus(
-                    genotype_matrices, pop_a, pop_b
-                )
-                num[key] += mpb - mpw
-                den[key] += mpb
+        for ia, ib in pairs:
+            pop_a = population_names[ia]
+            pop_b = population_names[ib]
+            key = f"{ia + 1}.{ib + 1}"
+            mpb = _mean_pairwise_differences_between_per_locus(
+                genotype_matrices, pop_a, pop_b
+            )
+            mpw = _mean_pairwise_differences_within_per_locus(
+                genotype_matrices, pop_a, pop_b
+            )
+            num[key] += mpb - mpw
+            den[key] += mpb
 
     for key in mean_hst:
         if den[key] > 0:
@@ -2783,26 +2780,30 @@ def compute_V2P(
     list_motif_sizes: list[int],
 ) -> dict[str, float]:
 
-    V2P_values = {}
+    pairs = [
+        (i, j)
+        for i in range(len(population_names))
+        for j in range(i + 1, len(population_names))
+    ]
+
+    V2P_values = {f"{i + 1}.{j + 1}": [] for i, j in pairs}
     for ts, motif_size in zip(tree_sequences, list_motif_sizes, strict=True):
         length_by_pop = _length_by_population(ts)
         raw_sizes, raw_square_sizes, total_counts = _compute_VAR_constants(
             length_by_pop
         )
-        for i in range(len(population_names)):
-            for j in range(i + 1, len(population_names)):
-                pop_a = population_names[i]
-                pop_b = population_names[j]
-                raw_size_sum, raw_square_size_sum, total_count_sum = (
-                    _compute_V2P_constants(
-                        pop_a, pop_b, raw_sizes, raw_square_sizes, total_counts
-                    )
+        for i, j in pairs:
+            key = f"{i + 1}.{j + 1}"
+            pop_a = population_names[i]
+            pop_b = population_names[j]
+            raw_size_sum, raw_square_size_sum, total_count_sum = _compute_V2P_constants(
+                pop_a, pop_b, raw_sizes, raw_square_sizes, total_counts
+            )
+            if total_count_sum > 1:
+                V2P_value = _compute_VAR_for_one_population(
+                    raw_size_sum, raw_square_size_sum, total_count_sum, motif_size
                 )
-                if total_count_sum > 1:
-                    V2P_value = _compute_VAR_for_one_population(
-                        raw_size_sum, raw_square_size_sum, total_count_sum, motif_size
-                    )
-                    V2P_values.setdefault(f"{i + 1}.{j + 1}", []).append(V2P_value)
+                V2P_values[key].append(V2P_value)
 
     for key in V2P_values:
         V2P_values[key] = (
