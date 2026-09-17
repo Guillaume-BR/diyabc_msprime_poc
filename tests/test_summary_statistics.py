@@ -11,7 +11,6 @@ import numpy as np
 import pytest
 from conftest import (
     OBSERVED_MSS_FILE_TE2,
-    OBSERVED_MSS_FILE_TE2_XY,
 )
 
 from bridge.ancestry_simulation import (
@@ -734,7 +733,7 @@ def test_compute_all_statistics_dna(header_text_te2):
 # -----------------------------------------------------------------------
 
 
-def test_length_by_population(header_text_te2_XY):
+def test_length_by_population(microsat_context_te2_xy):
     """Vérifie _length_by_population sur un locus microsat (Locus_M_A_1_).
 
     Convertit les codes de génotype en tailles réelles (pb) via
@@ -744,12 +743,11 @@ def test_length_by_population(header_text_te2_XY):
     cette fonction (indexation par sample_ids plutôt que par un
     intervalle [first_index, last_index] supposé contigu)."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
@@ -788,15 +786,14 @@ def test_count_alleles_per_population():
     assert results["pop2"] == 4
 
 
-def test_compute_NAL(header_text_te2_XY):
+def test_compute_NAL(microsat_context_te2_xy):
     """Vérifie compute_NAL sur toy_example2_ms_dna_xy."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
@@ -809,15 +806,14 @@ def test_compute_NAL(header_text_te2_XY):
     assert pytest.approx(results["pop2"]) == 79 / 9
 
 
-def test_total_genes_copies_per_population(header_text_te2_XY):
+def test_total_genes_copies_per_population(microsat_context_te2_xy):
     """Vérifie _total_genes_copies_per_population sur toy_example2_ms_dna_xy."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
@@ -829,15 +825,14 @@ def test_total_genes_copies_per_population(header_text_te2_XY):
     assert results["pop2"] == 40
 
 
-def test_compute_HET(header_text_te2_XY):
+def test_compute_HET(microsat_context_te2_xy):
     """Vérifie compute_HET sur toy_example2_ms_dna_xy."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
@@ -870,15 +865,14 @@ def test_compute_HET(header_text_te2_XY):
 # tests pour la stat VAR (Variance of Repeat Number) pour microsatellites
 
 
-def test_compute_VAR_constants(header_text_te2_XY):
+def test_compute_VAR_constants(microsat_context_te2_xy):
     """Vérifie que les constantes de compute_VAR sont correctes."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
@@ -906,15 +900,14 @@ def test_compute_VAR_constants(header_text_te2_XY):
     assert total_counts["pop2"] == 40
 
 
-def test_compute_VAR_for_one_population(header_text_te2_XY):
+def test_compute_VAR_for_one_population(microsat_context_te2_xy):
     """Vérifie compute_VAR sur toy_example2_ms_dna_xy pour une seule population."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
@@ -929,23 +922,20 @@ def test_compute_VAR_for_one_population(header_text_te2_XY):
     assert pytest.approx(result) == (v1 - s1**2 / n1) / (n1 - 1) / 2**2
 
 
-def test_compute_VAR(header_text_te2_XY):
+def test_compute_VAR(microsat_context_te2_xy):
     """Vérifie compute_VAR sur toy_example2_ms_dna_xy."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
     population_names = ["pop1", "pop2"]
     list_loci = [
-        locus
-        for locus in parse_loci_description(header_text_te2_XY)
-        if locus.ms_or_seq == "M"
+        locus for locus in microsat_context_te2_xy.list_loci if locus.ms_or_seq == "M"
     ]
     list_motif_sizes = [locus.motif_size for locus in list_loci]
     results = compute_VAR(mutated.values(), population_names, list_motif_sizes)
@@ -958,19 +948,18 @@ def test_compute_VAR(header_text_te2_XY):
 # tests pour la stat MGW (Mean Gene Width) pour microsatellites
 
 
-def test_compute_MGW_by_locus(header_text_te2_XY):
+def test_compute_MGW_by_locus(microsat_context_te2_xy):
     """Vérifie _compute_MGW_by_locus sur toy_example2_ms_dna_xy.
 
     Locus_M_A_1_ : pop1 a des allèles présents à 203/197/193 (min=193,
     pas 197 -- 189/199/201 sont à compte 0), pop2 à 203/193/199/189
     (min=189, max=203)."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
@@ -981,21 +970,18 @@ def test_compute_MGW_by_locus(header_text_te2_XY):
     assert result["pop2"] == (4, 1 + (203 - 189) / 2)
 
 
-def test_compute_MGW(header_text_te2_XY):
+def test_compute_MGW(microsat_context_te2_xy):
     """Vérifie compute_MGW sur toy_example2_ms_dna_xy."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
     list_loci = [
-        locus
-        for locus in parse_loci_description(header_text_te2_XY)
-        if locus.ms_or_seq == "M"
+        locus for locus in microsat_context_te2_xy.list_loci if locus.ms_or_seq == "M"
     ]
     list_motif_sizes = [locus.motif_size for locus in list_loci]
     population_names = ["pop1", "pop2"]
@@ -1033,15 +1019,14 @@ def test_compute_N2P_for_one_locus():
     assert combined_alleles_count == {"1.2": 5.0}
 
 
-def test_compute_N2P(header_text_te2_XY):
+def test_compute_N2P(microsat_context_te2_xy):
     """Vérifie compute_N2P sur toy_example2_ms_dna_xy."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
@@ -1100,15 +1085,14 @@ def test_compute_H2P_for_one_pair():
         _compute_H2P_for_one_pair(length_by_pop, "pop1", "pop3")
 
 
-def test_compute_H2P(header_text_te2_XY):
+def test_compute_H2P(microsat_context_te2_xy):
     """Vérifie compute_H2P sur toy_example2_ms_dna_xy."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
@@ -1162,19 +1146,18 @@ def test_compute_V2P_constants():
     assert n1 == 39 + 40
 
 
-def test_compute_V2P(header_text_te2_XY):
+def test_compute_V2P(microsat_context_te2_xy):
     """Vérifie compute_V2P sur toy_example2_ms_dna_xy."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
-    list_loci = parse_loci_description(header_text_te2_XY)
+    list_loci = microsat_context_te2_xy.list_loci
     list_motif_sizes = [
         locus.motif_size for locus in list_loci if locus.ms_or_seq == "M"
     ]
@@ -1204,15 +1187,14 @@ def test_compute_identical_pair_for_one_pair():
     assert identical_count == 31 * 18 + 7 * 20
 
 
-def test_compute_DAS(header_text_te2_XY):
+def test_compute_DAS(microsat_context_te2_xy):
     """Vérifie compute_DAS sur toy_example2_ms_dna_xy."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
@@ -1281,19 +1263,18 @@ def test_compute_DM2_for_one_locus():
     assert not was_valid_2
 
 
-def test_compute_DM2(header_text_te2_XY):
+def test_compute_DM2(microsat_context_te2_xy):
     """Vérifie compute_DM2 sur toy_example2_ms_dna_xy."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
-    list_loci = parse_loci_description(header_text_te2_XY)
+    list_loci = microsat_context_te2_xy.list_loci
     list_motif_sizes = [
         locus.motif_size for locus in list_loci if locus.ms_or_seq == "M"
     ]
@@ -1305,7 +1286,7 @@ def test_compute_DM2(header_text_te2_XY):
 
 
 # test relatifs à la stat FST
-def test_length_by_pop_and_individuals(header_text_te2_XY):
+def test_length_by_pop_and_individuals(microsat_context_te2_xy):
     """Vérifie _length_by_pop_and_individuals sur un locus microsat (Locus_M_A_1_).
 
     Convertit les codes de génotype en tailles réelles (pb) via
@@ -1315,12 +1296,11 @@ def test_length_by_pop_and_individuals(header_text_te2_XY):
     cette fonction (indexation par sample_ids plutôt que par un
     intervalle [first_index, last_index] supposé contigu)."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
@@ -1409,15 +1389,14 @@ def test_compute_FST_constants_on_all_alleles_for_two_populations():
     assert s3l == 0.0
 
 
-def test_compute_FST(header_text_te2_XY):
+def test_compute_FST(microsat_context_te2_xy):
     """Vérifie compute_FST sur toy_example2_ms_dna_xy."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
@@ -1431,14 +1410,13 @@ def test_compute_FST(header_text_te2_XY):
 # tests relatif à la stat LIK
 
 
-def test_genotypes_by_pop_and_individuals(header_text_te2_XY):
+def test_genotypes_by_pop_and_individuals(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
@@ -1525,15 +1503,14 @@ def test_compute_LIK_for_one_locus():
     assert not present
 
 
-def test_compute_LIK(header_text_te2_XY):
+def test_compute_LIK(microsat_context_te2_xy):
     """Vérifie compute_LIK sur toy_example2_ms_dna_xy."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
@@ -1549,22 +1526,21 @@ def test_compute_LIK(header_text_te2_XY):
 
 
 # Test pour la fonction d'entrée principale de calcul des stats microsatellites
-def test_compute_all_statistics_microsat(header_text_te2_XY):
+def test_compute_all_statistics_microsat(microsat_context_te2_xy):
     """Vérifie compute_all_statistics_microsat sur toy_example2_ms_dna."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated = microsat_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=microsat_context_te2_xy,
         seed=42,
     )
 
     population_names = ["pop1", "pop2"]
 
     results = compute_all_statistics_microsat(
-        header_text_te2_XY, mutated, population_names
+        microsat_context_te2_xy.header_text, mutated, population_names, seed=42
     )
 
     expected_keys = {"LIK_1_1.2", "MGW_1_1", "FST_1_1.2"}

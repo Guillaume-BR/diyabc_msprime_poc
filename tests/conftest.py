@@ -12,6 +12,15 @@ from pathlib import Path
 
 import pytest
 
+from bridge.header_dataclasses import MicrosatReplayContext
+from bridge.loci_parser import parse_loci_description
+from bridge.observed_data import (
+    allele_bounds_per_locus,
+    observed_count_population,
+    observed_microsatellites,
+    parse_sex_ratio,
+)
+
 REFERENCE_DIR = Path(__file__).parent.parent / "reference" / "human"
 GENERAL_BINARY_PATH = os.environ.get("DIYABC_GENERAL_PATH")
 
@@ -55,6 +64,13 @@ OBSERVED_MSS_FILE_TE2_XY = (
     / "pseudo_observed_DATASET_toy_example2_microsatellites_DNAsequences_ancestral_admixture_unsampled_pops_001.mss"
 )
 
+OBSERVED_MSS_FILE_TE1 = (
+    Path(__file__).parent.parent
+    / "reference"
+    / "toy_example1_ms"
+    / "pseudo_observed_DATASET_toy_example1_microsatellites_one_pop_multiple_samples_over_time_001.mss"
+)
+
 
 @pytest.fixture
 def header_text() -> str:
@@ -95,3 +111,18 @@ def header_text_te2() -> str:
 def header_text_te2_XY() -> str:
     path_te2_XY = REFERENCE_DIR.parent / "toy_example2_ms_dna_XY" / "headerRF.txt"
     return path_te2_XY.read_text()
+
+
+@pytest.fixture
+def microsat_context_te2_xy(header_text_te2_XY) -> MicrosatReplayContext:
+    list_loci = parse_loci_description(header_text_te2_XY)
+    microsat_observed = observed_microsatellites(OBSERVED_MSS_FILE_TE2_XY, list_loci)
+    return MicrosatReplayContext(
+        header_text=header_text_te2_XY,
+        mss_path=OBSERVED_MSS_FILE_TE2_XY,
+        list_loci=list_loci,
+        microsat_observed=microsat_observed,
+        bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
+        samples_default=observed_count_population(OBSERVED_MSS_FILE_TE2_XY),
+        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE2_XY),
+    )

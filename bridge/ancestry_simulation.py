@@ -44,17 +44,15 @@ from bridge.configuration import (
     _SITE_RATE_SEED_OFFSET,
 )
 from bridge.demography_builder import rescale_demography
-from bridge.header_dataclasses import LociDescriptionDetailed
+from bridge.header_dataclasses import LociDescriptionDetailed, MicrosatReplayContext
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
-    allele_bounds_per_locus,
     base_frequency_by_locus,
     coalescence_coefficient,
     count_samples_per_population,
     individual_sexes_from_locus_genotype,
     individual_sexes_per_population,
     observed_count_population,
-    observed_microsatellites,
     observed_mrc,
     observed_reads,
     observed_sequences,
@@ -2501,7 +2499,7 @@ def build_microsat_local_param_per_locus(
 
 
 def build_matrix_microsat_per_locus(
-    header_text: str, mss_file_path: str, seed: int
+    context: MicrosatReplayContext, seed: int
 ) -> dict[str, msprime.MatrixMutationModel]:
     """Construit la matrice de transition de chaque locus microsatellite [M].
 
@@ -2513,10 +2511,9 @@ def build_matrix_microsat_per_locus(
     Returns:
         Un dict {nom_locus: msprime.MatrixMutationModel} pour chaque locus microsatellite [M].
     """
-    list_loci = parse_loci_description(header_text)
-    params_per_locus = build_microsat_local_param_per_locus(header_text, seed)
-    microsat_observed = observed_microsatellites(mss_file_path, list_loci)
-    bounds_per_locus = allele_bounds_per_locus(microsat_observed, list_loci)
+    list_loci = context.list_loci
+    params_per_locus = build_microsat_local_param_per_locus(context.header_text, seed)
+    bounds_per_locus = context.bounds_per_locus
 
     matrix_per_locus = {}
     for locus in list_loci:
@@ -2535,8 +2532,7 @@ def build_matrix_microsat_per_locus(
 
 
 def microsat_mutation_simulation_per_locus(
-    header_text: str,
-    mss_file_path: str | Path,
+    context: MicrosatReplayContext,
     demography: msprime.Demography,
     seed: int,
 ) -> dict[str, tskit.TreeSequence]:
@@ -2554,15 +2550,17 @@ def microsat_mutation_simulation_per_locus(
     Returns:
         Un dict {nom_locus: arbre_généalogique} pour chaque locus microsatellite [M].
     """
-    matrix_per_locus = build_matrix_microsat_per_locus(header_text, mss_file_path, seed)
 
-    list_loci = parse_loci_description(header_text)
-    samples_default = observed_count_population(mss_file_path=mss_file_path)
-    sex_ratio = parse_sex_ratio(mss_file_path)
+    mss_file_path = context.mss_path
+    list_loci = context.list_loci
+    samples_default = context.samples_default
+    sex_ratio = context.sex_ratio
+
+    matrix_per_locus = build_matrix_microsat_per_locus(context, seed)
+
     mutated_tree_sequences = {}
-
     # appel redondant !? modifier build_matrix_microsat_per_locus où l'on pourrait récupérer mut_rate
-    params_per_locus = build_microsat_local_param_per_locus(header_text, seed)
+    params_per_locus = build_microsat_local_param_per_locus(context.header_text, seed)
 
     for i, locus in enumerate(list_loci):
         if locus.ms_or_seq != "M":
@@ -2750,8 +2748,7 @@ def build_group_local_param_per_locus_microsat_from_values(
 
 
 def build_matrix_microsat_per_locus_from_values(
-    header_text: str,
-    mss_file_path: str,
+    context: MicrosatReplayContext,
     group_priors_values: dict[str, float],
     seed: int,
 ) -> dict[str, msprime.MatrixMutationModel]:
@@ -2766,12 +2763,13 @@ def build_matrix_microsat_per_locus_from_values(
     Returns:
         Un dict {nom_locus: msprime.MatrixMutationModel} pour chaque locus microsatellite [M].
     """
-    list_loci = parse_loci_description(header_text)
+    header_text = context.header_text
+    list_loci = context.list_loci
+    bounds_per_locus = context.bounds_per_locus
+
     params_per_locus = build_group_local_param_per_locus_microsat_from_values(
         header_text, group_priors_values, seed
     )
-    microsat_observed = observed_microsatellites(mss_file_path, list_loci)
-    bounds_per_locus = allele_bounds_per_locus(microsat_observed, list_loci)
 
     matrix_per_locus = {}
     for locus in list_loci:
@@ -2790,8 +2788,7 @@ def build_matrix_microsat_per_locus_from_values(
 
 
 def microsat_mutation_simulation_per_locus_from_values(
-    header_text: str,
-    mss_file_path: str | Path,
+    context: MicrosatReplayContext,
     demography: msprime.Demography,
     group_priors_values: dict[str, float],
     seed: int,
@@ -2812,13 +2809,16 @@ def microsat_mutation_simulation_per_locus_from_values(
     Returns:
         Un dict {nom_locus: arbre_généalogique} pour chaque locus microsatellite [M].
     """
+    header_text = context.header_text
+    mss_path = context.mss_path
+
     matrix_per_locus = build_matrix_microsat_per_locus_from_values(
-        header_text, mss_file_path, group_priors_values, seed
+        context, group_priors_values, seed
     )
 
-    list_loci = parse_loci_description(header_text)
-    samples_default = observed_count_population(mss_file_path=mss_file_path)
-    sex_ratio = parse_sex_ratio(mss_file_path)
+    list_loci = context.list_loci
+    samples_default = context.samples_default
+    sex_ratio = context.sex_ratio
     mutated_tree_sequences = {}
 
     # appel redondant !? modifier build_matrix_microsat_per_locus où l'on pourrait récupérer mut_rate
@@ -2834,11 +2834,11 @@ def microsat_mutation_simulation_per_locus_from_values(
             samples = samples_default
         elif locus.heritage == "X":
             samples = build_sex_stratified_samples_argument_ms_dna(
-                mss_file_path, list_loci, locus.name
+                mss_path, list_loci, locus.name
             )
         elif locus.heritage == "Y":
             samples = build_male_only_samples_argument_ms_dna(
-                mss_file_path, list_loci, locus.name
+                mss_path, list_loci, locus.name
             )
         else:
             raise NotImplementedError(

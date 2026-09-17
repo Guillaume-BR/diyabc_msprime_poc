@@ -17,6 +17,7 @@ from conftest import (
 from bridge.demography_builder import get_parameter_names_used_by_scenario
 from bridge.prior_parser import is_constant_prior, parse_priors
 from bridge.reftable_loop import (
+    _kept_param_names_by_scenario,
     group_prior_column_names,
     parse_real_reftable_params_with_group_priors,
     run_reftable_simulation,
@@ -281,7 +282,16 @@ def test_write_reftable_txt_header_lowercase_and_real_value_for_unused_params(
         assert float(tokens[ra_index]) == pytest.approx(result.parameter_values["ra"])
 
 
+def test_kept_param_names_by_scenario(header_text_te1):
+    priors = parse_priors(header_text_te1)[0]
+    scenarios = parse_header_scenarios(header_text_te1)
+    result = _kept_param_names_by_scenario(priors, scenarios)
+
+    assert len(result) == 2
+
+
 def test_parse_real_reftable_params_with_group_priors(header_text_te2):
+    # test sur le fichier first_records_of_the_reference_table_0.txt de toy_example2_ms_dna
     list_priors = parse_priors(header_text_te2)[0]
     group_priors_names = group_prior_column_names(header_text_te2)
     scenarios = parse_header_scenarios(header_text_te2)

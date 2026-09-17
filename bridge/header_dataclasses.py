@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
@@ -190,3 +191,14 @@ class LociDescriptionDetailed:
     motif_size: int | None
     motif_range: int | None
     dnalength: int | None
+
+
+@dataclass
+class MicrosatReplayContext:
+    header_text: str
+    mss_path: Path
+    list_loci: list[LociDescriptionDetailed]
+    microsat_observed: dict[str, list[list[int]]]
+    bounds_per_locus: dict[str, tuple[int, int]]
+    samples_default: dict[str, int]
+    sex_ratio: float

@@ -1014,12 +1014,10 @@ def test_build_microsat_local_param_per_locus(header_text_te2_XY):
     assert params_per_locus == params_per_locus_2
 
 
-def test_build_matrix_microsat_per_locus(header_text_te2_XY):
+def test_build_matrix_microsat_per_locus(microsat_context_te2_xy):
     """Vérifie que la fonction build_matrix_microsat_per_locus retourne le bon dictionnaire"""
-    list_loci = parse_loci_description(header_text_te2_XY)
-    matrix_per_locus = build_matrix_microsat_per_locus(
-        header_text_te2_XY, OBSERVED_MSS_FILE_TE2_XY, seed=42
-    )
+    list_loci = microsat_context_te2_xy.list_loci
+    matrix_per_locus = build_matrix_microsat_per_locus(microsat_context_te2_xy, seed=42)
 
     for locus in matrix_per_locus:
         locus_type = next(
@@ -1035,7 +1033,7 @@ def test_build_matrix_microsat_per_locus(header_text_te2_XY):
     assert matrix_per_locus["Locus_M_A_1_"].transition_matrix.shape == (79, 79)
 
     matrix_per_locus2 = build_matrix_microsat_per_locus(
-        header_text_te2_XY, OBSERVED_MSS_FILE_TE2_XY, seed=42
+        microsat_context_te2_xy, seed=42
     )
     for locus in matrix_per_locus:
         assert np.allclose(
@@ -1051,19 +1049,18 @@ def test_build_matrix_microsat_per_locus(header_text_te2_XY):
         )
 
 
-def test_microsat_mutation_simulation_per_locus(header_text_te2_XY):
+def test_microsat_mutation_simulation_per_locus(microsat_context_te2_xy):
     """Vérifie que microsat_mutation_simulation_per_locus produit bien une
     TreeSequence mutée par locus microsat, avec une généalogie ET des
     mutations indépendantes d'un locus à l'autre (pas la même graine
     réutilisée partout), et reproductible avec la même graine de particule."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
 
     mutated_tree_sequences = microsat_mutation_simulation_per_locus(
+        context=microsat_context_te2_xy,
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
         seed=42,
     )
 
@@ -1084,9 +1081,8 @@ def test_microsat_mutation_simulation_per_locus(header_text_te2_XY):
     # Reproductibilité : même graine de particule -> même résultat pour
     # chaque locus.
     mutated_tree_sequences_2 = microsat_mutation_simulation_per_locus(
+        context=microsat_context_te2_xy,
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
         seed=42,
     )
     for locus_name in mutated_tree_sequences:
@@ -1101,24 +1097,23 @@ def test_microsat_mutation_simulation_per_locus(header_text_te2_XY):
 
 
 def test_microsat_mutation_simulation_per_locus_ploidy_matches_heritage(
-    header_text_te2_XY,
+    microsat_context_te2_xy,
 ):
     """Vérifie que le nombre de lignées échantillonnées reflète bien la
     ploïdie attendue par héritage : un locus <A> (G2) doit avoir 2x plus de
     "samples" msprime qu'un locus <M> (G3) pour la même population -- avant
     la correction, les deux étaient simulés en ploidy=2 sans distinction."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
 
     mutated_tree_sequences = microsat_mutation_simulation_per_locus(
+        context=microsat_context_te2_xy,
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
         seed=42,
     )
 
-    list_loci = parse_loci_description(header_text_te2_XY)
+    list_loci = microsat_context_te2_xy.list_loci
 
     ts_A = mutated_tree_sequences["Locus_M_A_3_"]
     ts_M = mutated_tree_sequences["Locus_M_A_2_"]
@@ -1126,7 +1121,7 @@ def test_microsat_mutation_simulation_per_locus_ploidy_matches_heritage(
 
     num_samples_male_only = sum(
         build_male_only_samples_argument_ms_dna(
-            OBSERVED_MSS_FILE_TE2_XY, list_loci, "Locus_M_A_10_"
+            microsat_context_te2_xy.mss_path, list_loci, "Locus_M_A_10_"
         ).values()
     )
     assert ts_A.num_samples == 2 * ts_M.num_samples

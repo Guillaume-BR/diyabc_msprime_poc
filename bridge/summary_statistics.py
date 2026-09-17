@@ -28,12 +28,14 @@ cal_snfsti...) pour faciliter la traçabilité entre le code Python et sa
 source C++ de référence.
 """
 
+import random
 from itertools import combinations, permutations
 
 import numpy as np
 import tskit
 
 from bridge.ancestry_simulation import compute_population_layout
+from bridge.configuration import _LIKELIHOOD_SEED_OFFSET
 from bridge.loci_parser import parse_loci_description
 
 # ---------------------------------------------------------------------------
@@ -3392,6 +3394,218 @@ def compute_LIK(
     }
 
 
+# Stat AML - Maximum likelihood coefficient of admixture (Choisy et al. 2004)
+
+
+def _prepare_loci_for_admixture(
+    tree_sequences: list[tskit.TreeSequence],
+    focal: str,
+    parent1: str,
+    parent2: str,
+) -> list[tuple[dict[int, float], dict[int, float], list[tuple[int, ...]]]]:
+    """
+    Prépare les loci pour le calcul de la log-vraisemblance d'admixture.
+    Pour chaque locus, on calcule les fréquences des allèles dans les populations parentales et on récupère les génotypes des individus de la population focale.
+
+    Args:
+        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        focal: Nom de la population focale.
+        parent1: Nom de la première population parentale.
+        parent2: Nom de la deuxième population parentale.
+
+    Returns:
+        Une liste de tuples pour chaque locus, contenant :
+        - dict des fréquences des allèles dans parent1,
+        - dict des fréquences des allèles dans parent2,
+        - liste des génotypes des individus de la population focale.
+    """
+    prepared_loci = []
+    for ts in tree_sequences:
+        length_by_pop = _length_by_population(ts)
+        count_parent1 = {
+            length: count
+            for length, count in length_by_pop.get(parent1, [])
+            if count > 0
+        }
+        count_parent2 = {
+            length: count
+            for length, count in length_by_pop.get(parent2, [])
+            if count > 0
+        }
+        total_parent1 = sum(count_parent1.values())
+        total_parent2 = sum(count_parent2.values())
+
+        f1 = (
+            {length: nb / total_parent1 for length, nb in count_parent1.items()}
+            if total_parent1 > 0
+            else {}
+        )
+        f2 = (
+            {length: nb / total_parent2 for length, nb in count_parent2.items()}
+            if total_parent2 > 0
+            else {}
+        )
+        genotypes_by_pop = _genotypes_by_pop_and_individuals(ts)
+        focal_genotypes = genotypes_by_pop.get(focal, [])
+
+        prepared_loci.append((f1, f2, focal_genotypes))
+
+    return prepared_loci
+
+
+def _log_likelihood_admixture(
+    prepared_loci: list[
+        tuple[dict[int, float], dict[int, float], list[tuple[int, ...]]]
+    ],
+    a: float,
+) -> float:
+    """
+    Un seul float, la log-vraisemblance totale (somme sur tous les loci du groupe, somme sur tous les individus de focal) :
+    équivalent de li[rep] du C++ pour UN a donné, pas encore le couple (li0, delta).
+
+    Args:
+        prepared_loci: Liste de tuples contenant les données préparées pour chaque locus.
+        a: Valeur du coefficient d'admixture.
+
+    Returns:
+        La valeur de la statistique.
+    """
+    lik = 0.0
+    for (
+        f1,
+        f2,
+        focal_genotypes,
+    ) in (
+        prepared_loci
+    ):  # Ici, on calculerait la log-vraisemblance pour ce locus et ce a
+        # en utilisant les fréquences de parent1 et parent2, pondérées par a.
+        # La somme sur tous les individus de focal serait effectuée ici.
+        # Le code exact dépend de la formule de vraisemblance spécifique à l'admixture.
+        for genotype in focal_genotypes:
+            if len(genotype) == 1:  # haploid
+                freq0 = a * f1.get(genotype[0], 0) + (1 - a) * f2.get(genotype[0], 0)
+                lik += np.log(freq0) if freq0 > 0 else 0
+            elif (
+                len(genotype) == 2 and genotype[0] == genotype[1]
+            ):  # homozygous diploid
+                freq0 = a * f1.get(genotype[0], 0) + (1 - a) * f2.get(genotype[0], 0)
+                lik += np.log(freq0**2) if freq0 > 0 else 0
+            elif (
+                len(genotype) == 2 and genotype[0] != genotype[1]
+            ):  # heterozygous diploid
+                freq0 = a * f1.get(genotype[0], 0) + (1 - a) * f2.get(genotype[0], 0)
+                freq1 = a * f1.get(genotype[1], 0) + (1 - a) * f2.get(genotype[1], 0)
+                lik += np.log(2 * freq0 * freq1) if freq0 * freq1 > 0 else 0
+            else:
+                raise ValueError(
+                    f"Problème avec le génotype de l'individu : {genotype}"
+                )
+
+    return lik
+
+
+def _pente_lik(
+    prepared_loci: list[
+        tuple[dict[int, float], dict[int, float], list[tuple[int, ...]]]
+    ],
+    i0: int,
+) -> tuple[float, float]:
+    """
+    Sortie : (li0, delta) où li0 = _log_likelihood_admixture_mixture(..., a=0.001*i0) et delta = li(a=0.001*(i0+1)) - li0  :
+    exactement le (li[0], li[1]-li[0]) que pente_lik retourne en C++.
+    Args:
+        prepared_loci: Liste de tuples contenant les données préparées pour chaque locus.
+        i0: Indice du point d'évaluation pour le calcul de la pente.
+    Returns:
+        La valeur de la statistique et la pente.
+    """
+    lik_a = _log_likelihood_admixture(prepared_loci, a=0.001 * i0)
+    lik_a_plus = _log_likelihood_admixture(prepared_loci, a=0.001 * (i0 + 1))
+    delta = lik_a_plus - lik_a
+
+    return lik_a, delta
+
+
+def _compute_AML_one_triplet(
+    tree_sequences: list[tskit.TreeSequence],
+    focal: str,
+    parent1: str,
+    parent2: str,
+    seed: int,
+) -> float:
+    """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour chaque triplet de populations.
+
+    Args:
+        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        focal: Nom de la population focale.
+        parent1: Nom de la première population parentale.
+        parent2: Nom de la deuxième population parentale.
+        seed: Seed pour la génération aléatoire (pour les cas où AML ne peut pas être calculé).
+    Returns:
+        La statistique AML pour le triplet donné.
+    """
+
+    prepared_loci = _prepare_loci_for_admixture(tree_sequences, focal, parent1, parent2)
+
+    i1, i2 = 1, 998
+    lik1, p1 = _pente_lik(prepared_loci, i1)
+    lik2, p2 = _pente_lik(prepared_loci, i2)
+
+    if abs(lik1) + abs(lik2) < 1e-10:
+        rng = random.Random(seed)
+        return rng.uniform(0, 1)
+    elif p1 < 0 and p2 < 0:
+        return 0.0
+    elif p1 > 0 and p2 > 0:
+        return 1.0
+    else:
+        while i2 - i1 > 1:
+            i3 = (i1 + i2) // 2
+            lik3, p3 = _pente_lik(prepared_loci, i3)
+            if p1 * p3 < 0:
+                i2 = i3
+                p2 = p3
+                lik2 = lik3
+            else:
+                i1 = i3
+                p1 = p3
+                lik1 = lik3
+
+    if lik1 > lik2:
+        return 0.001 * i1
+    else:
+        return 0.001 * i2
+
+
+def compute_AML_microsat(
+    tree_sequences: list[tskit.TreeSequence], population_names: list[str], seed: int = 0
+) -> dict[str, float]:
+    """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour chaque triplet de populations.
+
+    Args:
+        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        population_names: Liste des noms de population.
+        seed: Seed pour la génération aléatoire (pour les cas où AML ne peut pas être calculé).
+
+    Returns:
+        Dict {"i.j.k": AML} pour chaque triplet de populations.
+    """
+    npop = len(population_names)
+    results = {}
+    for i, t in enumerate(_half_arrangements(npop, 3)):
+        h, p1, p2 = t[0], t[1], t[2]
+        key = f"{h + 1}.{p1 + 1}.{p2 + 1}"
+        focal, parent1, parent2 = (
+            population_names[h],
+            population_names[p1],
+            population_names[p2],
+        )
+        results[key] = _compute_AML_one_triplet(
+            tree_sequences, focal, parent1, parent2, seed + _LIKELIHOOD_SEED_OFFSET + i
+        )
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Point d'entrée principal
 # ---------------------------------------------------------------------------
@@ -3594,11 +3808,14 @@ _MICROSAT_PAIRWISE_WITH_MOTIF_SIZE = {
     "DM2": compute_DM2,
 }
 
+_MICROSAT_TRIPLET_STATS = {"AML": compute_AML_microsat}
+
 
 def compute_all_statistics_microsat(
     header_text: str,
     tree_sequences_by_locus: dict[str, tskit.TreeSequence],
     population_names: list[str],
+    seed: int,
 ) -> dict[str, float]:
     """Calcule les statistiques résumées microsat pour chaque `group Gx`
     microsat (`[M]`) du header, et retourne un dict {nom_colonne: valeur}
@@ -3674,6 +3891,17 @@ def compute_all_statistics_microsat(
             for stat_index, value in stat_fn(
                 tree_sequences, population_names, motif_sizes
             ).items():
+                key = (
+                    f"{stat_name}_{group_number}_{stat_index}"
+                    if multi_group
+                    else f"{stat_name}_{stat_index}"
+                )
+                results[key] = value
+
+        for stat_name, stat_fn in _MICROSAT_TRIPLET_STATS.items():
+            for stat_index, value in stat_fn(
+                tree_sequences, population_names, seed + int(group_number) * 1000
+            ).items():  # pour éviter d'avoir la même graine pour différents groupes
                 key = (
                     f"{stat_name}_{group_number}_{stat_index}"
                     if multi_group

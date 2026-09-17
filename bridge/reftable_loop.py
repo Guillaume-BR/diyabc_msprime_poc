@@ -35,9 +35,15 @@ from pathlib import Path
 from bridge.ancestry_simulation import prepare_poolseq_observed_reads
 from bridge.configuration import _SCENARIO_DRAW_SEED_OFFSET
 from bridge.demography_builder import get_parameter_names_used_by_scenario
-from bridge.header_dataclasses import Scenario
+from bridge.header_dataclasses import MicrosatReplayContext, Scenario
 from bridge.loci_parser import parse_loci_description
-from bridge.observed_data import detect_snp_file_type
+from bridge.observed_data import (
+    allele_bounds_per_locus,
+    detect_snp_file_type,
+    observed_count_population,
+    observed_microsatellites,
+    parse_sex_ratio,
+)
 from bridge.parameter_sampling import draw_scenario
 from bridge.pipeline import (
     compute_summary_statistics,
@@ -1123,7 +1129,7 @@ def replay_reftable_simulation_dna(
 
 def _run_single_particle_microsat(
     particle_index: int,
-    reference_directory: Path,
+    context: MicrosatReplayContext,
     scenarios: list[Scenario],
     *,
     stats_filter: str,
@@ -1158,7 +1164,7 @@ def _run_single_particle_microsat(
     drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
 
     summary_statistics, parameter_values = compute_summary_statistics_microsat(
-        reference_directory=reference_directory,
+        context=context,
         scenario_index=drawn_scenario.index,
         seed=seed,
         stats_filter=stats_filter,
@@ -1209,6 +1215,21 @@ def run_reftable_simulation_microsat(
         à nrec-1).
     """
     reference_directory = Path(reference_directory)
+    header_text = read_header_text(reference_directory)
+    mss_filename = header_text.splitlines()[0].strip()
+    mss_path = reference_directory / mss_filename
+    list_loci = parse_loci_description(header_text)
+    microsat_observed = observed_microsatellites(mss_path, list_loci)
+
+    context = MicrosatReplayContext(
+        header_text=header_text,
+        mss_path=mss_path,
+        list_loci=list_loci,
+        microsat_observed=microsat_observed,
+        bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
+        samples_default=observed_count_population(mss_path),
+        sex_ratio=parse_sex_ratio(mss_path),
+    )
 
     results_by_index: dict[int, ParticleResult] = {}
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -1216,7 +1237,7 @@ def run_reftable_simulation_microsat(
             executor.submit(
                 _run_single_particle_microsat,
                 particle_index,
-                reference_directory,
+                context,
                 scenarios,
                 stats_filter=stats_filter,
             ): particle_index
@@ -1235,7 +1256,7 @@ def run_reftable_simulation_microsat(
 
 def _run_single_particle_microsat_from_values(
     particle_index: int,
-    reference_directory: Path,
+    context: MicrosatReplayContext,
     scenario_index: int,
     values: dict[str, float],
     group_priors_values: dict[str, float],
@@ -1267,7 +1288,7 @@ def _run_single_particle_microsat_from_values(
     """
     seed = particle_index + 1
     summary_statistics = compute_summary_statistics_microsat_from_values(
-        reference_directory=reference_directory,
+        context=context,
         scenario_index=scenario_index,
         values=values,
         group_priors_values=group_priors_values,
@@ -1315,6 +1336,21 @@ def replay_reftable_simulation_microsat(
         réel.
     """
     reference_directory = Path(reference_directory)
+    header_text = read_header_text(reference_directory)
+    mss_filename = header_text.splitlines()[0].strip()
+    mss_path = reference_directory / mss_filename
+    list_loci = parse_loci_description(header_text)
+    microsat_observed = observed_microsatellites(mss_path, list_loci)
+
+    context = MicrosatReplayContext(
+        header_text=header_text,
+        mss_path=mss_path,
+        list_loci=list_loci,
+        microsat_observed=microsat_observed,
+        bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
+        samples_default=observed_count_population(mss_path),
+        sex_ratio=parse_sex_ratio(mss_path),
+    )
 
     # On lit les sorties de diyabc (scénario tiré + valeurs de paramètres RÉELLEMENT tirées) pour
     # les rejouer ensuite côté msprime, afin de comparer les deux simulateurs sur EXACTEMENT
@@ -1333,7 +1369,7 @@ def replay_reftable_simulation_microsat(
             executor.submit(
                 _run_single_particle_microsat_from_values,
                 particle_index,
-                reference_directory,
+                context,
                 scenario_index,
                 values,
                 group_priors_values,

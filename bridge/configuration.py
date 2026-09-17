@@ -24,7 +24,7 @@ _SHARED_Y_ANCESTRY_SEED_OFFSET = 130_000_000  # ancestry_simulation.py
 _MICROSAT_MUT_RATE_SEED_OFFSET = 140_000_000  # ancestry_simulation.py
 _MICROSAT_PGEOM_SEED_OFFSET = 150_000_000  # ancestry_simulation.py
 _MICROSAT_SNI_SEED_OFFSET = 160_000_000  # ancestry_simulation.py
-
+_LIKELIHOOD_SEED_OFFSET = 170_000_000  # summary_statistics.py
 
 # pipeline.py -- un offset par type de locus SNP (<A>/<H>/<X>/<Y>/<M>),
 # pour que _simulate_genotypes_for_all_locus_types dérive une graine

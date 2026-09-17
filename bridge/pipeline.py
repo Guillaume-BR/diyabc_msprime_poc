@@ -36,7 +36,7 @@ from bridge.ancestry_simulation import (
 )
 from bridge.configuration import _LOCUS_TYPE_SEED_OFFSET
 from bridge.demography_builder import build_demography
-from bridge.header_dataclasses import Scenario
+from bridge.header_dataclasses import MicrosatReplayContext, Scenario
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import detect_snp_file_type, observed_count_population
 from bridge.parameter_sampling import draw_parameter_values
@@ -737,7 +737,7 @@ def compute_summary_statistics_dna_from_values(
 
 
 def compute_summary_statistics_microsat(
-    reference_directory: str | Path,
+    context: MicrosatReplayContext,
     scenario_index: int,
     *,
     seed: int,
@@ -781,25 +781,21 @@ def compute_summary_statistics_microsat(
         "NSS_2_1"), values est {nom_paramètre_historique: valeur}.
     """
 
-    reference_directory = Path(reference_directory)
-    header_text = read_header_text(reference_directory)
-    mss_filename = header_text.splitlines()[0].strip()
-    mss_path = reference_directory / mss_filename
+    header_text = context.header_text
 
     demography, values = build_random_demography_for_scenario_index(
         header_text, scenario_index, seed
     )
 
     mutated = microsat_mutation_simulation_per_locus(
-        header_text,
-        mss_path,
+        context,
         demography,
         seed,
     )
 
-    population_names = list(observed_count_population(mss_path).keys())
+    population_names = list(context.samples_default.keys())
     summary_stats = compute_all_statistics_microsat(
-        header_text, mutated, population_names
+        header_text, mutated, population_names, seed=seed
     )
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 
@@ -810,7 +806,7 @@ def compute_summary_statistics_microsat(
 
 
 def compute_summary_statistics_microsat_from_values(
-    reference_directory: str | Path,
+    context: MicrosatReplayContext,
     scenario_index: int,
     values: dict[str, float],
     group_priors_values: dict[str, float],
@@ -848,27 +844,21 @@ def compute_summary_statistics_microsat_from_values(
         puisqu'ils sont déjà connus de l'appelant).
     """
 
-    reference_directory = Path(reference_directory)
-    header_text = read_header_text(reference_directory)
-    mss_filename = header_text.splitlines()[0].strip()
-    mss_path = reference_directory / mss_filename
-
     demography = build_demography_for_scenario_index(
-        header_text, scenario_index, values
+        context.header_text, scenario_index, values
     )
 
     mutated = microsat_mutation_simulation_per_locus_from_values(
-        header_text,
-        mss_path,
+        context,
         demography,
         group_priors_values,
         seed,
     )
 
-    population_names = list(observed_count_population(mss_path).keys())
+    population_names = list(context.samples_default.keys())
     summary_stats = compute_all_statistics_microsat(
-        header_text, mutated, population_names
+        context.header_text, mutated, population_names, seed=seed
     )
-    summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
+    summary_stats = _filter_statistics(summary_stats, context.header_text, stats_filter)
 
     return summary_stats

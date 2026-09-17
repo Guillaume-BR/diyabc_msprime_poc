@@ -130,7 +130,7 @@ def _parse_event_line(line: str):
             sample/merge/varNe/split.
     """
     tokens = line.split()
-    time_expr, action = tokens[0], tokens[1]
+    time_expr, action = tokens[0], tokens[1].lower()
     args = tokens[2:]
 
     if action == "sample":
@@ -145,7 +145,7 @@ def _parse_event_line(line: str):
             derived_pop=int(args[1]),
         )
 
-    if action == "varNe" or action == "varne":
+    if action == "varne":
         # ex: "t2-d3 varNe 3 Nbn3" -> pop=3, new_size_expr="Nbn3"
         return VarNeEvent(
             time_expr=time_expr,

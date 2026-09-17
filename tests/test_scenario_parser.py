@@ -7,7 +7,7 @@ mentor (voir notes/exploration.md) pour les scénarios 1, 2 et 4.
 import pytest
 
 from bridge.header_dataclasses import MergeEvent, SampleEvent, SplitEvent, VarNeEvent
-from bridge.scenario_parser import parse_header_scenarios
+from bridge.scenario_parser import parse_header_scenarios, split_scenario_blocks
 
 
 def test_unimplemented_scenarios_are_skipped_with_warning(header_text):
@@ -89,3 +89,16 @@ def test_scenario2_events(header_text):
         ancestral_pop2=2,
         admixture_rate="ra",
     )
+
+
+def test_parse_header_scenarios(header_text_te1):
+    results = parse_header_scenarios(header_text_te1)
+    assert len(results) == 2
+
+
+def test_split_scenario_blocks(header_text_te1):
+    """Vérifie que le parser de scénarios découpe correctement le bloc
+    header en sous-blocs par scénario, même si les scénarios sont
+    séparés par des lignes vides ou des commentaires."""
+    results = split_scenario_blocks(header_text_te1)
+    assert len(results) == 2
