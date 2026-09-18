@@ -47,6 +47,7 @@ from bridge.header_dataclasses import (
     DnaReplayContext,
     LociDescriptionDetailed,
     MicrosatReplayContext,
+    SnpReplayContext,
 )
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
@@ -55,10 +56,6 @@ from bridge.observed_data import (
     individual_sexes_from_locus_genotype,
     individual_sexes_per_population,
     observed_mrc,
-    observed_reads,
-    parse_maf_ratio,
-    parse_mrc_ratio,
-    parse_sex_ratio,
     population_index_to_name,
 )
 from bridge.parameter_sampling import (
@@ -758,7 +755,7 @@ def with_maf_filter_shared_ancestry(
 
 def simulate_genotypes_for_locus_type(
     demography: msprime.Demography,
-    snp_file_path: str,
+    context: SnpReplayContext,
     locus_type: str,
     num_loci: int,
     seed: int,
@@ -827,9 +824,9 @@ def simulate_genotypes_for_locus_type(
     Raises:
         NotImplementedError: Si locus_type est inconnu.
     """
-
-    sex_ratio = parse_sex_ratio(snp_file_path)
-    maf_ratio = parse_maf_ratio(snp_file_path)
+    sex_ratio = context.sex_ratio
+    maf_ratio = context.maf_ratio
+    snp_file_path = context.snp_path
 
     if locus_type == "Y":
         samples = build_male_only_samples_argument(snp_file_path)
@@ -1088,7 +1085,7 @@ def with_mrc_filter(
 
 
 def prepare_poolseq_observed_reads(
-    snp_file_path: str, num_loci: int
+    context: SnpReplayContext,
 ) -> list[dict[str, tuple[int, int]]]:
     """Prépare les lectures observées pour la simulation PoolSeq.
 
@@ -1102,14 +1099,14 @@ def prepare_poolseq_observed_reads(
         Une liste de dicts {nom_population_msprime: (nreads_dérivé,
         nreads_total)}, un par locus.
     """
-    raw_reads = observed_reads(snp_file_path, num_loci=num_loci)
-    reindexed_reads = _reindex_reads_by_msprime_name(raw_reads, snp_file_path)
+    raw_reads = context.reads_observed
+    reindexed_reads = _reindex_reads_by_msprime_name(raw_reads, context.snp_path)
     return reindexed_reads
 
 
 def simulate_poolseq_reads_with_mrc_filter(
     demography: msprime.Demography,
-    snp_file_path: str,
+    context: SnpReplayContext,
     seed: int,
     num_loci: int,
     observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
@@ -1193,13 +1190,14 @@ def simulate_poolseq_reads_with_mrc_filter(
         Un itérateur de `num_loci` dicts {nom_population:
         (nreads_dérivé, nreads_total)}, tous au-dessus du seuil MRC.
     """
-    mrc = parse_mrc_ratio(snp_file_path)
-    haploid_pool_sizes = build_samples_argument(snp_file_path)
+    mrc = context.mrc_ratio
+    haploid_pool_sizes = {
+        f"pop{index}": count
+        for index, count in enumerate(context.count_samples.values(), start=1)
+    }
     samples = {pop: count // 2 for pop, count in haploid_pool_sizes.items()}
     if observed_reads_per_locus is None:
-        observed_reads_per_locus = prepare_poolseq_observed_reads(
-            snp_file_path, num_loci
-        )
+        observed_reads_per_locus = prepare_poolseq_observed_reads(context)
 
     return with_mrc_filter(
         demography, samples, num_loci, mrc, observed_reads_per_locus, seed, ploidy=2

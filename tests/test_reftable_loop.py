@@ -29,7 +29,7 @@ from bridge.reftable_loop import (
 from bridge.scenario_parser import parse_header_scenarios
 
 
-def test_simulate_from_directory(tmp_path):
+def test_simulate_from_directory(tmp_path, snp_context_human):
     """Vérifie le point d'entrée pour un sous-dossier de test sous
     reference/ : à partir d'un dossier ne contenant qu'un header.txt et
     le .snp observé, doit tirer les scénarios pondérés et écrire
@@ -39,7 +39,7 @@ def test_simulate_from_directory(tmp_path):
     shutil.copy(REFERENCE_DIR / "header.txt", tmp_path / "header.txt")
     (tmp_path / OBSERVED_SNP_FILE_HUMAN.name).symlink_to(OBSERVED_SNP_FILE_HUMAN)
 
-    results = simulate_from_directory(tmp_path, num_loci=10, nrec=4)
+    results = simulate_from_directory(tmp_path, snp_context_human, num_loci=10, nrec=4)
 
     assert len(results) == 4
     output_file = tmp_path / "reftable_msprime.txt"

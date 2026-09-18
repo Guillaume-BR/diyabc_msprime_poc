@@ -7,10 +7,9 @@ import pytest
 from conftest import (
     GENERAL_BINARY_PATH,
     OBSERVED_SNP_FILE_HUMAN,
-    OBSERVED_SNP_FILE_TE4,
-    REFERENCE_DIR,
 )
 
+from bridge.header_dataclasses import SnpReplayContext
 from bridge.pipeline import (
     build_random_demography_for_scenario_index,
     compute_summary_statistics,
@@ -45,13 +44,13 @@ def test_pipeline_scenario1(header_text):
     assert "t1" in values
 
 
-def test_run_poc_for_directory():
+def test_run_poc_for_directory(snp_context_human):
     """Vérifie le point d'entrée de haut niveau : à partir d'un simple
     chemin de dossier (comme le -p ./ de DIYABC), tout le pipeline doit
     fonctionner sans qu'on ait à lire manuellement header.txt ou le
     fichier .snp nous-mêmes."""
     mutated, values = run_poc_for_directory(
-        REFERENCE_DIR,
+        snp_context_human,
         scenario_index=1,
         num_loci=15,
         seed=42,
@@ -62,7 +61,7 @@ def test_run_poc_for_directory():
     assert "N1" in values
 
 
-def test_run_poc_for_directory_multi_type():
+def test_run_poc_for_directory_multi_type(snp_context_te5):
     """Vérifie que run_poc_for_directory boucle bien sur TOUS les types de
     locus déclarés dans 'loci description', pas seulement <A> --
     toy_example5 (contrairement à human, <A>-only) déclare 4 types
@@ -70,7 +69,7 @@ def test_run_poc_for_directory_multi_type():
     compte PAR TYPE (voir pipeline._simulate_genotypes_for_all_locus_types),
     donc on attend num_loci * 4 génotypes au total, pas juste num_loci."""
     mutated, values = run_poc_for_directory(
-        REFERENCE_DIR.parent / "toy_example5",
+        snp_context_te5,
         scenario_index=1,
         num_loci=3,
         seed=42,
@@ -81,13 +80,13 @@ def test_run_poc_for_directory_multi_type():
     assert "N1" in values
 
 
-def test_compute_summary_statistics_multi_type():
+def test_compute_summary_statistics_multi_type(snp_context_te5):
     """Vérifie que compute_summary_statistics (donc compute_all_statistics)
     fonctionne aussi sur un dataset multi-type <A>/<X>/<Y>/<M>, pas
     seulement <A> -- 51 statistiques attendues (vs 130 pour human) car
     toy_example5 n'a que 3 populations, pas 4 (moins de paires/triplets)."""
     summary_stats, values = compute_summary_statistics(
-        reference_directory=REFERENCE_DIR.parent / "toy_example5",
+        context=snp_context_te5,
         scenario_index=1,
         num_loci=3,
         seed=42,
@@ -98,7 +97,7 @@ def test_compute_summary_statistics_multi_type():
     assert not any(v != v for v in summary_stats.values())  # v != v <=> NaN
 
 
-def test_compute_summary_statistics_poolseq_varies_with_seed():
+def test_compute_summary_statistics_poolseq_varies_with_seed(snp_context_te4):
     """Vérifie que compute_summary_statistics simule bien pour PoolSeq
     (branche else de la fonction) au lieu de recopier telles quelles les
     statistiques de l'observé -- régression du bug du 2026-07-23 où
@@ -107,15 +106,14 @@ def test_compute_summary_statistics_poolseq_varies_with_seed():
     toutes les particules PoolSeq d'un reftable identiques entre elles.
     Deux graines différentes doivent donc tirer des paramètres différents
     ET produire des statistiques différentes."""
-    reference_directory = OBSERVED_SNP_FILE_TE4.parent
 
     stats_seed_1, values_1 = compute_summary_statistics(
-        reference_directory=reference_directory,
+        context=snp_context_te4,
         scenario_index=1,
         seed=1,
     )
     stats_seed_2, values_2 = compute_summary_statistics(
-        reference_directory=reference_directory,
+        context=snp_context_te4,
         scenario_index=1,
         seed=2,
     )
@@ -125,31 +123,30 @@ def test_compute_summary_statistics_poolseq_varies_with_seed():
 
 
 def test_compute_summary_statistics_from_values_poolseq_varies_with_values(
-    header_text_te4,
+    snp_context_te4,
 ):
     """Même régression que test_compute_summary_statistics_poolseq_varies_
     with_seed, mais côté compute_summary_statistics_from_values (l'autre
     fonction touchée par le bug du 2026-07-23) : deux jeux de paramètres
     différents (même seed) doivent produire des statistiques
     différentes."""
-    reference_directory = OBSERVED_SNP_FILE_TE4.parent
 
     _, values_1 = build_random_demography_for_scenario_index(
-        header_text_te4, scenario_index=1, seed=1
+        snp_context_te4.header_text, scenario_index=1, seed=1
     )
     _, values_2 = build_random_demography_for_scenario_index(
-        header_text_te4, scenario_index=1, seed=2
+        snp_context_te4.header_text, scenario_index=1, seed=2
     )
     assert values_1 != values_2  # sinon le test ne prouve rien
 
     stats_1 = compute_summary_statistics_from_values(
-        reference_directory=reference_directory,
+        context=snp_context_te4,
         scenario_index=1,
         values=values_1,
         seed=42,
     )
     stats_2 = compute_summary_statistics_from_values(
-        reference_directory=reference_directory,
+        context=snp_context_te4,
         scenario_index=1,
         values=values_2,
         seed=42,
@@ -181,12 +178,12 @@ def test_read_header_text_falls_back_to_headerRF(tmp_path):
     reason="Variable d'environnement DIYABC_GENERAL_PATH non définie -- "
     "ce test nécessite le binaire 'general' compilé de DIYABC.",
 )
-def test_compute_summary_statistics_scenario1(tmp_path):
+def test_compute_summary_statistics_scenario1(tmp_path, snp_context_human):
     """Vérifie que compute_summary_statistics produit bien les 112
     statistiques résumées attendues (filtre ALL), en déléguant le calcul
     au vrai binaire C++ sur des données simulées par notre pipeline."""
     summary_statistics, values = compute_summary_statistics(
-        reference_directory=REFERENCE_DIR,
+        context=snp_context_human,
         scenario_index=1,
         num_loci=10,
         seed=42,
@@ -225,21 +222,34 @@ def _replace_group_summary_statistics_section(
     return "\n".join(lines[:start] + new_section_lines + lines[end:])
 
 
-def test_compute_summary_statistics_stats_filter_header(tmp_path, header_text):
+def test_compute_summary_statistics_stats_filter_header(tmp_path, snp_context_human):
     """stats_filter='HEADER' ne garde, dans l'ordre de déclaration, que
     les statistiques listées dans 'group summary statistics' --
     remplace la section obsolète de human/header.txt par un petit
     sous-ensemble au vocabulaire moderne, pour vérifier le filtrage
     sans dépendre d'un dataset externe."""
     modified_header_text = _replace_group_summary_statistics_section(
-        header_text,
+        snp_context_human.header_text,
         ["group summary statistics (4)", "group G1 (4)", "ML1p 1 2", "HWm 1 2"],
     )
     (tmp_path / "header.txt").write_text(modified_header_text)
     (tmp_path / OBSERVED_SNP_FILE_HUMAN.name).symlink_to(OBSERVED_SNP_FILE_HUMAN)
 
+    snp_context_human_modified = SnpReplayContext(
+        header_text=modified_header_text,
+        snp_path=snp_context_human.snp_path,
+        snp_file_type=snp_context_human.snp_file_type,
+        loci_description=snp_context_human.loci_description,
+        count_samples=snp_context_human.count_samples,
+        sex_ratio=snp_context_human.sex_ratio,
+        maf_ratio=snp_context_human.maf_ratio,
+        mrc_ratio=snp_context_human.mrc_ratio,
+        reads_observed=snp_context_human.reads_observed,
+        sexes_per_population=snp_context_human.sexes_per_population,
+    )
+
     summary_stats, values = compute_summary_statistics(
-        reference_directory=tmp_path,
+        context=snp_context_human_modified,
         scenario_index=1,
         num_loci=10,
         seed=1,
@@ -251,14 +261,14 @@ def test_compute_summary_statistics_stats_filter_header(tmp_path, header_text):
 
 
 def test_compute_summary_statistics_stats_filter_header_raises_on_unknown_names(
-    header_text,
+    snp_context_human,
 ):
     """stats_filter='HEADER' sur le vrai human/header.txt (vocabulaire
     obsolète HP0/HM1/...) doit lever une ValueError explicite plutôt que
     de produire silencieusement un reftable vide ou incomplet."""
     with pytest.raises(ValueError, match="non calculées"):
         compute_summary_statistics(
-            reference_directory=REFERENCE_DIR,
+            context=snp_context_human,
             scenario_index=1,
             num_loci=10,
             seed=1,
@@ -266,10 +276,10 @@ def test_compute_summary_statistics_stats_filter_header_raises_on_unknown_names(
         )
 
 
-def test_compute_summary_statistics_unknown_stats_filter_raises():
+def test_compute_summary_statistics_unknown_stats_filter_raises(snp_context_human):
     with pytest.raises(NotImplementedError, match="stats_filter"):
         compute_summary_statistics(
-            reference_directory=REFERENCE_DIR,
+            context=snp_context_human,
             scenario_index=1,
             num_loci=10,
             seed=1,
@@ -277,9 +287,14 @@ def test_compute_summary_statistics_unknown_stats_filter_raises():
         )
 
 
-def test_compute_summary_statistics_dna():
+# -------------------------------------------------------------
+# Tests pour la partie DNA
+# -------------------------------------------------------------
+
+
+def test_compute_summary_statistics_dna(dna_context_te2):
     stats, _ = compute_summary_statistics_dna(
-        reference_directory=REFERENCE_DIR.parent / "toy_example2_ms_dna",
+        context=dna_context_te2,
         scenario_index=1,
         seed=42,
     )

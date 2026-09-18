@@ -194,6 +194,20 @@ class LociDescriptionDetailed:
 
 
 @dataclass
+class SnpReplayContext:
+    header_text: str
+    snp_path: Path
+    snp_file_type: str
+    loci_description: LociDescription
+    count_samples: dict[str, int]
+    sex_ratio: float
+    maf_ratio: float | None
+    mrc_ratio: float | None
+    reads_observed: list[dict[str, tuple[int, int]]] | None
+    sexes_per_population: dict[str, list[str]]
+
+
+@dataclass
 class MicrosatReplayContext:
     header_text: str
     mss_path: Path

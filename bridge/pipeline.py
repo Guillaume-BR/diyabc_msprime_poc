@@ -36,9 +36,12 @@ from bridge.ancestry_simulation import (
 )
 from bridge.configuration import _LOCUS_TYPE_SEED_OFFSET
 from bridge.demography_builder import build_demography
-from bridge.header_dataclasses import DnaReplayContext, MicrosatReplayContext, Scenario
-from bridge.loci_parser import parse_loci_description
-from bridge.observed_data import detect_snp_file_type
+from bridge.header_dataclasses import (
+    DnaReplayContext,
+    MicrosatReplayContext,
+    Scenario,
+    SnpReplayContext,
+)
 from bridge.parameter_sampling import draw_parameter_values
 from bridge.prior_parser import parse_priors
 from bridge.scenario_parser import parse_header_scenarios
@@ -91,8 +94,7 @@ def read_header_text(directory: Path) -> str:
 
 def _simulate_genotypes_for_all_locus_types(
     demography: msprime.Demography,
-    header_text: str,
-    snp_path: Path,
+    context: SnpReplayContext,
     *,
     num_loci: int | None = None,
     seed: int,
@@ -138,9 +140,7 @@ def _simulate_genotypes_for_all_locus_types(
         en mémoire simultanément).
     """
 
-    loci_counts_by_heritage = parse_loci_description(
-        header_text
-    ).loci_counts_by_heritage
+    loci_counts_by_heritage = context.loci_description.loci_counts_by_heritage
 
     liste_iterateurs_par_type = []
 
@@ -149,7 +149,7 @@ def _simulate_genotypes_for_all_locus_types(
         loci_count = num_loci if num_loci is not None else declared_count
         liste_iterateurs_par_type.append(
             simulate_genotypes_for_locus_type(
-                demography, snp_path, locus_type, loci_count, seed_for_type
+                demography, context, locus_type, loci_count, seed_for_type
             )
         )
     return itertools.chain(*liste_iterateurs_par_type)
@@ -297,7 +297,7 @@ def build_random_demography_for_scenario_index(
 
 
 def run_poc_for_directory(
-    directory: str | Path,
+    context: SnpReplayContext,
     scenario_index: int,
     *,
     num_loci: int | None = None,
@@ -325,25 +325,21 @@ def run_poc_for_directory(
         génotypes simulés, et le dict des valeurs de paramètres tirées
         (nécessaires plus tard pour écrire le reftable.bin).
     """
-    directory = Path(directory)
-    header_text = read_header_text(directory)
-
-    snp_filename = header_text.splitlines()[0].strip()
-    snp_path = directory / snp_filename
+    header_text = context.header_text
 
     demography, values = build_random_demography_for_scenario_index(
         header_text, scenario_index, seed
     )
 
     mutated = _simulate_genotypes_for_all_locus_types(
-        demography, header_text, snp_path, num_loci=num_loci, seed=seed
+        demography, context, num_loci=num_loci, seed=seed
     )
 
     return mutated, values
 
 
 def compute_summary_statistics(
-    reference_directory: str | Path,
+    context: SnpReplayContext,
     scenario_index: int,
     *,
     num_loci: int | None = None,
@@ -394,14 +390,12 @@ def compute_summary_statistics(
             une statistique qu'on ne sait pas calculer (vocabulaire
             obsolète, ex: human/header.txt -- voir notes/exploration.md).
     """
-    reference_directory = Path(reference_directory)
-    header_text = read_header_text(reference_directory)
-    snp_filename = header_text.splitlines()[0].strip()
-    snp_path = reference_directory / snp_filename
+    header_text = context.header_text
+    snp_path = context.snp_path
 
-    if detect_snp_file_type(snp_path) == "IND":
+    if context.snp_file_type == "IND":
         genotypes_per_locus, values = run_poc_for_directory(
-            reference_directory,
+            context,
             scenario_index=scenario_index,
             num_loci=num_loci,
             seed=seed,
@@ -412,9 +406,7 @@ def compute_summary_statistics(
         summary_stats = compute_all_statistics(genotypes_list, population_names)
         summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
     else:
-        total_loci_poolseq = parse_loci_description(
-            header_text
-        ).loci_counts_by_heritage["A"]
+        total_loci_poolseq = context.loci_description.loci_counts_by_heritage["A"]
         demography, values = build_random_demography_for_scenario_index(
             header_text, scenario_index, seed
         )
@@ -422,13 +414,16 @@ def compute_summary_statistics(
         reads_list = list(
             simulate_poolseq_reads_with_mrc_filter(
                 demography,
-                snp_path,
+                context,
                 seed,
                 num_loci=total_loci_poolseq,
                 observed_reads_per_locus=observed_reads_per_locus,
             )
         )
-        pool_sizes = build_samples_argument(snp_path)
+        pool_sizes = {
+            f"pop{index}": count
+            for index, count in enumerate(context.count_samples.values(), start=1)
+        }
         population_names = list(pool_sizes.keys())
         summary_stats = compute_all_statistics_poolseq(
             reads_list, population_names, pool_sizes
@@ -475,7 +470,7 @@ def build_demography_for_scenario_index(
 
 
 def run_poc_for_directory_with_values(
-    directory: str | Path,
+    context: SnpReplayContext,
     scenario_index: int,
     values: dict[str, float],
     *,
@@ -500,23 +495,20 @@ def run_poc_for_directory_with_values(
         run_poc_for_directory, sans le dict `values` en plus puisqu'il
         est déjà connu de l'appelant).
     """
-    directory = Path(directory)
-    header_text = read_header_text(directory)
 
-    snp_filename = header_text.splitlines()[0].strip()
-    snp_path = directory / snp_filename
+    header_text = context.header_text
 
     demography = build_demography_for_scenario_index(
         header_text, scenario_index, values
     )
 
     return _simulate_genotypes_for_all_locus_types(
-        demography, header_text, snp_path, num_loci=num_loci, seed=seed
+        demography, context, num_loci=num_loci, seed=seed
     )
 
 
 def compute_summary_statistics_from_values(
-    reference_directory: str | Path,
+    context: SnpReplayContext,
     scenario_index: int,
     values: dict[str, float],
     *,
@@ -549,14 +541,13 @@ def compute_summary_statistics_from_values(
         Le dict summary_statistics (pas de `values` en retour,
         puisqu'il est déjà connu de l'appelant).
     """
-    reference_directory = Path(reference_directory)
-    header_text = read_header_text(reference_directory)
-    snp_filename = header_text.splitlines()[0].strip()
-    snp_path = reference_directory / snp_filename
 
-    if detect_snp_file_type(snp_path) == "IND":
+    header_text = context.header_text
+    snp_path = context.snp_path
+
+    if context.snp_file_type == "IND":
         genotypes_per_locus = run_poc_for_directory_with_values(
-            reference_directory, scenario_index, values, num_loci=num_loci, seed=seed
+            context, scenario_index, values, num_loci=num_loci, seed=seed
         )
         genotypes_list = list(genotypes_per_locus)
 
@@ -567,9 +558,7 @@ def compute_summary_statistics_from_values(
         # l'argument num_loci est ignoré ici, côté PoolSeq on simule tous les loci déclarés dans header.txt
         # alors qu'en Indseq num_loci sert à limiter le nombre de loci simulés
 
-        total_loci_poolseq = parse_loci_description(
-            header_text
-        ).loci_counts_by_heritage["A"]
+        total_loci_poolseq = context.loci_description.loci_counts_by_heritage["A"]
         demography = build_demography_for_scenario_index(
             header_text, scenario_index, values
         )
@@ -577,7 +566,7 @@ def compute_summary_statistics_from_values(
         reads_list = list(
             simulate_poolseq_reads_with_mrc_filter(
                 demography,
-                snp_path,
+                context,
                 seed,
                 num_loci=total_loci_poolseq,
                 observed_reads_per_locus=observed_reads_per_locus,

@@ -12,12 +12,24 @@ from pathlib import Path
 
 import pytest
 
-from bridge.header_dataclasses import MicrosatReplayContext
+from bridge.header_dataclasses import (
+    DnaReplayContext,
+    MicrosatReplayContext,
+    SnpReplayContext,
+)
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
     allele_bounds_per_locus,
+    base_frequency_by_locus,
+    count_samples_per_population,
+    detect_snp_file_type,
+    individual_sexes_per_population,
     observed_count_population,
     observed_microsatellites,
+    observed_reads,
+    observed_sequences,
+    parse_maf_ratio,
+    parse_mrc_ratio,
     parse_sex_ratio,
 )
 
@@ -111,6 +123,113 @@ def header_text_te2() -> str:
 def header_text_te2_XY() -> str:
     path_te2_XY = REFERENCE_DIR.parent / "toy_example2_ms_dna_XY" / "headerRF.txt"
     return path_te2_XY.read_text()
+
+
+@pytest.fixture
+def snp_context_human(header_text) -> SnpReplayContext:
+    snp_path = OBSERVED_SNP_FILE_HUMAN
+    snp_file_type = detect_snp_file_type(snp_path)
+    loci_description = parse_loci_description(header_text)
+    count_samples = count_samples_per_population(snp_path)
+    sex_ratio = parse_sex_ratio(snp_path)
+    maf_ratio = parse_maf_ratio(snp_path)
+    mrc_ratio = parse_mrc_ratio(snp_path)
+    reads_observed = None
+    sexes_per_population = individual_sexes_per_population(snp_path)
+    return SnpReplayContext(
+        header_text=header_text,
+        snp_path=snp_path,
+        snp_file_type=snp_file_type,
+        loci_description=loci_description,
+        count_samples=count_samples,
+        sex_ratio=sex_ratio,
+        maf_ratio=maf_ratio,
+        mrc_ratio=mrc_ratio,
+        reads_observed=reads_observed,
+        sexes_per_population=sexes_per_population,
+    )
+
+
+@pytest.fixture
+def snp_context_te4(header_text_te4) -> SnpReplayContext:
+    snp_path = OBSERVED_SNP_FILE_TE4
+    snp_file_type = detect_snp_file_type(snp_path)
+    loci_description = parse_loci_description(header_text_te4)
+    count_samples = count_samples_per_population(snp_path)
+    sex_ratio = parse_sex_ratio(snp_path)
+    maf_ratio = parse_maf_ratio(snp_path)
+    mrc_ratio = parse_mrc_ratio(snp_path)
+    reads_observed = observed_reads(snp_path)
+    sexes_per_population = (
+        individual_sexes_per_population(snp_path) if snp_file_type == "IND" else {}
+    )
+    return SnpReplayContext(
+        header_text=header_text_te4,
+        snp_path=snp_path,
+        snp_file_type=snp_file_type,
+        loci_description=loci_description,
+        count_samples=count_samples,
+        sex_ratio=sex_ratio,
+        maf_ratio=maf_ratio,
+        mrc_ratio=mrc_ratio,
+        reads_observed=reads_observed,
+        sexes_per_population=sexes_per_population,
+    )
+
+
+@pytest.fixture
+def snp_context_te5(header_text_te5) -> SnpReplayContext:
+    snp_path = OBSERVED_SNP_FILE_TE5
+    snp_file_type = detect_snp_file_type(snp_path)
+    loci_description = parse_loci_description(header_text_te5)
+    count_samples = count_samples_per_population(snp_path)
+    sex_ratio = parse_sex_ratio(snp_path)
+    maf_ratio = parse_maf_ratio(snp_path)
+    mrc_ratio = parse_mrc_ratio(snp_path)
+    reads_observed = None
+    sexes_per_population = individual_sexes_per_population(snp_path)
+    return SnpReplayContext(
+        header_text=header_text_te5,
+        snp_path=snp_path,
+        snp_file_type=snp_file_type,
+        loci_description=loci_description,
+        count_samples=count_samples,
+        sex_ratio=sex_ratio,
+        maf_ratio=maf_ratio,
+        mrc_ratio=mrc_ratio,
+        reads_observed=reads_observed,
+        sexes_per_population=sexes_per_population,
+    )
+
+
+@pytest.fixture
+def dna_context_te2(header_text_te2) -> DnaReplayContext:
+    list_loci = parse_loci_description(header_text_te2)
+    dna_observed = observed_sequences(OBSERVED_MSS_FILE_TE2, list_loci)
+    return DnaReplayContext(
+        header_text=header_text_te2,
+        mss_path=OBSERVED_MSS_FILE_TE2,
+        list_loci=list_loci,
+        dna_observed=dna_observed,
+        frequencies_per_locus=base_frequency_by_locus(dna_observed),
+        samples_default=observed_count_population(OBSERVED_MSS_FILE_TE2),
+        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE2),
+    )
+
+
+@pytest.fixture
+def dna_context_te2_xy(header_text_te2_XY) -> DnaReplayContext:
+    list_loci = parse_loci_description(header_text_te2_XY)
+    dna_observed = observed_sequences(OBSERVED_MSS_FILE_TE2_XY, list_loci)
+    return DnaReplayContext(
+        header_text=header_text_te2_XY,
+        mss_path=OBSERVED_MSS_FILE_TE2_XY,
+        list_loci=list_loci,
+        dna_observed=dna_observed,
+        frequencies_per_locus=base_frequency_by_locus(dna_observed),
+        samples_default=observed_count_population(OBSERVED_MSS_FILE_TE2_XY),
+        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE2_XY),
+    )
 
 
 @pytest.fixture

@@ -35,15 +35,25 @@ from pathlib import Path
 from bridge.ancestry_simulation import prepare_poolseq_observed_reads
 from bridge.configuration import _SCENARIO_DRAW_SEED_OFFSET
 from bridge.demography_builder import get_parameter_names_used_by_scenario
-from bridge.header_dataclasses import DnaReplayContext, MicrosatReplayContext, Scenario
+from bridge.header_dataclasses import (
+    DnaReplayContext,
+    MicrosatReplayContext,
+    Scenario,
+    SnpReplayContext,
+)
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
     allele_bounds_per_locus,
     base_frequency_by_locus,
+    count_samples_per_population,
     detect_snp_file_type,
+    individual_sexes_per_population,
     observed_count_population,
     observed_microsatellites,
+    observed_reads,
     observed_sequences,
+    parse_maf_ratio,
+    parse_mrc_ratio,
     parse_sex_ratio,
 )
 from bridge.parameter_sampling import draw_scenario
@@ -108,7 +118,7 @@ class ParticleResult:
 
 def _run_single_particle(
     particle_index: int,
-    reference_directory: Path,
+    context: SnpReplayContext,
     scenarios: list[Scenario],
     *,
     num_loci: int | None = None,
@@ -132,8 +142,7 @@ def _run_single_particle(
 
     Args:
         particle_index: L'index de la particule (0-based).
-        reference_directory: Le dossier contenant header.txt et le
-            fichier .snp observé.
+        context: Le contexte de la simulation.
         scenarios: Les scénarios candidats (chaque particule tire le
             sien).
         num_loci: Voir pipeline.compute_summary_statistics.
@@ -149,7 +158,7 @@ def _run_single_particle(
     drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
 
     summary_statistics, parameter_values = compute_summary_statistics(
-        reference_directory=reference_directory,
+        context=context,
         scenario_index=drawn_scenario.index,
         num_loci=num_loci,
         seed=seed,
@@ -205,25 +214,51 @@ def run_reftable_simulation(
         à nrec-1).
     """
     reference_directory = Path(reference_directory)
+    header_text = read_header_text(reference_directory)
+    snp_filename = header_text.splitlines()[0].strip()
+    snp_path = reference_directory / snp_filename
+    loci_description = parse_loci_description(header_text)
+    snp_file_type = detect_snp_file_type(snp_path)
+    count_samples = count_samples_per_population(snp_file_path=snp_path)
+    sex_ratio = parse_sex_ratio(snp_path)
+    maf_ratio = parse_maf_ratio(snp_path)
+    mrc_ratio = parse_mrc_ratio(snp_path)
+    reads_observed = (
+        observed_reads(snp_path, loci_description.loci_counts_by_heritage["A"])
+        if snp_file_type == "POOL"
+        else None
+    )
+    sexes_per_population = (
+        individual_sexes_per_population(snp_file_path=snp_path)
+        if snp_file_type == "IND"
+        else {}
+    )
+
+    context = SnpReplayContext(
+        header_text=header_text,
+        snp_path=snp_path,
+        snp_file_type=snp_file_type,
+        loci_description=loci_description,
+        count_samples=count_samples,
+        sex_ratio=sex_ratio,
+        maf_ratio=maf_ratio,
+        mrc_ratio=mrc_ratio,
+        reads_observed=reads_observed,
+        sexes_per_population=sexes_per_population,
+    )
 
     results_by_index: dict[int, ParticleResult] = {}
 
-    header_text = read_header_text(reference_directory)
-    snp_path = reference_directory / header_text.splitlines()[0].strip()
     observed_reads_per_locus = None
-    if detect_snp_file_type(snp_path) == "POOL":
-        total_loci_poolseq = parse_loci_description(
-            header_text
-        ).loci_counts_by_heritage["A"]
-        observed_reads_per_locus = prepare_poolseq_observed_reads(
-            snp_path, total_loci_poolseq
-        )
+    if snp_file_type == "POOL":
+        observed_reads_per_locus = prepare_poolseq_observed_reads(context)
+    done = 0
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
                 _run_single_particle,
                 particle_index,
-                reference_directory,
+                context,
                 scenarios,
                 num_loci=num_loci,
                 stats_filter=stats_filter,
@@ -235,6 +270,9 @@ def run_reftable_simulation(
         for future in as_completed(futures):
             particle_index = futures[future]
             results_by_index[particle_index] = future.result()
+            done += 1
+            if done % 100 == 0 or done == nrec:
+                print(f"  {done}/{nrec} particules complétées")
 
     return [results_by_index[i] for i in range(nrec)]
 
@@ -530,6 +568,7 @@ def rewrite_real_reftable_txt(
 
 def simulate_from_directory(
     test_directory: str | Path,
+    context: SnpReplayContext,
     *,
     num_loci: int | None = None,
     nrec: int,
@@ -561,8 +600,7 @@ def simulate_from_directory(
         Les ParticleResult (utile pour appeler write_reftable_bin en
         plus, si besoin -- déjà fait ici aussi).
     """
-    test_directory = Path(test_directory)
-    header_text = read_header_text(test_directory)
+    header_text = context.header_text
 
     priors, _ = parse_priors(header_text)
     print(f"{len(priors)} priors parsé depuis {test_directory}/header.txt")
@@ -658,7 +696,7 @@ def parse_real_reftable_params(
 
 def _run_single_particle_from_values(
     particle_index: int,
-    reference_directory: Path,
+    context: SnpReplayContext,
     scenario_index: int,
     values: dict[str, float],
     *,
@@ -673,6 +711,7 @@ def _run_single_particle_from_values(
 
     Args:
         particle_index: L'index de la particule (0-based).
+        context: Le contexte de rejouage.
         reference_directory: Le dossier contenant header.txt et le
             fichier .snp observé.
         scenario_index: L'index 1-based du scénario déjà tiré par
@@ -688,7 +727,7 @@ def _run_single_particle_from_values(
     """
     seed = particle_index + 1
     summary_statistics = compute_summary_statistics_from_values(
-        reference_directory=reference_directory,
+        context=context,
         scenario_index=scenario_index,
         values=values,
         num_loci=num_loci,
@@ -742,6 +781,38 @@ def replay_reftable_simulation(
         write_reftable_bin (même type que run_reftable_simulation).
     """
     reference_directory = Path(reference_directory)
+    header_text = read_header_text(reference_directory)
+    snp_filename = header_text.splitlines()[0].strip()
+    snp_path = reference_directory / snp_filename
+    loci_description = parse_loci_description(header_text)
+    snp_file_type = detect_snp_file_type(snp_path)
+    count_samples = count_samples_per_population(snp_file_path=snp_path)
+    sex_ratio = parse_sex_ratio(snp_path)
+    maf_ratio = parse_maf_ratio(snp_path)
+    mrc_ratio = parse_mrc_ratio(snp_path)
+    reads_observed = (
+        observed_reads(snp_path, loci_description.loci_counts_by_heritage["A"])
+        if snp_file_type == "POOL"
+        else None
+    )
+    sexes_per_population = (
+        individual_sexes_per_population(snp_file_path=snp_path)
+        if snp_file_type == "IND"
+        else {}
+    )
+
+    context = SnpReplayContext(
+        header_text=header_text,
+        snp_path=snp_path,
+        snp_file_type=snp_file_type,
+        loci_description=loci_description,
+        count_samples=count_samples,
+        sex_ratio=sex_ratio,
+        maf_ratio=maf_ratio,
+        mrc_ratio=mrc_ratio,
+        reads_observed=reads_observed,
+        sexes_per_population=sexes_per_population,
+    )
 
     # On lit les sorties de diyabc (scénario tiré + valeurs de paramètres RÉELLEMENT tirées) pour
     # les rejouer ensuite côté msprime, afin de comparer les deux simulateurs sur EXACTEMENT
@@ -749,12 +820,13 @@ def replay_reftable_simulation(
     rows = parse_real_reftable_params(real_reftable_path, priors, scenarios)
 
     results_by_index: dict[int, ParticleResult] = {}
+    done = 0
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
                 _run_single_particle_from_values,
                 particle_index,
-                reference_directory,
+                context,
                 scenario_index,
                 values,
                 num_loci=num_loci,
@@ -766,6 +838,11 @@ def replay_reftable_simulation(
         for future in as_completed(futures):
             particle_index = futures[future]
             results_by_index[particle_index] = future.result()
+            done += 1
+            if done % 100 == 0 or done == len(rows):
+                print(
+                    f"  {done}/{len(rows)} particules rejouées à partir du reftable réel"
+                )
     return [results_by_index[i] for i in range(len(rows))]
 
 
@@ -878,6 +955,7 @@ def run_reftable_simulation_dna(
     )
 
     results_by_index: dict[int, ParticleResult] = {}
+    done = 0
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -893,6 +971,9 @@ def run_reftable_simulation_dna(
         for future in as_completed(futures):
             particle_index = futures[future]
             results_by_index[particle_index] = future.result()
+            done += 1
+            if done % 100 == 0 or done == nrec:
+                print(f"  {done}/{nrec} particules ADN simulées")
 
     return [results_by_index[i] for i in range(nrec)]
 

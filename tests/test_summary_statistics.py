@@ -9,15 +9,11 @@ régression de formule, pas juste un problème de branchement.
 
 import numpy as np
 import pytest
-from conftest import (
-    OBSERVED_MSS_FILE_TE2,
-)
 
 from bridge.ancestry_simulation import (
     dna_mutation_simulation_per_locus,
     microsat_mutation_simulation_per_locus,
 )
-from bridge.loci_parser import parse_loci_description
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.summary_statistics import (
     _compute_DM2_for_one_locus,
@@ -116,7 +112,7 @@ def test_compute_all_statistics_poolseq():
     assert abs(results["HWv_1"] - 0.0003) < 1e-4, "HWv_1 should be approximately 0.0003"
 
 
-def test_genotype_matrix_by_population(header_text_te2):
+def test_genotype_matrix_by_population(dna_context_te2):
     """Vérifie _genotype_matrix_by_population sur un locus <A> (diploïde)
     et un locus <M> (haploïde) du même dataset : la forme retournée doit
     respecter le nombre de sites/samples réels de la TreeSequence, sans
@@ -125,12 +121,11 @@ def test_genotype_matrix_by_population(header_text_te2):
     <A> et <M> -- couvre le bug de ploïdie corrigé le 2026-08-24 dans
     dna_ancestry_parameters_for_heritage)."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
@@ -159,22 +154,21 @@ def test_genotype_matrix_by_population(header_text_te2):
         assert samples_a[pop_name].shape[1] == 2 * samples_m[pop_name].shape[1]
 
 
-def test_mean_segregating_sites_per_group(header_text_te2):
+def test_mean_segregating_sites_per_group(dna_context_te2):
     """Vérifie compute_NSS séparément sur G2 (<A>) et
     G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes mélangés,
     puisque chaque `group Gx` du header calcule son propre NSS_i à partir
     de ses seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
-    loci_description = parse_loci_description(header_text_te2)
+    loci_description = dna_context_te2.list_loci
     population_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
@@ -199,22 +193,21 @@ def test_mean_segregating_sites_per_group_empty_defaults_to_zero():
     }
 
 
-def test_mean_distinct_haplotypes_per_group(header_text_te2):
+def test_mean_distinct_haplotypes_per_group(dna_context_te2):
     """Vérifie compute_NHA séparément sur G2 (<A>) et
     G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes mélangés,
     puisque chaque `group Gx` du header calcule son propre NH_i à partir
     de ses seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
-    loci_description = parse_loci_description(header_text_te2)
+    loci_description = dna_context_te2.list_loci
     population_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
@@ -239,22 +232,21 @@ def test_mean_distinct_haplotypes_per_group_empty_defaults_to_zero():
     assert mean_empty == {"pop1": 0.0, "pop2": 0.0}
 
 
-def test_mean_pairwise_differences_per_group(header_text_te2):
+def test_mean_pairwise_differences_per_group(dna_context_te2):
     """Vérifie compute_MPD séparément sur G2 (<A>) et
     G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes mélangés,
     puisque chaque `group Gx` du header calcule son propre VPD_i à partir
     de ses seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
-    loci_description = parse_loci_description(header_text_te2)
+    loci_description = dna_context_te2.list_loci
     population_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
@@ -285,22 +277,21 @@ def test_mean_pairwise_differences_per_group_empty_defaults_to_zero():
     assert mean_empty == {"pop1": 0.0, "pop2": 0.0}
 
 
-def test_variance_pairwise_differences_per_group(header_text_te2):
+def test_variance_pairwise_differences_per_group(dna_context_te2):
     """Vérifie compute_VPD séparément sur G2 (<A>) et
     G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes mélangés,
     puisque chaque `group Gx` du header calcule son propre VPD_i à partir
     de ses seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
-    loci_description = parse_loci_description(header_text_te2)
+    loci_description = dna_context_te2.list_loci
     population_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
@@ -331,22 +322,21 @@ def test_variance_pairwise_differences_per_group_empty_defaults_to_zero():
     assert variance_empty == {"pop1": 0.0, "pop2": 0.0}
 
 
-def test_mean_tajima_d_per_group(header_text_te2):
+def test_mean_tajima_d_per_group(dna_context_te2):
     """Vérifie compute_DTA séparément sur G2 (<A>) et G3 (<M>)
     de toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque
     chaque `group Gx` du header calcule son propre DTA_i à partir de ses
     seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
-    loci_description = parse_loci_description(header_text_te2)
+    loci_description = dna_context_te2.list_loci
     population_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
@@ -377,22 +367,21 @@ def test_mean_tajima_d_per_group_empty_defaults_to_zero():
     }
 
 
-def test_mean_private_segregating_sites_per_group(header_text_te2):
+def test_mean_private_segregating_sites_per_group(dna_context_te2):
     """Vérifie compute_PSS séparément sur G2
     (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
     mélangés, puisque chaque `group Gx` du header calcule son propre
     PSS_i à partir de ses seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
-    loci_description = parse_loci_description(header_text_te2)
+    loci_description = dna_context_te2.list_loci
     population_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
@@ -417,22 +406,21 @@ def test_mean_private_segregating_sites_per_group_empty_defaults_to_zero():
     }
 
 
-def test_mean_minor_allele_count_per_group(header_text_te2):
+def test_mean_minor_allele_count_per_group(dna_context_te2):
     """Vérifie compute_MNS séparément sur G2 (<A>)
     et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
     mélangés, puisque chaque `group Gx` du header calcule son propre
     MNS_i à partir de ses seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
-    loci_description = parse_loci_description(header_text_te2)
+    loci_description = dna_context_te2.list_loci
     population_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
@@ -463,22 +451,21 @@ def test_mean_minor_allele_count_per_group_empty_defaults_to_zero():
     }
 
 
-def test_variance_minor_allele_count_per_group(header_text_te2):
+def test_variance_minor_allele_count_per_group(dna_context_te2):
     """Vérifie compute_VNS séparément sur G2
     (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
     mélangés, puisque chaque `group Gx` du header calcule son propre
     VNS_i à partir de ses seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
-    loci_description = parse_loci_description(header_text_te2)
+    loci_description = dna_context_te2.list_loci
     population_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
@@ -509,22 +496,21 @@ def test_variance_minor_allele_count_per_group_empty_defaults_to_zero():
     }
 
 
-def test_mean_distinct_haplotypes_per_group_pairwize(header_text_te2):
+def test_mean_distinct_haplotypes_per_group_pairwize(dna_context_te2):
     """Vérifie compute_NH2 séparément sur G2
     (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
     mélangés, puisque chaque `group Gx` du header calcule son propre
     NH_i à partir de ses seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
-    loci_description = parse_loci_description(header_text_te2)
+    loci_description = dna_context_te2.list_loci
     population_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
@@ -548,22 +534,21 @@ def test_mean_distinct_haplotypes_per_group_pairwize_empty_defaults_to_zero():
     }
 
 
-def test_mean_segregating_sites_per_group_pairwize(header_text_te2):
+def test_mean_segregating_sites_per_group_pairwize(dna_context_te2):
     """Vérifie compute_NS2 séparément sur G2
     (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
     mélangés, puisque chaque `group Gx` du header calcule son propre
     NSS_i à partir de ses seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
-    loci_description = parse_loci_description(header_text_te2)
+    loci_description = dna_context_te2.list_loci
     population_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
@@ -587,22 +572,21 @@ def test_mean_segregating_sites_per_group_pairwize_empty_defaults_to_zero():
     }
 
 
-def test_mean_pairwise_differences_per_group_pairwize(header_text_te2):
+def test_mean_pairwise_differences_per_group_pairwize(dna_context_te2):
     """Vérifie compute_MP2 séparément sur G2
     (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
     mélangés, puisque chaque `group Gx` du header calcule son propre
     VPD_i à partir de ses seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
-    loci_description = parse_loci_description(header_text_te2)
+    loci_description = dna_context_te2.list_loci
     population_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
@@ -626,22 +610,21 @@ def test_mean_pairwise_differences_per_group_pairwize_empty_defaults_to_zero():
     }
 
 
-def test_mean_pairwise_differences_between_per_group_pairwize(header_text_te2):
+def test_mean_pairwise_differences_between_per_group_pairwize(dna_context_te2):
     """Vérifie compute_MPB séparément sur G2
     (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
     mélangés, puisque chaque `group Gx` du header calcule son propre
     VPD_i à partir de ses seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
-    loci_description = parse_loci_description(header_text_te2)
+    loci_description = dna_context_te2.list_loci
     population_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
@@ -665,22 +648,21 @@ def test_mean_pairwise_differences_between_per_group_pairwize_empty_defaults_to_
     }
 
 
-def test_mean_hst_per_group_pairwize(header_text_te2):
+def test_mean_hst_per_group_pairwize(dna_context_te2):
     """Vérifie compute_HST séparément sur G2
     (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
     mélangés, puisque chaque `group Gx` du header calcule son propre
     HST_i à partir de ses seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
-    loci_description = parse_loci_description(header_text_te2)
+    loci_description = dna_context_te2.list_loci
     population_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
@@ -694,21 +676,22 @@ def test_mean_hst_per_group_pairwize(header_text_te2):
     assert mean_g3 == {"1.2": pytest.approx(0.03028841080070557)}
 
 
-def test_compute_all_statistics_dna(header_text_te2):
+def test_compute_all_statistics_dna(dna_context_te2):
     """Vérifie compute_all_statistics_dna sur toy_example2_ms_dna."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
     mutated = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
     population_names = ["pop1", "pop2"]
 
-    results = compute_all_statistics_dna(header_text_te2, mutated, population_names)
+    results = compute_all_statistics_dna(
+        dna_context_te2.header_text, mutated, population_names
+    )
 
     # Vérifier que les résultats contiennent les clés attendues
     expected_keys = {

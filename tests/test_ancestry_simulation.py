@@ -7,7 +7,6 @@ import msprime
 import numpy as np
 import pytest
 from conftest import (
-    OBSERVED_MSS_FILE_TE2,
     OBSERVED_MSS_FILE_TE2_XY,
     OBSERVED_SNP_FILE_HUMAN,
     OBSERVED_SNP_FILE_TE4,
@@ -56,7 +55,6 @@ from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
     coalescence_coefficient,
     observed_reads,
-    parse_mrc_ratio,
     parse_sex_ratio,
 )
 from bridge.pipeline import build_random_demography_for_scenario_index
@@ -189,15 +187,15 @@ def test_simulate_shared_ancestry_loci(header_text):
     assert all(t is trees[0] for t in trees)
 
 
-def test_simulate_genotypes_for_locus_type(header_text_te5):
+def test_simulate_genotypes_for_locus_type(snp_context_te5):
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te5, scenario_index=1, seed=42
+        snp_context_te5.header_text, scenario_index=1, seed=42
     )
     for locus_type in ["A", "X", "Y", "M", "H"]:
         genotypes = simulate_genotypes_for_locus_type(
             demography=demography,
             locus_type=locus_type,
-            snp_file_path=OBSERVED_SNP_FILE_TE5,
+            context=snp_context_te5,
             num_loci=5,
             seed=42,
         )
@@ -383,18 +381,18 @@ def test_simulate_poolseq_reads(header_text_te4):
     )
 
 
-def test_simulate_poolseq_reads_with_mrc_filter(header_text_te4):
+def test_simulate_poolseq_reads_with_mrc_filter(snp_context_te4):
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te4, scenario_index=1, seed=42
+        snp_context_te4.header_text, scenario_index=1, seed=42
     )
 
-    num_loci = parse_loci_description(header_text_te4).loci_counts_by_heritage["A"]
-    mrc = parse_mrc_ratio(OBSERVED_SNP_FILE_TE4)
+    num_loci = snp_context_te4.loci_description.loci_counts_by_heritage["A"]
+    mrc = snp_context_te4.mrc_ratio
 
     results = list(
         simulate_poolseq_reads_with_mrc_filter(
             demography,
-            OBSERVED_SNP_FILE_TE4,
+            snp_context_te4,
             num_loci=num_loci,
             seed=12,
         )
@@ -549,15 +547,13 @@ def test_build_group_local_param_per_locus(header_text_te2):
     assert params_per_locus == params_per_locus_2
 
 
-def test_build_matrix_per_locus(header_text_te2):
+def test_build_matrix_per_locus(dna_context_te2):
     """Vérifie que la fonction build_matrix_per_locus retourne le bon dictionnaire
     de matrices de transition par locus pour le fichier toy_example2 (dataset <A>+<M>
     avec 3 populations).
     Test de reproductibilité avec la même graine.
     """
-    matrix_per_locus = build_matrix_per_locus(
-        header_text_te2, OBSERVED_MSS_FILE_TE2, seed=42
-    )
+    matrix_per_locus = build_matrix_per_locus(dna_context_te2, seed=42)
 
     assert len(matrix_per_locus) == 10
     for matrix in matrix_per_locus.values():
@@ -565,9 +561,7 @@ def test_build_matrix_per_locus(header_text_te2):
         assert np.allclose(matrix.sum(axis=1), 1.0)  # Chaque ligne doit sommer à 1
 
     # test de reproductibilité avec la même graine
-    matrix_per_locus_2 = build_matrix_per_locus(
-        header_text_te2, OBSERVED_MSS_FILE_TE2, seed=42
-    )
+    matrix_per_locus_2 = build_matrix_per_locus(dna_context_te2, seed=42)
     for locus in matrix_per_locus:
         assert np.allclose(matrix_per_locus[locus], matrix_per_locus_2[locus])
 
@@ -625,20 +619,19 @@ def test_build_rate_map_per_locus(header_text_te2):
         assert rate_map_per_locus[locus] == rate_map_per_locus_2[locus]
 
 
-def test_dna_mutation_simulation_per_locus(header_text_te2, header_text_te2_XY):
+def test_dna_mutation_simulation_per_locus(dna_context_te2, dna_context_te2_xy):
     """Vérifie que dna_mutation_simulation_per_locus produit bien une
     TreeSequence mutée par locus séquence (pas les loci microsat), avec
     une généalogie ET des mutations indépendantes d'un locus à l'autre
     (pas la même graine réutilisée partout), et reproductible avec la
     même graine de particule."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
 
     mutated_tree_sequences = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
@@ -660,8 +653,7 @@ def test_dna_mutation_simulation_per_locus(header_text_te2, header_text_te2_XY):
     # chaque locus.
     mutated_tree_sequences_2 = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
     for locus_name in mutated_tree_sequences:
@@ -675,12 +667,11 @@ def test_dna_mutation_simulation_per_locus(header_text_te2, header_text_te2_XY):
 
     # test mais à partir de header_text_te2_xy pour vérifier que les loci <X> et <Y> sont bien supportés
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2_XY, scenario_index=1, seed=42
+        dna_context_te2_xy.header_text, scenario_index=1, seed=42
     )
     mutated_tree_sequences = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2_XY,
-        mss_file_path=OBSERVED_MSS_FILE_TE2_XY,
+        context=dna_context_te2_xy,
         seed=42,
     )
 
@@ -726,19 +717,18 @@ def test_ms_dna_ancestry_parameters_for_heritage(header_text_te2):
             assert rescaled_pop.initial_size == pytest.approx(pop.initial_size * factor)
 
 
-def test_dna_mutation_simulation_per_locus_ploidy_matches_heritage(header_text_te2):
+def test_dna_mutation_simulation_per_locus_ploidy_matches_heritage(dna_context_te2):
     """Vérifie que le nombre de lignées échantillonnées reflète bien la
     ploïdie attendue par héritage : un locus <A> (G2) doit avoir 2x plus de
     "samples" msprime qu'un locus <M> (G3) pour la même population -- avant
     la correction, les deux étaient simulés en ploidy=2 sans distinction."""
     demography, _ = build_random_demography_for_scenario_index(
-        header_text_te2, scenario_index=1, seed=42
+        dna_context_te2.header_text, scenario_index=1, seed=42
     )
 
     mutated_tree_sequences = dna_mutation_simulation_per_locus(
         demography=demography,
-        header_text=header_text_te2,
-        mss_file_path=OBSERVED_MSS_FILE_TE2,
+        context=dna_context_te2,
         seed=42,
     )
 
