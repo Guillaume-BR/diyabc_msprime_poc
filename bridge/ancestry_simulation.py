@@ -19,7 +19,6 @@ générations diploïdes -- cohérent avec les bornes des priors de temps
 import itertools
 import random
 from collections.abc import Iterator
-from pathlib import Path
 
 import msprime
 import numpy as np
@@ -44,18 +43,19 @@ from bridge.configuration import (
     _SITE_RATE_SEED_OFFSET,
 )
 from bridge.demography_builder import rescale_demography
-from bridge.header_dataclasses import LociDescriptionDetailed, MicrosatReplayContext
+from bridge.header_dataclasses import (
+    DnaReplayContext,
+    LociDescriptionDetailed,
+    MicrosatReplayContext,
+)
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
-    base_frequency_by_locus,
     coalescence_coefficient,
     count_samples_per_population,
     individual_sexes_from_locus_genotype,
     individual_sexes_per_population,
-    observed_count_population,
     observed_mrc,
     observed_reads,
-    observed_sequences,
     parse_maf_ratio,
     parse_mrc_ratio,
     parse_sex_ratio,
@@ -1553,7 +1553,7 @@ def build_group_local_param_per_locus(
 
 
 def build_matrix_per_locus(
-    header_text: str, mss_file_path: str | Path, seed: int
+    context: DnaReplayContext, seed: int
 ) -> dict[str, np.ndarray]:
     """Construit la matrice de transition (matQ) de chaque locus [S].
 
@@ -1562,17 +1562,16 @@ def build_matrix_per_locus(
     base_frequency_by_locus (pi par locus) et build_transition_matrix.
 
     Args:
-        header_text: Texte complet de header.txt.
-        mss_file_path: Chemin du fichier .mss.
+        context: Contexte d'information sur le reftable et les loci ADN.
         seed: La graine du tirage.
 
     Returns:
         Un dict {nom_locus: matQ} pour chaque locus [S].
     """
-    list_loci = parse_loci_description(header_text)
+    header_text = context.header_text
+    list_loci = context.list_loci
     params_per_locus = build_group_local_param_per_locus(header_text, seed)
-    sequences_by_indiv = observed_sequences(mss_file_path, list_loci)
-    frequencies_by_locus = base_frequency_by_locus(sequences_by_indiv)
+    frequencies_by_locus = context.frequencies_per_locus
     group_priors = parse_group_priors(header_text)
 
     matrix_per_locus = {}
@@ -1705,8 +1704,7 @@ def ms_dna_ancestry_parameters_for_heritage(
 
 
 def dna_mutation_simulation_per_locus(
-    header_text: str,
-    mss_file_path: str | Path,
+    context: DnaReplayContext,
     demography: msprime.Demography,
     seed: int,
 ) -> dict[str, tskit.TreeSequence]:
@@ -1730,22 +1728,23 @@ def dna_mutation_simulation_per_locus(
     loci M ou Y partagent la même généalogie.
 
     Args:
-        header_text: Texte complet de header.txt.
-        mss_file_path: Chemin du fichier .mss.
+        context: Le contexte de la simulation.
         demography: La démographie <A> de base (PAS encore rescalée).
         seed: La graine de la simulation.
 
     Returns:
         Un dict {nom_locus: TreeSequence mutée} pour chaque locus [S].
     """
+    header_text = context.header_text
+    mss_file_path = context.mss_path
+    list_loci = context.list_loci
+    frequencies_by_locus = context.frequencies_per_locus
+    samples_default = context.samples_default
+    sex_ratio = context.sex_ratio
+
     rate_map_per_locus = build_rate_map_per_locus(header_text, seed)
-    matrix_per_locus = build_matrix_per_locus(header_text, mss_file_path, seed)
-    list_loci = parse_loci_description(header_text)
-    frequencies_by_locus = base_frequency_by_locus(
-        observed_sequences(mss_file_path, list_loci)
-    )
-    samples_default = observed_count_population(mss_file_path=mss_file_path)
-    sex_ratio = parse_sex_ratio(mss_file_path)
+    matrix_per_locus = build_matrix_per_locus(context, seed)
+
     mutated_tree_sequences = {}
 
     for i, locus in enumerate(list_loci):
@@ -1985,8 +1984,7 @@ def build_group_local_param_per_locus_from_values(
 
 
 def build_matrix_per_locus_from_values(
-    header_text: str,
-    mss_file_path: str | Path,
+    context: DnaReplayContext,
     group_priors_values: dict[str, float],
     seed: int,
 ) -> dict[str, np.ndarray]:
@@ -2012,8 +2010,7 @@ def build_matrix_per_locus_from_values(
     de bases observées).
 
     Args:
-        header_text: Texte complet de header.txt.
-        mss_file_path: Chemin du fichier .mss.
+        context: Contexte d'information sur le reftable et les loci ADN.
         group_priors_values: Dict {nom_colonne: valeur} tel que lu
             dans le vrai reftable.
         seed: La graine du tirage par-locus (second niveau).
@@ -2022,12 +2019,13 @@ def build_matrix_per_locus_from_values(
         Un dict {nom_locus: matQ} pour chaque locus [S], même contrat
         que build_matrix_per_locus.
     """
-    list_loci = parse_loci_description(header_text)
+    header_text = context.header_text
+    list_loci = context.list_loci
     params_per_locus = build_group_local_param_per_locus_from_values(
         header_text, group_priors_values, seed
     )
-    sequences_by_indiv = observed_sequences(mss_file_path, list_loci)
-    frequencies_by_locus = base_frequency_by_locus(sequences_by_indiv)
+
+    frequencies_by_locus = context.frequencies_per_locus
     group_priors = parse_group_priors(header_text)
 
     matrix_per_locus = {}
@@ -2099,8 +2097,7 @@ def build_rate_map_per_locus_from_values(
 
 
 def dna_mutation_simulation_per_locus_from_values(
-    header_text: str,
-    mss_file_path: str | Path,
+    context: DnaReplayContext,
     demography: msprime.Demography,
     group_priors_values: dict[str, float],
     seed: int,
@@ -2140,18 +2137,20 @@ def dna_mutation_simulation_per_locus_from_values(
         Un dict {nom_locus: TreeSequence mutée} pour chaque locus [S],
         même contrat que dna_mutation_simulation_per_locus.
     """
+    header_text = context.header_text
+    mss_file_path = context.mss_path
+    list_loci = context.list_loci
+    frequencies_by_locus = context.frequencies_per_locus
+    samples_default = context.samples_default
+    sex_ratio = context.sex_ratio
+
     rate_map_per_locus = build_rate_map_per_locus_from_values(
         header_text, group_priors_values, seed
     )
     matrix_per_locus = build_matrix_per_locus_from_values(
-        header_text, mss_file_path, group_priors_values, seed
+        context, group_priors_values, seed
     )
-    list_loci = parse_loci_description(header_text)
-    frequencies_by_locus = base_frequency_by_locus(
-        observed_sequences(mss_file_path, list_loci)
-    )
-    samples_default = observed_count_population(mss_file_path=mss_file_path)
-    sex_ratio = parse_sex_ratio(mss_file_path)
+
     mutated_tree_sequences = {}
 
     for i, locus in enumerate(list_loci):

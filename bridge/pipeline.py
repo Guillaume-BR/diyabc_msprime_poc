@@ -36,9 +36,9 @@ from bridge.ancestry_simulation import (
 )
 from bridge.configuration import _LOCUS_TYPE_SEED_OFFSET
 from bridge.demography_builder import build_demography
-from bridge.header_dataclasses import MicrosatReplayContext, Scenario
+from bridge.header_dataclasses import DnaReplayContext, MicrosatReplayContext, Scenario
 from bridge.loci_parser import parse_loci_description
-from bridge.observed_data import detect_snp_file_type, observed_count_population
+from bridge.observed_data import detect_snp_file_type
 from bridge.parameter_sampling import draw_parameter_values
 from bridge.prior_parser import parse_priors
 from bridge.scenario_parser import parse_header_scenarios
@@ -598,7 +598,7 @@ def compute_summary_statistics_from_values(
 
 
 def compute_summary_statistics_dna(
-    reference_directory: str | Path,
+    context: DnaReplayContext,
     scenario_index: int,
     *,
     seed: int,
@@ -643,23 +643,20 @@ def compute_summary_statistics_dna(
         colonne_diyabc: valeur} de compute_all_statistics_dna (ex.
         "NSS_2_1"), values est {nom_paramètre_historique: valeur}.
     """
-    reference_directory = Path(reference_directory)
-    header_text = read_header_text(reference_directory)
-    mss_filename = header_text.splitlines()[0].strip()
-    mss_path = reference_directory / mss_filename
+
+    header_text = context.header_text
 
     demography, values = build_random_demography_for_scenario_index(
         header_text, scenario_index, seed
     )
 
     mutated = dna_mutation_simulation_per_locus(
-        header_text,
-        mss_path,
+        context,
         demography,
         seed,
     )
 
-    population_names = list(observed_count_population(mss_path).keys())
+    population_names = list(context.samples_default.keys())
     summary_stats = compute_all_statistics_dna(header_text, mutated, population_names)
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 
@@ -670,7 +667,7 @@ def compute_summary_statistics_dna(
 
 
 def compute_summary_statistics_dna_from_values(
-    reference_directory: str | Path,
+    context: DnaReplayContext,
     scenario_index: int,
     values: dict[str, float],
     group_priors_values: dict[str, float],
@@ -688,8 +685,7 @@ def compute_summary_statistics_dna_from_values(
     biais possible de deux tirages indépendants.
 
     Args:
-        reference_directory: Le dossier contenant header.txt et le
-            fichier .mss observé.
+        context: Le contexte de rejeu pour les séquences ADN.
         scenario_index: L'index 1-based du scénario à utiliser.
         values: Les valeurs de paramètres historiques déjà connues,
             {nom: valeur}.
@@ -707,24 +703,21 @@ def compute_summary_statistics_dna_from_values(
            Le dict summary_statistics (pas de `values` en retour,
            puisqu'ils sont déjà connus de l'appelant).
     """
-    reference_directory = Path(reference_directory)
-    header_text = read_header_text(reference_directory)
-    mss_filename = header_text.splitlines()[0].strip()
-    mss_path = reference_directory / mss_filename
+
+    header_text = context.header_text
 
     demography = build_demography_for_scenario_index(
         header_text, scenario_index, values
     )
 
     mutated = dna_mutation_simulation_per_locus_from_values(
-        header_text,
-        mss_path,
+        context,
         demography,
         group_priors_values=group_priors_values,
         seed=seed,
     )
 
-    population_names = list(observed_count_population(mss_path).keys())
+    population_names = list(context.samples_default.keys())
     summary_stats = compute_all_statistics_dna(header_text, mutated, population_names)
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 

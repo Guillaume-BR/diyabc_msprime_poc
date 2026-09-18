@@ -202,3 +202,14 @@ class MicrosatReplayContext:
     bounds_per_locus: dict[str, tuple[int, int]]
     samples_default: dict[str, int]
     sex_ratio: float
+
+
+@dataclass
+class DnaReplayContext:
+    header_text: str
+    mss_path: Path
+    list_loci: list[LociDescriptionDetailed]
+    dna_observed: dict[str, list[list[str]]]
+    frequencies_per_locus: dict[str, dict[str, float]]
+    samples_default: dict[str, int]
+    sex_ratio: float

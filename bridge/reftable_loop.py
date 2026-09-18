@@ -35,13 +35,15 @@ from pathlib import Path
 from bridge.ancestry_simulation import prepare_poolseq_observed_reads
 from bridge.configuration import _SCENARIO_DRAW_SEED_OFFSET
 from bridge.demography_builder import get_parameter_names_used_by_scenario
-from bridge.header_dataclasses import MicrosatReplayContext, Scenario
+from bridge.header_dataclasses import DnaReplayContext, MicrosatReplayContext, Scenario
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
     allele_bounds_per_locus,
+    base_frequency_by_locus,
     detect_snp_file_type,
     observed_count_population,
     observed_microsatellites,
+    observed_sequences,
     parse_sex_ratio,
 )
 from bridge.parameter_sampling import draw_scenario
@@ -774,7 +776,7 @@ def replay_reftable_simulation(
 
 def _run_single_particle_dna(
     particle_index: int,
-    reference_directory: Path,
+    context: DnaReplayContext,
     scenarios: list[Scenario],
     *,
     stats_filter: str,
@@ -796,8 +798,7 @@ def _run_single_particle_dna(
 
     Args:
         particle_index: L'index de la particule (0-based).
-        reference_directory: Le dossier contenant header.txt et le
-            fichier .mss observé.
+        context: Le contexte de rejeu pour les séquences ADN.
         scenarios: Les scénarios candidats (chaque particule tire le
             sien).
         stats_filter: "ALL" ou "HEADER".
@@ -809,7 +810,7 @@ def _run_single_particle_dna(
     drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
 
     summary_statistics, parameter_values = compute_summary_statistics_dna(
-        reference_directory=reference_directory,
+        context=context,
         scenario_index=drawn_scenario.index,
         seed=seed,
         stats_filter=stats_filter,
@@ -860,6 +861,21 @@ def run_reftable_simulation_dna(
         à nrec-1).
     """
     reference_directory = Path(reference_directory)
+    header_text = read_header_text(reference_directory)
+    mss_filename = header_text.splitlines()[0].strip()
+    mss_path = reference_directory / mss_filename
+    list_loci = parse_loci_description(header_text)
+    sequences_observed = observed_sequences(mss_path, list_loci)
+
+    context = DnaReplayContext(
+        header_text=header_text,
+        mss_path=mss_path,
+        list_loci=list_loci,
+        dna_observed=sequences_observed,
+        frequencies_per_locus=base_frequency_by_locus(sequences_observed),
+        samples_default=observed_count_population(mss_path),
+        sex_ratio=parse_sex_ratio(mss_path),
+    )
 
     results_by_index: dict[int, ParticleResult] = {}
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -867,7 +883,7 @@ def run_reftable_simulation_dna(
             executor.submit(
                 _run_single_particle_dna,
                 particle_index,
-                reference_directory,
+                context,
                 scenarios,
                 stats_filter=stats_filter,
             ): particle_index
@@ -1006,7 +1022,7 @@ def parse_real_reftable_params_with_group_priors(
 
 def _run_single_particle_dna_from_values(
     particle_index: int,
-    reference_directory: Path,
+    context: DnaReplayContext,
     scenario_index: int,
     values: dict[str, float],
     group_priors_values: dict[str, float],
@@ -1037,7 +1053,7 @@ def _run_single_particle_dna_from_values(
     """
     seed = particle_index + 1
     summary_statistics = compute_summary_statistics_dna_from_values(
-        reference_directory=reference_directory,
+        context=context,
         scenario_index=scenario_index,
         values=values,
         group_priors_values=group_priors_values,
@@ -1085,6 +1101,21 @@ def replay_reftable_simulation_dna(
         réel.
     """
     reference_directory = Path(reference_directory)
+    header_text = read_header_text(reference_directory)
+    mss_filename = header_text.splitlines()[0].strip()
+    mss_path = reference_directory / mss_filename
+    list_loci = parse_loci_description(header_text)
+    sequences_observed = observed_sequences(mss_path, list_loci)
+
+    context = DnaReplayContext(
+        header_text=header_text,
+        mss_path=mss_path,
+        list_loci=list_loci,
+        dna_observed=sequences_observed,
+        frequencies_per_locus=base_frequency_by_locus(sequences_observed),
+        samples_default=observed_count_population(mss_path),
+        sex_ratio=parse_sex_ratio(mss_path),
+    )
 
     # On lit les sorties de diyabc (scénario tiré + valeurs de paramètres RÉELLEMENT tirées) pour
     # les rejouer ensuite côté msprime, afin de comparer les deux simulateurs sur EXACTEMENT
@@ -1098,12 +1129,13 @@ def replay_reftable_simulation_dna(
     )
 
     results_by_index: dict[int, ParticleResult] = {}
+    done = 0
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
                 _run_single_particle_dna_from_values,
                 particle_index,
-                reference_directory,
+                context,
                 scenario_index,
                 values,
                 group_priors_values,
@@ -1119,7 +1151,12 @@ def replay_reftable_simulation_dna(
         for future in as_completed(futures):
             particle_index = futures[future]
             results_by_index[particle_index] = future.result()
-    return [results_by_index[i] for i in range(len(rows))]
+            done += 1
+            if done % 100 == 0 or done == len(rows):
+                print(
+                    f"Rejeu des tirages réels : {done}/{len(rows)} particules terminées"
+                )
+        return [results_by_index[i] for i in range(len(rows))]
 
 
 # --------------------------------------------------------------------------
@@ -1232,6 +1269,7 @@ def run_reftable_simulation_microsat(
     )
 
     results_by_index: dict[int, ParticleResult] = {}
+    done = 0
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -1247,6 +1285,9 @@ def run_reftable_simulation_microsat(
         for future in as_completed(futures):
             particle_index = futures[future]
             results_by_index[particle_index] = future.result()
+            done += 1
+            if done % 10 == 0 or done == nrec:
+                print(f"  {done}/{nrec} particules microsat simulées")
 
     return [results_by_index[i] for i in range(nrec)]
 
@@ -1335,7 +1376,9 @@ def replay_reftable_simulation_microsat(
         Les ParticleResult dans le MÊME ORDRE que les lignes du fichier
         réel.
     """
-    reference_directory = Path(reference_directory)
+    reference_directory = Path(
+        reference_directory
+    )  # Normalise en path au cas où une str soit passée
     header_text = read_header_text(reference_directory)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
@@ -1352,6 +1395,10 @@ def replay_reftable_simulation_microsat(
         sex_ratio=parse_sex_ratio(mss_path),
     )
 
+    print(
+        "Lecture et extraction des informations du header.txt et du fichier .mss terminée, lecture des valeurs de diyabc."
+    )
+
     # On lit les sorties de diyabc (scénario tiré + valeurs de paramètres RÉELLEMENT tirées) pour
     # les rejouer ensuite côté msprime, afin de comparer les deux simulateurs sur EXACTEMENT
     # les mêmes tirages de priors.
@@ -1363,7 +1410,10 @@ def replay_reftable_simulation_microsat(
         group_priors_names=group_priors_names,
     )
 
+    print("Lecture des tirages réels de DIYABC terminée, lancement du rejeu msprime...")
+
     results_by_index: dict[int, ParticleResult] = {}
+    done = 0
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -1385,4 +1435,9 @@ def replay_reftable_simulation_microsat(
         for future in as_completed(futures):
             particle_index = futures[future]
             results_by_index[particle_index] = future.result()
+            done += 1
+            if done % 100 == 0 or done == len(rows):
+                print(
+                    f"Rejeu des tirages réels : {done}/{len(rows)} particules terminées"
+                )
     return [results_by_index[i] for i in range(len(rows))]
