@@ -3654,7 +3654,7 @@ def compute_all_statistics_poolseq(
 ) -> dict[str, float]:
     """Calcule les statistiques résumées SNP pour PoolSeq.
 
-    Les matrices (npop × nloci) de comptes et tailles d'échantillon sont
+    Les matrices (npop x nloci) de comptes et tailles d'échantillon sont
     construites une seule fois (_prepare_matrices_poolseq) et transmises
     à toutes les familles de statistiques via _mats.
 

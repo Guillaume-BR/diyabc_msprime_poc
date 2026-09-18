@@ -27,7 +27,7 @@ class VarNeEvent:
 
 @dataclass
 class SampleEvent:
-    time_expr: str  # toujours "0" dans ce qu'on a vu
+    time_expr: str
     pop: int
 
 
