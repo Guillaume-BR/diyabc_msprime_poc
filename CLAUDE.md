@@ -64,9 +64,33 @@ microsat` no longer raises `NotImplementedError`) — see "MicroSat
 summary statistics" below, including a deliberately-reproduced C++ bug
 in `DM2` and a column-naming bug (`multi_group`) found and fixed in
 both the MicroSat and the already-shipped DNA-sequence stats wiring.
-The SNI mutation channel (single nucleotide insertion/deletion
-alongside GSM) and the three-population `AML` stat remain deliberately
-deferred, same as noted below. The goal is to demonstrate that a
+As of 2026-09-15, the SNI mutation channel (single nucleotide
+insertion/deletion alongside GSM) is implemented too, via a hand-built
+dense-allele-grid transition matrix (`build_microsat_transition_matrix_
+with_sni`) — see "SNI mutation channel" below, including the finding
+that it does NOT close the previously-observed `FST` gap (confirming,
+from the opposite direction, the falsification already established on
+real DIYABC data). This initially introduced a real, significant
+(~34x) performance regression, optimized 2026-09-16 down to ~1.5x by
+building `motif_size` shared `msprime.TPM` matrices (one per residue
+class) instead of one per dense-grid state — see "SNI mutation
+channel" below. As of 2026-09-18, the three-population `AML` stat
+(previously deferred for lack of a 3+-population dataset) is
+implemented and validated 100% against a real DIYABC reftable — see
+"AML statistic implemented and validated" below; `FST` remains the one
+outstanding MicroSat stat gap, its investigation now redirected toward
+the `<M>` genealogy's population structure rather than the formula
+itself (see "FST microsat investigation" below). Also as of 2026-09-18,
+`header.txt`/`.snp`/`.mss` are read once per whole run rather than once
+per particle across SNP, MicroSat, and DNA sequences alike (see
+"ReplayContext refactor" below) — and two further gaps were identified
+but not yet started: a dataset sampling one population at several
+times rather than several distinct populations is not supported (see
+"Serial/temporal sampling not supported" below), and DIYABC reportedly
+switches to a simplified substitution model below some sequence-count
+threshold, not yet even located in the C++ source (see "Simplified
+substitution model for low sequence counts" below). The goal is to
+demonstrate that a
 `header.txt` → `msprime.Demography` → coalescent+mutation → summary
 statistics pipeline built in Python produces a `reftable.bin`
 structurally and statistically equivalent to the real DIYABC's.
@@ -1149,16 +1173,555 @@ levels being generally in the right ballpark. Deliberately shelved
 2026-09-14 rather than guessing further without new evidence — pick up
 as a dedicated investigation, not a quick fix.
 
-**Not yet done**: SNI itself (see "MicroSat GSM mutation model" above
-for the exact mechanism — `mute` in `particuleC.cpp`, a single combined
-Poisson process at rate `mut_rate+sni_rate`, classified per-event as a
-GSM step or an SNI step by a Bernoulli draw, SNI being an ±1bp step
-independent of `motif_size` — needs a denser allele grid than the
-current `motif_size`-spaced one, plus a hand-built mixture transition
-matrix, not reusable `msprime.TPM` output directly). Confirming FST's
-gap actually closes once SNI exists. No real MicroSat DIYABC reftable
-has been used yet for `toy_example2_ms_dna_XY` specifically (impossible,
-see above) — this validation is on `toy_example2_ms_dna` only.
+**Resolved 2026-09-15**: SNI itself is now implemented — see "SNI
+mutation channel" below. Confirms, directly rather than by proxy, that
+SNI is NOT the cause of the `FST` gap: with SNI actually wired into our
+own simulation (not just forced near-zero in a real DIYABC dataset),
+the gap on `toy_example2_ms_dna` is essentially unchanged
+(`KS≈0.2643`, vs. `KS≈0.245` before) — see below for the full result
+and the real, significant performance cost this introduced.
+
+### SNI mutation channel (2026-09-15, mentor mode — user-driven, reviewed/debugged with the assistant)
+
+Implements the mechanism described in `particuleC.cpp::mute` (see
+"MicroSat GSM mutation model" above): a single combined Poisson process
+at rate `mut_rate + sni_rate`, each event classified via a Bernoulli
+draw (`p_sni = sni_rate / (sni_rate + mut_rate)`) as either a GSM step
+(`±d×motif_size`, `d~geometric(Pgeom)`) or an SNI step (`±1`bp, 50/50,
+independent of `motif_size`), both clamped to `[kmin, kmax]` with the
+same "auto-mutation at the boundary" convention. Unlike GSM alone
+(which only ever visits states on `root`'s own residue class modulo
+`motif_size`, and so could reuse a single `motif_size`-spaced
+`msprime.TPM` grid), SNI can shift the current allele into ANY residue
+class — so every integer from `kmin` to `kmax` needs its own row, on a
+DENSE grid, not just the `motif_size`-spaced states `build_microsat_
+transition_matrix` already handled.
+
+Five new functions in `ancestry_simulation.py`, each a "brick" tested
+in isolation before assembly (same two-tier philosophy as the DNA/
+MicroSat summary-statistics work):
+
+- **`_distribution_from_position(position, kmin, kmax, motif_size,
+  Pgeom, epsilon)`**: generalizes `build_microsat_transition_matrix`'s
+  `root`-anchored `msprime.TPM` row to an arbitrary CURRENT state
+  `position` (not necessarily the ancestral `root`) — reuses `msprime.
+  TPM` per state rather than re-deriving the geometric formula by hand,
+  the same trade-off already made for the GSM-only case (deliberately
+  accepting a performance cost to avoid a new formula-transcription
+  bug — see the performance regression below, where this trade-off's
+  cost turned out much higher than expected). Returns a row on the
+  LOCAL grid (indexed relative to `position`, spaced by `motif_size`),
+  by indexing `.transition_matrix[n_minus]` where `n_minus = (position
+  - kmin) // motif_size` — NOT `.root_distribution` (an early draft
+  used `.root_distribution`, which answers "where does a lineage
+  start", a fixed model property, not "distribution over next states
+  from a given current state"; caught before being trusted, verified
+  by direct execution: `Pgeom=0` gives exactly `0.5`/`0.5` on the two
+  immediate neighbors, including near a boundary).
+- **`_place_gsm_row_on_dense_grid(local_distribution, position, kmin,
+  kmax, motif_size)`**: spreads that local row onto the DENSE grid
+  (indexed by real bp value, `kmax - kmin + 1` columns). Took several
+  rounds to get right, all caught by direct execution (not just
+  reading the diff), all the same root cause — conflating two
+  different index scales without naming them separately:
+  - First draft copied the local array onto a CONTIGUOUS block of the
+    dense array (`dense_row[n_minus:n_minus+len(local)] = local`)
+    instead of striding by `motif_size` — raised `ValueError` on shape
+    mismatch immediately (`n_alleles` was also computed wrong, from
+    `len(local_distribution)` instead of `kmax - kmin + 1`).
+  - Second draft fixed the stride but reused a single `n_minus`
+    variable for two conceptually different things — the local index
+    of `position` in `local_distribution` (`(position-kmin)//
+    motif_size`, needed to compute "how many local steps away is
+    `local_distribution[k]`") and the dense-grid column of `position`
+    itself (`position - kmin`, needed as the placement's base offset)
+    — silently wrapped to negative-index (numpy modulo) placements,
+    caught by comparing actual vs. hand-computed expected columns
+    (`98`/`102` for a centered test case), not by any exception.
+  - Third draft introduced both variables (`n_minus`/`n_minus_local`)
+    but with their ROLES swapped in the placement formula — same
+    symptom, different variables; fixed once the two roles were named
+    explicitly: `dense_column = n_minus + (k - n_minus_local) *
+    motif_size`.
+  Verified correct at a centered position and near a boundary (exact
+  match against hand-computed expected columns both times).
+- **`_sni_row_on_dense_grid(position, kmin, kmax)`**: the SNI-only row,
+  built DIRECTLY on the dense grid (no local-grid/spreading step
+  needed at all, since the ±1 step already lands on the dense grid by
+  construction — unlike GSM, which needs the intermediate local grid
+  precisely because its steps are `motif_size`-spaced). `0.5`/`0.5` on
+  `position ± 1`, boundary-clamped the same way as GSM (the side that
+  would exceed `[kmin, kmax]` folds back onto `position` itself). Two
+  bugs caught by direct execution, not by reading the diff:
+  - An early draft's body was a placeholder self-transition
+    (`sni_row[position - kmin] = 1.0`, commented "SNI doesn't change
+    the allele") — didn't implement the ±1 step at all; caught while
+    reviewing the docstring (which correctly described the intended
+    mechanism, but didn't match the body — a docstring/implementation
+    mismatch worth checking for on its own, not just formula
+    correctness).
+  - Once rewritten with the right boundary-clamp logic, indexed
+    `sni_row[position]`/`sni_row[position ± 1]` directly instead of
+    `sni_row[position - kmin]`/`sni_row[position - kmin ± 1]` — raised
+    `IndexError` immediately for any `kmin != 0` (every real dataset).
+    Same class of bug as `_place_gsm_row_on_dense_grid`'s: forgetting
+    that the dense grid is indexed by DISTANCE FROM `kmin`, never by
+    the raw allele value itself.
+- **`_mix_sni_gsm_rows(sni_row, gsm_row, sni_rate, mut_rate)`**:
+  `p_sni = sni_rate / (sni_rate + mut_rate)`; `row = (1 - p_sni) *
+  gsm_row + p_sni * sni_row` — straightforward once the two rows above
+  were correct, no bugs found.
+- **`build_microsat_transition_matrix_with_sni(kmin, kmax, motif_size,
+  Pgeom, sni_rate, mut_rate, epsilon)`**: assembles all of the above,
+  one dense row per state (`kmax - kmin + 1` rows total), into the full
+  transition matrix (`np.ndarray`, not yet wrapped in `msprime.
+  MatrixMutationModel` — building `alleles`/`root_distribution` for the
+  dense grid and that final wrapping step are the next piece of this
+  chantier, not yet done). One serious bug caught before any test
+  passed: an early draft called `_place_gsm_row_on_dense_grid(position,
+  kmin, kmax, motif_size, Pgeom)` directly — skipping the
+  `_distribution_from_position` call entirely and passing arguments
+  that don't match that function's real signature at all (`local_
+  distribution, position, kmin, kmax, motif_size`). Every argument
+  silently shifted one slot (`position` became `local_distribution`,
+  `kmin` became `position`, etc.), and `Pgeom` ended up in the
+  `motif_size` slot — raised `ZeroDivisionError` (`// motif_size` with
+  `motif_size=Pgeom=0.0`), which is what first exposed it. Confirmed by
+  the fact that `epsilon` (only ever consumed inside `_distribution_
+  from_position`) showed up as an unused-variable lint warning — a
+  useful independent signal that the intended call was missing
+  entirely, not just malformed.
+
+**Validation methodology — comparing a `motif_size`-spaced grid against
+a dense one is not a same-shape comparison**: the natural sanity check
+(`sni_rate=0` should reproduce `build_microsat_transition_matrix`
+exactly) cannot be a direct `np.allclose` between the two matrices —
+they have genuinely different shapes by design (dense:
+`kmax-kmin+1` states; old: only states on `root`'s own residue class
+modulo `motif_size`, roughly `1/motif_size` as many). The right check
+extracts, from the dense matrix, only the rows/columns corresponding
+to the states the old matrix actually represents — reusing `build_
+microsat_transition_matrix`'s own already-tested `.alleles` output
+(the real bp values as strings) rather than re-deriving `root`/
+`n_minus` redundantly in the test: `dense_cols = [int(a) - kmin for a
+in old_model.alleles]`, then `matrix_with_sni[np.ix_(dense_cols,
+dense_cols)]` compared against `old_model.transition_matrix`. Verified
+correct by hand on `kmin=0, kmax=6, motif_size=2, Pgeom=0.2` (a
+deliberately small, non-`motif_size`-aligned range: `kmax-kmin=6`,
+`root=3` — `root` and `kmin`/`kmax` fall on OPPOSITE parities here, so
+the old matrix's 3-state grid `{1,3,5}` never even reaches the literal
+boundary values `0`/`6` at all, a sharper version of the already-
+documented "grid anchored on `root`, not `kmin`" parity issue): the
+dense matrix's rows/columns `[1,3,5]`, extracted this way, matched the
+old 3×3 matrix exactly, while the dense matrix's OTHER rows/columns
+(`0,2,4,6` — states the old model structurally cannot represent at
+all) had their own independently-correct, well-formed distributions.
+`test_build_microsat_transition_matrix_with_sni` also checks row-
+stochasticity (`sum(axis=1) ≈ 1`) across the whole dense matrix.
+
+**Wired into the pipeline** (`build_matrix_microsat_per_locus`/its
+`_from_values` twin now draw and pass through `sni_rate` — previously
+drawn but discarded, see "MicroSat GSM mutation model" above).
+
+**Real, significant performance regression (~34x), diagnosed 2026-09-15,
+FIXED 2026-09-16 — down to ~1.5x.** Running the full `toy_example2_ms_dna`
+replay (`scripts/replay_diyabc_priors_ms.py`) initially went from ~15s
+(GSM only) to ~512s (GSM+SNI) for the same particle count. Root cause:
+`build_microsat_transition_matrix_with_sni` called `_distribution_from_
+position` — which itself constructed a whole `msprime.TPM` matrix
+internally — ONCE PER STATE of the dense grid (`kmax - kmin + 1` calls,
+each `O(n_local²)`), whereas the old GSM-only function builds exactly
+ONE `msprime.TPM` matrix per locus. Quantitatively consistent with the
+observed factor: for a dense grid of size `n` with `motif_size=2`, cost
+scaled roughly as `n × (n/2)²` vs. the old `(n/2)²` once — a ratio of
+about `4n`, which for a typical microsat locus's `n≈40` lands right in
+the observed `~30-40×` range.
+
+**The fix (not the closed-form rederivation originally floated, a
+simpler one)**: the number of DISTINCT `msprime.TPM` matrices actually
+needed is `motif_size`, not `kmax - kmin + 1` — proved via the same
+floor-division identity already used to verify `sni_rate=0` equivalence
+(see above): for states `s` and `s' = s + motif_size` (same residue
+class modulo `motif_size`), `n_minus(s') = n_minus(s) + 1` and
+`n_plus(s') = n_plus(s) - 1` EXACTLY, so `n_alleles = n_minus + n_plus +
+1` is CONSTANT within a residue class — but DIFFERS across classes
+(verified concretely: `kmin=80, kmax=120, motif_size=2` gives
+`n_alleles=21` for every even state and `20` for every odd state, since
+`kmax-kmin+1=41` doesn't split evenly between the two classes). So
+`build_microsat_transition_matrix_with_sni` now builds exactly
+`motif_size` matrices up front (one per residue `r=0..motif_size-1`,
+each with its own `hi = (kmax - (kmin+r)) // motif_size`, `p`/`m`/`lo`
+identical across all of them since those depend only on `Pgeom`/
+`epsilon`, not on the residue), keyed in a dict; the main loop (still
+over all `kmax-kmin+1` dense states, that part doesn't change — every
+state still needs its own OUTPUT row) just picks `matrices[(position -
+kmin) % motif_size]` instead of rebuilding one. `_distribution_from_
+position` itself needed no change in its final form — it was already
+just `transition_matrix[n_minus]`, agnostic to how that matrix was
+built or how many are shared; this is also why its own unit test
+doesn't need `msprime.TPM` at all (see below).
+
+Two bugs caught by direct execution while implementing this:
+- A first attempt built the `motif_size`-keyed dict but with `hi =
+  n_alleles - 1` where `n_alleles` was still `kmax - kmin + 1` (the
+  DENSE grid size) for every entry — same underlying confusion as the
+  original bug, just moved into the dict comprehension; and the dict
+  was keyed by `i` (the DENSE loop index) rather than by residue, so it
+  ended up with `n_alleles` (not `motif_size`) entries, defeating the
+  optimization's entire point while still being numerically wrong.
+- Once the dict was correctly built (right `hi` per residue, keyed
+  `0..motif_size-1`), the MAIN loop still indexed it as `matrices[i]`
+  (`i` being the outer loop's DENSE index, reused from an earlier,
+  unrelated `for i in range(motif_size)` loop that built the dict) —
+  raised `KeyError` as soon as `i >= motif_size`. Fixed by computing
+  `residue = (position - kmin) % motif_size` inside the main loop and
+  indexing `matrices[residue]`.
+
+**Test weakness caught along the way, also fixed**: `test_distribution_
+from_position` built its `msprime.TPM` test matrix with `hi = (kmax -
+kmin) // motif_size` regardless of the test's chosen `position` — for
+`kmin=0, kmax=10, motif_size=2, position=5` (ODD), this happens to
+build the EVEN class's matrix (`hi=5`, 6 states) rather than `position`
+`5`'s own true class (`hi=4`, 5 states), a residue mismatch the test's
+assertions (`shape`, `sum≈1.0`) can never catch since both hold for
+ANY valid stochastic matrix regardless of which residue class it
+represents. Resolved by recognizing `_distribution_from_position` no
+longer has any responsibility for the matrix's construction or
+validity — it is now a pure "compute `n_minus`, index into whatever
+array it's given" operation, so its test doesn't need a real (or even
+residue-correct) `msprime.TPM` matrix at all: a plain distinguishable
+dummy array (each row identifiable, e.g. `np.arange(...).reshape(...)`)
+lets the test assert the exact row returned matches `dummy[n_minus]`
+for a hand-computed `n_minus`, isolating the function's own actual
+logic from `msprime.TPM`'s (already covered by `build_microsat_
+transition_matrix`'s own tests).
+
+**Measured result**: the same `toy_example2_ms_dna` replay dropped from
+~512s back to **~23s** — a ~22x improvement, landing at ~1.5x over the
+~15s GSM-only baseline (not 1.0x, since building `motif_size=2`
+matrices instead of 1 is inherently somewhat more work — but `msprime.
+TPM` construction is only part of one particle's total cost, so the
+wall-clock overhead dilutes well below the naive `2×` matrix-count
+ratio). Re-ran the `FST`/`DM2` real-DIYABC comparison on this optimized
+version: both identical to the pre-optimization numbers (`FST_1_1.2`
+KS≈`0.2643`, `DM2` KS≈`0.0439`) — confirms the optimization changed
+nothing about correctness, only speed.
+
+**Result: `FST` gap essentially unchanged, confirming SNI is not the
+cause — this time directly, not by proxy.** Re-ran the real-DIYABC
+comparison on `toy_example2_ms_dna` with SNI now actually simulated:
+`FST_1_1.2` KS≈`0.2643` (`p≈0.0`), against `KS≈0.245` before SNI existed
+at all — statistically the same magnitude of divergence, not a
+meaningful change. This corroborates, from the opposite direction, the
+2026-09-14 falsification (forcing `SNI≈0` in a REAL DIYABC dataset
+didn't move the gap either) — the `FST` gap is now confirmed unrelated
+to SNI by two independent, complementary tests (removing SNI from the
+real data, and adding SNI to our simulation), not just one. `DM2`
+showed a small, non-significant wobble (`KS≈0.0439`, `p≈0.4689`) — well
+within normal run-to-run sampling noise, not a regression. The `FST`
+root cause remains exactly as open as documented in "MicroSat stats
+cross-validated against a real reftable" above (ANOVA variance-
+components decomposition, the one remaining unexplored hypothesis) —
+this result removes SNI from consideration with much stronger
+confidence, but doesn't move the investigation itself forward.
+
+### AML statistic implemented and validated (2026-09-16/18, mentor mode — user-driven, reviewed/debugged with the assistant)
+
+The last deferred MicroSat statistic (Choisy et al. 2004, a 3-population
+admixture coefficient — structurally inapplicable to this project's
+2-population datasets until now) was picked up once a suitable
+3+-population dataset became available (`reference/toy_example1_ms_modified/`,
+4 real populations via a split/merge scenario — see "Serial/temporal
+sampling not supported" below for why the *original*, unmodified
+`toy_example1_ms` couldn't be used directly for this).
+
+**Naming trap caught before any code was written**: `statdefs.cpp`
+(`microsat_statns`/`dna_statns`) shows the MicroSat `"AML"` stat maps to
+`cal_Aml3p` (capital A, sumstat.cpp:1290-1326), while `cal_aml3p`
+(lowercase a, sumstat.cpp:2087-2154 — which calls `cal_freq`/
+`cal_nss2pl`/`libere_freq`, DNA-sequence-string-comparison machinery)
+is actually the function behind the DNA-sequence stat `"SML"`, not
+MicroSat at all. Following the "obvious" lowercase convention (matching
+this project's own file-naming style) would have implemented the wrong
+algorithm entirely. Confirmed by direct source reading before writing
+any Python, not by trial and error.
+
+**Algorithm** (`cal_Aml3p` + `pente_lik`, sumstat.cpp:1217-1288):
+bisection search over a mixture proportion `a ∈ [0.001, 0.998]`
+maximizing the likelihood of the "focal" population's genotypes
+(`samp[0]`) under the hypothesis that its allele frequencies are
+`a·freq[parent1] + (1-a)·freq[parent2]` (`samp[1]`, `samp[2]`) — three
+likelihood formulas depending on ploidy (haploid / homozygous diploid /
+heterozygous diploid), no pseudo-count (unlike LIK's `cal_lik2p` — a
+zero-frequency term is simply skipped, never replaced by `1/nal`). The
+bisection never evaluates `li(a)` across the whole range: it looks at
+the SIGN of the slope (finite difference `li(a+0.001)-li(a)`) at both
+bounds, with 3 boundary cases — flat everywhere → no information → draw
+a uniform random `a` (via a dedicated seed offset, `_LIKELIHOOD_SEED_
+OFFSET`, to stay reproducible without correlating with any other draw);
+slope always negative → `a=0.0`; always positive → `a=1.0`. Triplet
+ordering confirmed via `statdefs.cpp` (npop=3, `sortArr::HALF`) + the
+real header: for a sorted triple `{i,j,k}`, exactly `"i.j.k"`, `"j.i.k"`,
+`"k.i.j"` are generated — the leading index cycles (the "focal"
+population), the other two stay ascending (the two "parents") — this
+is exactly the same shape `_half_arrangements` (already used for the
+SNP-side `compute_AML`) already produces, reused as-is for the MicroSat
+triplet enumeration rather than reinventing the combinatorics.
+
+- **`_log_likelihood_admixture`**/**`_prepare_loci_for_admixture`**/
+  **`_pente_lik`**/**`_compute_AML_one_triplet`**/**`compute_AML_
+  microsat`** (`summary_statistics.py`) — the "brick" pattern used
+  throughout this project's stats code. A first, naive version
+  recomputed `_length_by_population`/`_genotypes_by_pop_and_individuals`
+  (the allele-frequency data) on EVERY evaluation of `a` — but `cal_
+  Aml3p` performs ~20 such evaluations per triplet (bisection over
+  ~998 candidate values, `log2(998)≈10` steps, 2 `pente_lik` calls per
+  step). Measured: 15.2s/particle before optimizing. Hoisting the
+  frequency computation out of the bisection loop
+  (`_prepare_loci_for_admixture`, computed once per triplet instead of
+  once per `a`-evaluation) brought this to 0.77s/particle — a ~20x
+  gain, consistent with the number of evaluations eliminated.
+- Several bugs caught during review, all by direct execution rather
+  than reading the diff: a stray extra loop (`for length in count_
+  parent1:`) wrapping the per-individual scoring block, inflating every
+  contribution by the number of distinct alleles at that locus instead
+  of counting each individual once; a missing `import random` and a
+  missing seed-offset constant in `configuration.py` (same recurring
+  pattern as the SNI channel's `_MICROSAT_SNI_SEED_OFFSET` incident);
+  reusing the SAME `_LIKELIHOOD_SEED_OFFSET`-derived seed across every
+  triplet of a group (would have made two triplets that both land in
+  the degenerate "flat" branch draw the IDENTICAL uniform value) —
+  fixed by varying the seed per triplet index within `compute_AML_
+  microsat`; and reusing the SAME seed across the two microsat groups
+  (G1/G2) of one particle — fixed with a `seed + group_number * 1000`
+  offset at the call site in `compute_all_statistics_microsat`.
+
+**Validated against a real DIYABC reftable**: 100% of AML columns match
+on `toy_example1_ms_modified` (1000 particles) — only the FST columns
+still diverge (see below). Confirms the algorithm, its triplet/seed
+wiring, and the C++ naming trap avoidance are all correct.
+
+### ReplayContext refactor — read header.txt/.snp/.mss once per run, not once per particle (2026-09-16/18, mentor mode — user-driven, reviewed/debugged with the assistant)
+
+Triggered by a genuine performance investigation (a `toy_example1_ms_
+modified` real-reftable replay was taking 20-40+ minutes, occasionally
+hanging outright) that turned out to have TWO unrelated root causes —
+see "Serial/temporal sampling" and the trailer-line bug below for the
+real cause of the hang. This refactor itself was found, by direct
+measurement, NOT to be the cause of that particular slowness (~7.6ms/
+particle of avoidable disk I/O, negligible against a 20+ minute hang) —
+but was pursued anyway as a real, independently-motivated cleanup, and
+is now complete for all three data families (SNP, MicroSat, DNA
+sequences).
+
+Three new dataclasses in `bridge/header_dataclasses.py` —
+`SnpReplayContext`, `MicrosatReplayContext`, `DnaReplayContext` — each
+built ONCE per `run_reftable_simulation*`/`replay_reftable_simulation*`
+call (not once per particle), holding every value previously obtained
+by re-reading `header.txt`/`.snp`/`.mss` from disk
+(`read_header_text`, `observed_microsatellites`/`observed_sequences`,
+`observed_count_population`, `parse_sex_ratio`, `parse_maf_ratio`,
+`parse_mrc_ratio`, `observed_reads`, `individual_sexes_per_population`,
+`detect_snp_file_type`...), then passed through `ProcessPoolExecutor.
+submit` to every particle instead of a raw `reference_directory`/
+`mss_file_path`/`snp_file_path`. Covers both the "draw fresh values"
+and `_from_values` (replay) path for all three families — 180 tests
+green, `ruff` clean.
+
+**Field selection principle, stated explicitly by the user querying
+each candidate field**: include a value in the context if and only if
+computing it involves an actual disk `read_text()` (directly or
+transitively) — NOT merely "does this value vary by locus/particle".
+`SnpReplayContext`'s `sexes_per_population` illustrates why the second
+criterion is wrong: unlike DNA/MicroSat's `individual_sexes_from_
+locus_genotype` (which must be recomputed per LOCUS, since sex is
+inferred from that locus's own genotype ploidy — caching it once
+dataset-wide would be meaningless), `.snp`'s `individual_sexes_per_
+population` reads a real SEX column, a single dataset-wide value with
+no locus dependence at all — so unlike the DNA/MicroSat `<X>`/`<Y>`
+case (where the "keep it simple, just pass the path through" choice
+was deliberately made because there was no cheap alternative), here
+caching it AND updating `build_sex_stratified_samples_argument`/
+`build_male_only_samples_argument` to consume it was both correct and
+cheap, and the "keep it simple" precedent did not apply. Conversely,
+`observed_reads`'s own internal `detect_snp_file_type`/`parse_mrc_
+ratio` calls (redundant with fields already in the context) were left
+alone after explicit discussion — real duplication, but happening once
+per RUN inside context construction itself, not once per particle, so
+below the threshold of what this refactor was for.
+
+**Bugs found in series while wiring this through — well beyond the 5
+already logged for MicroSat/DNA context work (see the [[feedback_
+signature_refactor_mismatch]] persistent-memory checklist)**:
+- `context.loci_desciption` (typo, missing the "r") in `pipeline.py::
+  _simulate_genotypes_for_all_locus_types` — `AttributeError`.
+- `context, context,` — a duplicated positional argument in
+  `replay_reftable_simulation`'s `executor.submit(_run_single_particle_
+  from_values, ...)` call, shifting every subsequent positional
+  argument by one slot.
+- `haploid_pool_sizes`/`pool_sizes` built from `context.count_samples`
+  used AS-IS (real `.snp` population names as keys) instead of
+  translated to msprime's `"pop1"/"pop2"` convention — what `build_
+  samples_argument` used to do internally before this refactor.
+  `msprime.Demography` only recognizes `"pop1"/"pop2"`, so this
+  produces `KeyError: "Population with name '<real name>' not found"`
+  downstream — the SAME error class as the serial-sampling limitation
+  below, different root cause. Found and fixed independently at two
+  call sites (`ancestry_simulation.py::simulate_poolseq_reads_with_mrc_
+  filter` and `pipeline.py::compute_summary_statistics`), both needing
+  the same `{f"pop{i}": count for i, count in enumerate(context.count_
+  samples.values(), 1)}` translation.
+- **A real bug in production code, invisible to the full test suite**:
+  `run_reftable_simulation`'s context construction had `reads_observed
+  = None` hardcoded — none of the 5 existing `run_reftable_simulation`
+  calls in `tests/test_reftable_loop.py` exercise a PoolSeq dataset
+  (all use `human`, IndSeq), so 180/180 tests stayed green while this
+  path was fully broken. Only caught by directly executing `run_
+  reftable_simulation` against `toy_example4` (a real PoolSeq
+  reference dataset) — `TypeError: 'NoneType' object is not iterable`.
+  Fixed in two passes: first by computing `reads_observed` unconditionally
+  (broke `human`/IndSeq instead, since `observed_reads` explicitly
+  rejects any non-POOLSEQ file); then by gating it on `snp_file_type ==
+  "POOL"` but using the function's own `num_loci` parameter (can be a
+  small testing value) instead of `loci_description.loci_counts_by_
+  heritage["A"]` (the real declared count) — `RuntimeError: generator
+  raised StopIteration` in `with_mrc_filter` from premature pool
+  exhaustion. A reminder that "N tests pass" only proves what those N
+  tests actually exercise, not the untested branches.
+- A test that writes a modified `header.txt` to a `tmp_path` and
+  expects the function under test to pick it up
+  (`test_compute_summary_statistics_stats_filter_header`) broke for a
+  structural reason, not a typo: before this refactor, `compute_
+  summary_statistics` re-read `header.txt` from disk on every call, so
+  "write a new file, then call the function on that directory" worked.
+  Now that everything flows through `context.header_text` (read once,
+  never re-read), that technique silently uses the ORIGINAL, unmodified
+  header — the fix is to build a fresh `SnpReplayContext` with the
+  modified `header_text` rather than reuse an existing context
+  unchanged. Worth remembering for any other test in this codebase that
+  mutates the observed environment on disk and expects a fresh read.
+- Three `conftest.py` fixtures (`snp_context_human`/`_te4`/`_te5`)
+  shared two copy-pasted bugs: `maf_ratio`/`mrc_ratio` hardcoded to
+  `None` instead of calling `parse_maf_ratio`/`parse_mrc_ratio`; and
+  `header_text=header_text` — referencing the WRONG name (each
+  fixture's own parameter is `header_text_te4`/`header_text_te5`, not
+  bare `header_text`, which happens to collide with an unrelated
+  module-level fixture defined for `human`) — a pytest fixture
+  referenced by its bare (undecorated) name resolves to the fixture
+  FUNCTION OBJECT, not its value, producing `AttributeError:
+  'FixtureFunctionDefinition' object has no attribute 'splitlines'`
+  deep inside unrelated parsing code. `snp_context_human` itself
+  initially had no `return` statement at all (computed every field,
+  returned nothing) — a bare Python fixture without `return` resolves
+  to `None`, caught via `AttributeError: 'NoneType' object has no
+  attribute 'header_text'`.
+
+**Two `headerRF.txt` trailer-line bugs found and fixed on `toy_example1_
+ms_modified/`, same class as [[diyabc_header_trailer_line_bug]]**: the
+file's last line (re-read as INPUT by the real DIYABC binary to derive
+`nparamhist`, despite looking like pure output-column documentation)
+still declared the 3 historical parameter names of the *original*,
+unmodified `toy_example1_ms` (`Npast Npresent tbn`) instead of the 9
+real ones (`N1 N2 N3 N4 t423 ra t32 t21 t421`) — corrupting the real
+DIYABC binary's own `nparamhist` and producing nonsensical replayed
+values (`ra=512.0` against a declared `[0.05,0.95]` prior). Fixed once,
+then a SECOND time after `headerRF.txt` was edited again post-regeneration
+without rerunning the real `diyabc` binary — caught both times by
+comparing `stat -c '%y %n'` on `headerRF.txt` vs `first_records_of_the_
+reference_table_0.txt` (the real reftable must always be NEWER than the
+header it was generated from, never the reverse).
+
+### FST microsat investigation — redirected toward `<M>` genealogy structure, not the formula (2026-09-18)
+
+Builds on "MicroSat stats cross-validated against a real reftable"
+above (`FST` diverging ~1.8-2x, SNI and admixture both ruled out,
+formula reverified 4 times with no bug found). `toy_example1_ms_
+modified`'s 4 real populations finally gives the resolution needed to
+separate `<A>` from `<M>`, impossible on every previously-available
+2-population dataset (where all FST pairs collapse into a single
+averaged value): all 12 FST columns (6 `<A>` group G1, 6 `<M>` group
+G2) diverge significantly, but at two sharply separated magnitudes —
+`KS≈0.37-0.46` for `<A>` (consistent with the already-documented
+~1.8-2x gap), `KS≈0.71-0.77` for `<M>` (roughly double, zero overlap
+between the two groups of values). `FST_2_1.2` (`<M>`)'s `describe()`:
+`msprime` median **negative** (-0.005, half the 1000 particles below
+zero), mean 0.0096, std 0.050 — vs. DIYABC's median 0.111, mean 0.149,
+std 0.118. The whole `msprime` distribution is shifted toward zero, not
+a handful of outliers dragging the mean.
+
+**Formula reverified a 5th time, this time via an executed synthetic
+test rather than another line-by-line reading**:
+`_compute_ni_nA_AA_for_one_population`/`_compute_FST_constants_for_two_
+populations_combined` on two hand-built cases. Complete differentiation
+(pop A = 100% allele 10, pop B = 100% allele 12, 4 haploid individuals
+each) → `FST=1.0` exactly, as expected. Partial differentiation (pop A
+= 3×10+1×12, pop B = 2×10+2×12) → `FST=-0.16667` exactly, matching a
+manual term-by-term derivation of `cal_Fst2p` on the same case —
+confirms a negative FST is a LEGITIMATE, expected property of the Weir
+& Cockerham estimator at low observed differentiation, not a bug in
+either implementation.
+
+**Consequence**: since the formula is verified correct even at this
+edge case, the deficit can no longer be attributed to the statistic's
+computation — the `<M>` populations our pipeline SIMULATES must
+genuinely carry less differentiation than DIYABC's. Since HET/AML
+(which only depend on each population's own marginal allele
+frequencies, never on cross-population correlation) match well on this
+same `<M>` group, the marginal frequencies are right on average, but
+something in the POPULATION STRUCTURE carried by the shared `<M>`
+genealogy (`_SHARED_M_ANCESTRY_SEED_OFFSET`, confirmed present and
+correctly wired) produces less between/within-population signal than
+DIYABC's real genealogy. Open, unverified hypothesis for a future
+session: `ms_dna_ancestry_parameters_for_heritage`/`rescale_demography`
+for `<M>`, specifically its interaction with a 4-population scenario's
+split/admixture events — never exercised before with a real multi-
+population `<M>` dataset (the only other `<M>` dataset, `toy_example2_
+ms_dna`, has just 2 populations and its FST-tested group is `<A>`-only).
+
+### Serial/temporal sampling not supported (identified 2026-09-17, not started)
+
+`reference/toy_example1_ms/` (the *original*, unmodified dataset —
+distinct from `toy_example1_ms_modified/` used for AML/FST above)
+samples a SINGLE biological population at 4 different times (`0 sample
+1`, `50 sample 1`, `200 sample 1`, `500 sample 1` — the `1` is always
+the same population index throughout the header), but `.mss`/the
+summary-statistics machinery treat these 4 temporal samples as 4
+distinct populations `pop1`..`pop4` (4 separate `POP` blocks in the
+`.mss` file). Confirmed by direct execution: `demography_builder.py`
+builds a `Demography` with a single msprime population (`"pop1"`) from
+the scenario's own events, while `observed_count_population` on the
+`.mss` finds 4 — `msprime.sim_ancestry` then rejects the 4-entry
+`samples=` with `KeyError: "Population with name 'pop2' not found"`
+(a `msprime.Demography.__getitem__` error, `demography.py:970` — not
+raised by this project's own code).
+
+Not a quick fix: DIYABC numbers every temporal sample as if it were its
+own population throughout `header.txt` (priors, stats), while the
+underlying genealogy is a single population sampled at multiple
+`time=` values. Reproducing this would need `sim_ancestry` to receive
+several `SampleSet`s at different times but all attached to the SAME
+msprime population, plus every summary-statistics function to treat
+those temporal samples as distinct "virtual populations" for
+computation purposes (matching what DIYABC itself does) — none of this
+exists in the pipeline today. Worked around for AML validation by using
+`toy_example1_ms_modified` (genuinely 4 distinct populations, same
+statistics) instead of solving this. A real architecture chantier, not
+started.
+
+### Simplified substitution model for low sequence counts (mentioned 2026-09-18, not yet located in the C++ source)
+
+Flagged by the user at the close of this session: DIYABC reportedly
+switches to a simplified substitution model below some threshold of
+variable sites or individuals (too few sequences to support the full
+model). Not yet located in the C++ source — no function/line identified
+at this point; likely candidates to check first are `data.cpp`'s
+`do_sequence`/`cal_numvar`, or wherever `dnavar` gets computed (see
+"DNA sequence substitution model" below for context on `dnavar`'s
+existing, unrelated role in this codebase). This pipeline
+(`bridge/ancestry_simulation.py`) currently has no special-case logic
+of this kind at all — whether this represents a real, exercised gap
+(and on which of this project's reference datasets, if any) still needs
+confirming before implementing anything.
 
 ### DNA sequence substitution model (started 2026-07-29, mutation placement done 2026-07-31)
 

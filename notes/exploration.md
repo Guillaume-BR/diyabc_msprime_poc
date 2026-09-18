@@ -1387,3 +1387,259 @@ Chantier mis de côté volontairement le 2026-09-14 plutôt que de
 continuer à deviner sans nouvelle piste — voir `CLAUDE.md` pour le
 détail complet des tests.
 
+## 2026-09-15 — SNI implémenté : le fossé FST confirmé indépendant de SNI, et un vrai coût de performance (~34x)
+
+Chantier repris pour lever le doute une bonne fois : plutôt que de se
+contenter de la falsification indirecte du 2026-09-14 (forcer SNI≈0
+côté vrai DIYABC), on a implémenté le canal SNI réel dans notre propre
+pipeline pour voir si l'écart FST se referme quand SNI existe vraiment
+de notre côté.
+
+Mécanisme (`particuleC.cpp::mute`) : un seul processus de Poisson
+combiné à taux `mut_rate+sni_rate`, chaque événement classé par un
+tirage de Bernoulli (`p_sni = sni_rate/(sni_rate+mut_rate)`) en pas GSM
+(`±d×motif_size`) ou pas SNI (`±1`pb, indépendant de `motif_size`),
+tous deux bornés à `[kmin,kmax]` avec repli en auto-mutation aux bords.
+Contrairement à GSM seul (qui ne visite jamais que les états de la
+classe de résidu de `root` modulo `motif_size`, d'où une seule grille
+`msprime.TPM` espacée de `motif_size` suffisante), SNI peut faire
+changer de classe de résidu — il faut donc une grille DENSE (tous les
+entiers de `kmin` à `kmax`), construite à la main (`bridge/ancestry_
+simulation.py`, nouvelles fonctions `_distribution_from_position`/
+`_place_gsm_row_on_dense_grid`/`_sni_row_on_dense_grid`/`_mix_sni_gsm_
+rows`/`build_microsat_transition_matrix_with_sni`).
+
+Plusieurs bugs trouvés et corrigés en cours de route (détail complet,
+formules et bricks dans `CLAUDE.md`, section "SNI mutation channel") :
+un décalage d'arguments qui sautait purement et simplement l'appel à
+`_distribution_from_position` (`ZeroDivisionError`, révélé aussi par un
+`epsilon` non utilisé signalé par le linter), plusieurs confusions
+entre l'indice LOCAL d'un état (échelle `motif_size`) et sa distance
+brute à `kmin` (échelle 1pb) dans le placement sur la grille dense, et
+un oubli du `- kmin` dans `_sni_row_on_dense_grid` (`IndexError`
+immédiat dès que `kmin != 0`, donc sur tout jeu de données réel).
+Méthode de validation notable : comparer la matrice dense (`sni_rate=
+0`) à l'ancienne `build_microsat_transition_matrix` n'est PAS une
+comparaison de même forme (grilles de tailles différentes par
+construction) — il faut extraire, de la matrice dense, seulement les
+lignes/colonnes des états que l'ancienne grille sait représenter (via
+`old_model.alleles`, déjà calculé et testé), pas recalculer `root`/
+`n_minus` en double dans le test.
+
+**Coût de performance réel et significatif, diagnostiqué mais pas
+encore corrigé** : le reftable complet de `toy_example2_ms_dna` passe
+de ~15s (GSM seul) à ~512s (GSM+SNI) — un facteur ~34×. Cause : la
+nouvelle fonction reconstruit un `msprime.TPM` complet PAR ÉTAT de la
+grille dense (`kmax-kmin+1` appels), alors que l'ancienne n'en
+construit qu'UN SEUL pour tout le locus — cohérent quantitativement
+avec le facteur observé (`~4n` pour `motif_size=2`, soit ~30-40× pour
+un `n≈40` typique). Compromis assumé au départ (réutiliser `msprime.
+TPM` état par état plutôt que rederiver la formule géométrique à la
+main, pour éviter un nouveau bug de formule) dont le coût réel s'avère
+plus élevé que prévu — piste d'optimisation la plus directe : calculer
+la décroissance géométrique + repli aux bords sous forme close, sans
+repasser par `msprime.TPM` du tout sur ce chemin. Laissé pour une
+session dédiée, ce n'est pas un problème de correction.
+
+**Résultat sur `FST`** : une fois SNI branché dans le pipeline
+(`build_matrix_microsat_per_locus`/son jumeau `_from_values`), le
+rejeu complet contre le vrai reftable `toy_example2_ms_dna` donne
+`FST_1_1.2` KS≈`0.2643` (`p≈0.0`) — quasiment identique au `KS≈0.245`
+d'avant SNI. Ça confirme, cette fois directement (et pas seulement par
+la falsification indirecte du 2026-09-14), que SNI n'est pas la cause
+de l'écart FST — deux tests indépendants et complémentaires (retirer
+SNI des données réelles, ajouter SNI à notre simulation) pointent
+maintenant dans le même sens. `DM2` montre un léger bruit non
+significatif (`KS≈0.0439`, `p≈0.4689`), rien d'inquiétant. Le chantier
+FST reste ouvert exactement comme documenté le 2026-09-14 (piste ANOVA
+`MSG`/`MSI`/`MSP` non explorée) — ce résultat retire SNI de la liste
+des suspects avec beaucoup plus de confiance, sans faire avancer
+l'investigation elle-même.
+
+## 2026-09-16 — Optimisation du canal SNI : ~34x → ~1.5x
+
+Le ralentissement diagnostiqué la veille (`_distribution_from_position`
+reconstruit un `msprime.TPM` complet PAR ÉTAT de la grille dense) a été
+corrigé, sans passer par la piste initialement envisagée (rederiver la
+formule géométrique à la main) — une piste plus simple, trouvée en
+repartant d'une identité déjà établie la veille pendant la vérification
+de l'équivalence `sni_rate=0` : pour deux états `s` et `s+motif_size`
+(même classe de résidu modulo `motif_size`), `n_minus`/`n_plus` varient
+chacun d'exactement `±1`, donc `n_alleles = n_minus+n_plus+1` est
+CONSTANT à l'intérieur d'une classe de résidu — mais diffère D'UNE
+classe à l'autre (vérifié : `kmin=80,kmax=120,motif_size=2` donne
+`n_alleles=21` pour tous les états pairs, `20` pour tous les impairs).
+Conséquence directe : il ne faut que `motif_size` matrices `msprime.
+TPM` distinctes pour tout le locus (une par classe de résidu, chacune
+avec son propre `hi`), pas une par état de la grille dense.
+
+Deux bugs trouvés en cours d'implémentation (par exécution directe) :
+un dict de matrices d'abord construit avec le mauvais `hi` (taille de
+la grille DENSE au lieu de la taille propre à chaque classe) et indexé
+par l'indice DENSE au lieu du résidu — ne changeait donc rien au
+problème ; puis, une fois le dict corrigé, la boucle principale
+réutilisait par erreur la variable `i` de la boucle précédente
+(construction du dict) au lieu de calculer `residue = (position-kmin) %
+motif_size` — `KeyError` dès que l'indice dense dépassait `motif_size`.
+
+Une faiblesse de test repérée au passage : `test_distribution_from_
+position` construisait sa matrice de test avec un `hi` correspondant à
+la MAUVAISE classe de résidu par rapport à la `position` testée — invisible
+car les seules assertions (forme, somme=1) sont vraies pour n'importe
+quelle ligne de n'importe quelle matrice stochastique, peu importe la
+classe. Résolu en réalisant que `_distribution_from_position` n'a plus
+aucune responsabilité sur la construction de la matrice (elle se contente
+d'indexer `transition_matrix[n_minus]`) — son test n'a donc même plus
+besoin d'un vrai `msprime.TPM`, une matrice factice avec des lignes
+identifiables suffit à isoler proprement ce qu'elle fait réellement.
+
+**Résultat mesuré** : le rejeu complet de `toy_example2_ms_dna` passe de
+~512s à **~23s** (un facteur ~22x d'amélioration), soit ~1.5x le temps
+d'avant SNI (~15s) — pas 1x pile, puisque construire 2 matrices au lieu
+d'1 coûte un peu plus, mais la construction de matrice ne représente
+qu'une fraction du coût total d'une particule. `FST`/`DM2` rejoués sur
+cette version optimisée donnent des valeurs identiques à avant
+(`FST_1_1.2` KS≈0.2643, `DM2` KS≈0.0439) — l'optimisation n'a rien
+changé à la correction, seulement à la vitesse.
+
+## 2026-09-16/18 — AML implémentée et validée ; piège de casse `cal_Aml3p`/`cal_aml3p`
+
+Dataset adapté enfin disponible (`toy_example1_ms_modified`, 4
+populations réelles issues d'un scénario split/merge — `toy_example1_ms`
+non modifié n'a qu'une population échantillonnée à 4 temps, voir plus
+bas). Avant tout code, lecture directe de `sumstat.cpp`/`statdefs.cpp`
+pour localiser la bonne fonction — et trouvaille immédiate, le genre
+d'écueil qui aurait fait perdre une session entière si on avait suivi
+la convention de casse "naturelle" du reste du projet :
+
+`statdefs.cpp` (`microsat_statns`/`dna_statns`) montre que la stat
+MicroSat `"AML"` pointe vers `cal_Aml3p` (A **majuscule**,
+sumstat.cpp:1290-1326), alors que `cal_aml3p` (a **minuscule**,
+sumstat.cpp:2087-2154, qui appelle `cal_freq`/`cal_nss2pl`/
+`libere_freq` — toute la mécanique de comparaison de séquences ADN) est
+en réalité la fonction de la stat `"SML"` côté **DNA** (pas microsat du
+tout). Suivre la casse minuscule "logique" (cohérente avec le style du
+reste du fichier) aurait fait partir l'implémentation sur la mauvaise
+fonction, avec une logique de comparaison de chaînes n'ayant aucun
+rapport avec un calcul d'admixture par fréquences alléliques.
+
+**Algorithme de `cal_Aml3p`** (avec `pente_lik`, sumstat.cpp:1217-1288) :
+recherche par bissection du taux de mélange `a ∈ [0.001, 0.998]`
+maximisant la vraisemblance des génotypes de la population "focale"
+(`samp[0]`) sous l'hypothèse que ses fréquences alléliques sont
+`a·freq[parent1] + (1-a)·freq[parent2]` (`samp[1]`, `samp[2]`) — 3
+formules de vraisemblance selon la ploïdie (haploïde / diploïde
+homozygote / hétérozygote), pas de pseudo-compte (contrairement à
+`cal_lik2p`/LIK — un terme à fréquence nulle est simplement omis, pas
+remplacé par un pseudo-compte `1/nal`). La bissection ne calcule jamais
+`li(a)` pour toutes les valeurs de `a` : elle regarde le SIGNE de la
+pente (différence finie `li(a+0.001)-li(a)`) aux deux bornes, avec 3 cas
+limites — pente nulle partout → aucune information → tirage aléatoire
+uniforme(0,1) ; pente toujours négative → `a=0.0` ; toujours positive →
+`a=1.0`. Convention d'indices confirmée par `statdefs.cpp` (npop=3,
+`sortArr::HALF`) + le header : pour un triplet `{i,j,k}` trié, on génère
+`"i.j.k"`, `"j.i.k"`, `"k.i.j"` — le premier indice cycle (focal), les
+deux autres restent toujours en ordre croissant (parents) — exactement
+la même structure que `_half_arrangements` (déjà utilisée pour la
+version SNP de AML, `compute_AML`), directement réutilisable pour
+énumérer les triplets côté microsat sans réinventer la combinatoire.
+
+**Optimisation, pas juste une implémentation directe** : la première
+version recalculait `_length_by_population`/`_genotypes_by_pop_and_
+individuals` (donc les fréquences alléliques) à CHAQUE évaluation de
+`a` — or `cal_Aml3p` en fait ~20 par triplet (bissection sur ~998
+valeurs possibles, `log2(998)≈10` étapes, 2 évaluations de `pente_lik`
+par étape). Mesuré : 15.2s/particule avant optimisation. Hisser le
+calcul de fréquences hors de la boucle de bissection
+(`_prepare_loci_for_admixture`, calculé une fois par triplet plutôt
+qu'une fois par évaluation de `a`) donne 0.77s/particule — un facteur
+~20x, cohérent avec le nombre d'évaluations éliminées.
+
+**Validation contre un vrai reftable DIYABC** : 100% des colonnes AML
+concordent sur `toy_example1_ms_modified` (1000 particules) — seules
+les colonnes FST divergent (voir section suivante). Confirme que
+l'algorithme et son branchement (triplets, seed par triplet ET par
+groupe pour éviter une corrélation entre deux groupes tombant tous les
+deux dans le cas dégénéré — même classe de bug que documenté ailleurs
+dans ce fichier pour les tirages de groupe) sont corrects.
+
+## 2026-09-18 — FST microsat : nouvelle résolution grâce à 4 populations, piste redirigée vers la généalogie `<M>`
+
+Jusqu'ici, l'investigation FST (voir plus haut, entrées du 2026-09-14/15)
+n'avait accès qu'à des datasets à 2 populations, où toutes les paires
+FST sont écrasées en une seule valeur moyenne — impossible de savoir si
+le déficit touchait `<A>` et `<M>` de façon uniforme. Avec
+`toy_example1_ms_modified` (4 populations réelles, 12 colonnes FST : 6
+`<A>` groupe G1, 6 `<M>` groupe G2), la réponse est nette : les 12
+colonnes divergent TOUTES significativement, mais à deux amplitudes
+très différentes et parfaitement séparées — KS≈0.37-0.46 pour les 6
+`<A>` (cohérent avec l'ancien ~1.8-2x déjà documenté sur
+`toy_example2_ms_dna`), KS≈0.71-0.77 pour les 6 `<M>` (quasiment le
+double, aucun chevauchement entre les deux groupes de valeurs).
+
+`describe()` sur `FST_2_1.2` (`<M>`) : médiane `msprime` **négative**
+(-0.005, la moitié des 1000 particules sous zéro), moyenne 0.0096,
+écart-type 0.050 — contre médiane 0.111, moyenne 0.149, écart-type 0.118
+côté DIYABC réel. La distribution `msprime` entière est décalée vers
+zéro, pas quelques particules aberrantes qui tirent la moyenne.
+
+**Formule revérifiée une 5ᵉ fois**, cette fois avec un test synthétique
+exécuté (pas seulement relu) plutôt qu'une relecture terme à terme
+de plus : `_compute_ni_nA_AA_for_one_population`/`_compute_FST_
+constants_for_two_populations_combined` appliqués à deux cas construits
+à la main. Différenciation complète (pop A = 100%×allèle 10, pop B =
+100%×allèle 12, 4 individus haploïdes chacune) → `FST=1.0` exact,
+comme attendu. Différenciation partielle (pop A = 3×10+1×12, pop B =
+2×10+2×12) → `FST=-0.16667` exact, qui correspond à une dérivation à la
+main de `cal_Fst2p` terme à terme sur ce même cas — confirme qu'**un
+FST négatif est un comportement légitime et attendu de l'estimateur de
+Weir & Cockerham** à faible différenciation observée (pas un bug de
+notre implémentation, ni de DIYABC).
+
+**Conséquence pour l'investigation** : si la formule est vérifiée
+correcte même dans ce cas limite (négatif), alors le déficit ne peut
+plus être imputé au calcul de la statistique elle-même — il faut que
+les populations `<M>` SIMULÉES par notre pipeline aient réellement
+moins de différenciation entre elles que celles de DIYABC. Or HET/AML
+(qui ne dépendent que des fréquences alléliques marginales par
+population, jamais de la corrélation entre populations) collent bien
+sur ce même groupe `<M>` — donc les fréquences alléliques globales sont
+correctes en moyenne, mais quelque chose dans la STRUCTURE DE
+POPULATION portée par la généalogie `<M>` partagée
+(`_SHARED_M_ANCESTRY_SEED_OFFSET`, vérifiée présente et correctement
+câblée dans le code) produit moins de signal between/within-population
+que la vraie généalogie DIYABC. Nouvelle piste, pas encore vérifiée :
+`ms_dna_ancestry_parameters_for_heritage`/`rescale_demography` pour
+`<M>`, en particulier leur interaction avec les événements
+split/admixture d'un scénario à 4 populations — jamais testée avant
+avec un vrai `<M>` multi-populations (le seul autre dataset avec `<M>`,
+`toy_example2_ms_dna`, n'a que 2 populations et son groupe FST-testé
+est `<A>`-only).
+
+## 2026-09-17/18 — Échantillonnage sériel : limitation d'architecture confirmée, pas encore résolue
+
+`toy_example1_ms` (non modifié, avant d'être adapté en
+`toy_example1_ms_modified` pour AML) échantillonne une SEULE population
+biologique à 4 temps différents (`0 sample 1`, `50 sample 1`, `200
+sample 1`, `500 sample 1` — le `1` est toujours le même indice de
+population dans le header), mais le `.mss`/les statistiques traitent
+ces 4 échantillons comme 4 "populations" `pop1`..`pop4` distinctes (4
+blocs `POP` dans le fichier). Confirmé par exécution directe :
+`demography_builder.py` ne construit qu'UNE population msprime
+(`"pop1"`) à partir des événements du scénario, alors que
+`observed_count_population` sur le `.mss` en trouve 4 — `msprime.sim_
+ancestry` rejette alors le `samples=` à 4 entrées avec `KeyError:
+"Population with name 'pop2' not found"` (`demography.py:970`, erreur
+native msprime, pas la nôtre).
+
+Ce n'est pas un bug ponctuel : DIYABC numérote chaque prélèvement
+temporel comme une population distincte dans tout `header.txt` (priors,
+stats), mais côté généalogie c'est une seule population, échantillonnée
+à plusieurs `time=`. Pour le reproduire, `sim_ancestry` devrait recevoir
+plusieurs `SampleSet` à des temps différents mais tous rattachés à LA
+MÊME population msprime, puis les statistiques devraient traiter ces
+échantillons temporels comme des "populations" virtuelles distinctes —
+aucun morceau de ce mécanisme n'existe aujourd'hui dans le pipeline.
+Contourné cette session en travaillant sur `toy_example1_ms_modified`
+(vraies populations distinctes, mêmes stats) plutôt que résolu.
+
