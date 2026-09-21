@@ -3085,7 +3085,7 @@ def _compute_ni_nA_AA_for_one_population(
             - AA est le nb d'individus dont les deux éléments d ela paire valent al
     """
     ni = len(pairs)
-    nA = sum((p[0] == al) + (p[1] == al) for p in pairs)
+    nA = sum(int(p[0] == al) + int(p[1] == al) for p in pairs)
     AA = sum(1 for p in pairs if p[0] == al and p[1] == al)
     return ni, nA, AA
 

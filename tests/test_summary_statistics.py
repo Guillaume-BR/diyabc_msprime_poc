@@ -1317,7 +1317,12 @@ def test_length_by_pop_and_individuals(microsat_context_te2_xy):
 
 def test_compute_ni_nA_AA_for_one_population():
     """Vérifie que la fonction _compute_ni_nA_AA_for_one_population fonctionne correctement."""
-    alleles_per_individual = [(203, 203), (203, 203), (203, 193), (203, 203)]
+    alleles_per_individual = [
+        np.int64([203, 203]),
+        np.int64([203, 203]),
+        np.int64([203, 193]),
+        np.int64([203, 203]),
+    ]
 
     ni, nA, AA = _compute_ni_nA_AA_for_one_population(alleles_per_individual, 203)
 
@@ -1388,6 +1393,41 @@ def test_compute_FST(microsat_context_te2_xy):
     results = compute_FST(mutated.values(), population_names)
 
     assert pytest.approx(results["1.2"]) == 0.03084132131276057
+
+
+def test_compute_FST_vs_scikit_allel(microsat_context_te1_modified):
+    allel = pytest.importorskip("allel")
+    demography, _ = build_random_demography_for_scenario_index(
+        microsat_context_te1_modified.header_text, scenario_index=1, seed=42
+    )
+    mutated = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        context=microsat_context_te1_modified,
+        seed=42,
+    )
+    list_loci = microsat_context_te1_modified.list_loci
+    g1 = [mutated[locus.name] for locus in list_loci if locus.group == "G1"]
+    ours = compute_FST(g1, ["pop1", "pop2", "pop3", "pop4"])["1.2"]
+    A = B = C = 0.0
+    for ts in g1:
+        if ts.num_sites == 0:
+            continue
+        v = next(ts.variants())
+        codes = v.genotypes
+        inds = list(ts.individuals())
+        G = np.array([[[codes[n] for n in ind.nodes] for ind in inds]])
+        pop_of_ind = [ts.node(ind.nodes[0]).population for ind in inds]
+        sub = [
+            [i for i, p in enumerate(pop_of_ind) if p == 0],
+            [i for i, p in enumerate(pop_of_ind) if p == 1],
+        ]
+        a, b, c = allel.weir_cockerham_fst(
+            allel.GenotypeArray(G), subpops=sub, max_allele=int(codes.max())
+        )
+        A += a.sum()
+        B += b.sum()
+        C += c.sum()
+    assert ours == pytest.approx(A / (A + B + C), abs=1e-9)
 
 
 # tests relatif à la stat LIK

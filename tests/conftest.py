@@ -114,6 +114,12 @@ def header_text_te1() -> str:
 
 
 @pytest.fixture
+def header_text_te1_modified() -> str:
+    path_te1 = REFERENCE_DIR.parent / "toy_example1_ms_modified" / "headerRF.txt"
+    return path_te1.read_text()
+
+
+@pytest.fixture
 def header_text_te2() -> str:
     path_te2 = REFERENCE_DIR.parent / "toy_example2_ms_dna" / "headerRF.txt"
     return path_te2.read_text()
@@ -244,4 +250,19 @@ def microsat_context_te2_xy(header_text_te2_XY) -> MicrosatReplayContext:
         bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
         samples_default=observed_count_population(OBSERVED_MSS_FILE_TE2_XY),
         sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE2_XY),
+    )
+
+
+@pytest.fixture
+def microsat_context_te1_modified(header_text_te1_modified) -> MicrosatReplayContext:
+    list_loci = parse_loci_description(header_text_te1_modified)
+    microsat_observed = observed_microsatellites(OBSERVED_MSS_FILE_TE1, list_loci)
+    return MicrosatReplayContext(
+        header_text=header_text_te1_modified,
+        mss_path=OBSERVED_MSS_FILE_TE1,
+        list_loci=list_loci,
+        microsat_observed=microsat_observed,
+        bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
+        samples_default=observed_count_population(OBSERVED_MSS_FILE_TE1),
+        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE1),
     )
