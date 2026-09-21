@@ -77,10 +77,16 @@ class) instead of one per dense-grid state — see "SNI mutation
 channel" below. As of 2026-09-18, the three-population `AML` stat
 (previously deferred for lack of a 3+-population dataset) is
 implemented and validated 100% against a real DIYABC reftable — see
-"AML statistic implemented and validated" below; `FST` remains the one
-outstanding MicroSat stat gap, its investigation now redirected toward
-the `<M>` genealogy's population structure rather than the formula
-itself (see "FST microsat investigation" below). Also as of 2026-09-18,
+"AML statistic implemented and validated" below. The last MicroSat
+stat gap, `FST` (~2x too low since 2026-09-14, worse on `<M>`), was
+resolved 2026-09-21: not the genealogy, not admixture, not the formula
+— a one-line numpy dtype trap (`np.bool_ + np.bool_` is a logical OR)
+undercounting homozygotes; all 11 MicroSat stats now match real DIYABC
+output within noise, with or without admixture — see "RESOLVED
+2026-09-21: FST microsat gap" below, which also records a second bug
+found and fixed the same day: the real-reftable text readers assumed
+column order == prior declaration order, whereas DIYABC writes them in
+trailer-line order (`_historical_columns_order`). Also as of 2026-09-18,
 `header.txt`/`.snp`/`.mss` are read once per whole run rather than once
 per particle across SNP, MicroSat, and DNA sequences alike (see
 "ReplayContext refactor" below) — and two further gaps were identified
@@ -1173,6 +1179,14 @@ levels being generally in the right ballpark. Deliberately shelved
 2026-09-14 rather than guessing further without new evidence — pick up
 as a dedicated investigation, not a quick fix.
 
+**RESOLVED 2026-09-21** — see "RESOLVED 2026-09-21: FST microsat gap"
+below. The "ANOVA decomposition" intuition above was pointing at the
+right function for the wrong reason: the formula was fine, its inputs
+were `np.int64` and `np.bool_ + np.bool_` is a logical OR. The
+`scikit-allel` disagreement recorded just above was the actual
+smoking gun and should have been chased first, not filed as evidence
+of "a genuine discrepancy".
+
 **Resolved 2026-09-15**: SNI itself is now implemented — see "SNI
 mutation channel" below. Confirms, directly rather than by proxy, that
 SNI is NOT the cause of the `FST` gap: with SNI actually wired into our
@@ -1419,11 +1433,11 @@ to SNI by two independent, complementary tests (removing SNI from the
 real data, and adding SNI to our simulation), not just one. `DM2`
 showed a small, non-significant wobble (`KS≈0.0439`, `p≈0.4689`) — well
 within normal run-to-run sampling noise, not a regression. The `FST`
-root cause remains exactly as open as documented in "MicroSat stats
-cross-validated against a real reftable" above (ANOVA variance-
-components decomposition, the one remaining unexplored hypothesis) —
-this result removes SNI from consideration with much stronger
-confidence, but doesn't move the investigation itself forward.
+root cause was still open at this point — this result removed SNI
+from consideration with much stronger confidence, but didn't move the
+investigation itself forward. (Resolved 2026-09-21: a numpy
+bool-addition bug in `_compute_ni_nA_AA_for_one_population`'s inputs —
+see "RESOLVED 2026-09-21: FST microsat gap" below.)
 
 ### AML statistic implemented and validated (2026-09-16/18, mentor mode — user-driven, reviewed/debugged with the assistant)
 
@@ -1497,8 +1511,9 @@ triplet enumeration rather than reinventing the combinatorics.
   offset at the call site in `compute_all_statistics_microsat`.
 
 **Validated against a real DIYABC reftable**: 100% of AML columns match
-on `toy_example1_ms_modified` (1000 particles) — only the FST columns
-still diverge (see below). Confirms the algorithm, its triplet/seed
+on `toy_example1_ms_modified` (1000 particles) — at the time, only the
+FST columns still diverged (resolved 2026-09-21, see "RESOLVED
+2026-09-21: FST microsat gap" below). Confirms the algorithm, its triplet/seed
 wiring, and the C++ naming trap avoidance are all correct.
 
 ### ReplayContext refactor — read header.txt/.snp/.mss once per run, not once per particle (2026-09-16/18, mentor mode — user-driven, reviewed/debugged with the assistant)
@@ -1631,52 +1646,179 @@ comparing `stat -c '%y %n'` on `headerRF.txt` vs `first_records_of_the_
 reference_table_0.txt` (the real reftable must always be NEWER than the
 header it was generated from, never the reverse).
 
-### FST microsat investigation — redirected toward `<M>` genealogy structure, not the formula (2026-09-18)
+### RESOLVED 2026-09-21: FST microsat gap — a numpy bool-addition bug, not the genealogy, not the formula (investigated 2026-09-14/18, fixed by the user 2026-09-21, commits `30fa872` + `b8b0657`)
 
-Builds on "MicroSat stats cross-validated against a real reftable"
-above (`FST` diverging ~1.8-2x, SNI and admixture both ruled out,
-formula reverified 4 times with no bug found). `toy_example1_ms_
-modified`'s 4 real populations finally gives the resolution needed to
-separate `<A>` from `<M>`, impossible on every previously-available
-2-population dataset (where all FST pairs collapse into a single
-averaged value): all 12 FST columns (6 `<A>` group G1, 6 `<M>` group
-G2) diverge significantly, but at two sharply separated magnitudes —
-`KS≈0.37-0.46` for `<A>` (consistent with the already-documented
-~1.8-2x gap), `KS≈0.71-0.77` for `<M>` (roughly double, zero overlap
-between the two groups of values). `FST_2_1.2` (`<M>`)'s `describe()`:
-`msprime` median **negative** (-0.005, half the 1000 particles below
-zero), mean 0.0096, std 0.050 — vs. DIYABC's median 0.111, mean 0.149,
-std 0.118. The whole `msprime` distribution is shifted toward zero, not
-a handful of outliers dragging the mean.
+Closes the gap first documented in "MicroSat stats cross-validated
+against a real reftable" above (`FST` ~1.8-2x too low on `<A>`, SNI
+and admixture ruled out, formula reverified 6 times with no bug
+found). On `toy_example1_ms_modified` (4 real populations) the gap had
+two magnitudes: `KS≈0.37-0.46` on `<A>` (G1), `KS≈0.68-0.75` on `<M>`
+(G2, msprime median **negative**, whole distribution shifted toward
+zero). The 2026-09-18 hypothesis — the shared `<M>` genealogy's
+interaction with split/admixture producing less population structure —
+is **wrong**, see below.
 
-**Formula reverified a 5th time, this time via an executed synthetic
-test rather than another line-by-line reading**:
-`_compute_ni_nA_AA_for_one_population`/`_compute_FST_constants_for_two_
-populations_combined` on two hand-built cases. Complete differentiation
-(pop A = 100% allele 10, pop B = 100% allele 12, 4 haploid individuals
-each) → `FST=1.0` exactly, as expected. Partial differentiation (pop A
-= 3×10+1×12, pop B = 2×10+2×12) → `FST=-0.16667` exactly, matching a
-manual term-by-term derivation of `cal_Fst2p` on the same case —
-confirms a negative FST is a LEGITIMATE, expected property of the Weir
-& Cockerham estimator at low observed differentiation, not a bug in
-either implementation.
+**Step 1 — admixture falsified for FST, cleanly, for both locus
+types.** The user rewrote scenario 1 of `toy_example1_ms_modified` to
+remove its `split` event (`t41 merge 1 4` / `t32 merge 2 3` / `t21
+merge 1 2`, no `ra`), keeping scenario 2's `t421 split 4 2 1 ra`,
+regenerated the real reftable, replayed, and split the 1000 particles
+by real `scenario_index` (same methodology as the 2026-08-31 DNA G3
+falsification, never done for FST before): `rdiff_mean` on `FST_1_*`
+was -52..-70% (no admixture) vs -55..-65% (admixture), on `FST_2_*`
+-90..-121% vs -91..-113%, std ratio ~2.2x in all four cells. **No
+difference.** Admixture is not a factor, for `<A>` or `<M>`.
 
-**Consequence**: since the formula is verified correct even at this
-edge case, the deficit can no longer be attributed to the statistic's
-computation — the `<M>` populations our pipeline SIMULATES must
-genuinely carry less differentiation than DIYABC's. Since HET/AML
-(which only depend on each population's own marginal allele
-frequencies, never on cross-population correlation) match well on this
-same `<M>` group, the marginal frequencies are right on average, but
-something in the POPULATION STRUCTURE carried by the shared `<M>`
-genealogy (`_SHARED_M_ANCESTRY_SEED_OFFSET`, confirmed present and
-correctly wired) produces less between/within-population signal than
-DIYABC's real genealogy. Open, unverified hypothesis for a future
-session: `ms_dna_ancestry_parameters_for_heritage`/`rescale_demography`
-for `<M>`, specifically its interaction with a 4-population scenario's
-split/admixture events — never exercised before with a real multi-
-population `<M>` dataset (the only other `<M>` dataset, `toy_example2_
-ms_dna`, has just 2 populations and its FST-tested group is `<A>`-only).
+**Step 2 — the decisive observation was already in the data.** On the
+same replay, `DAS` (shared alleles between populations — a *direct*
+identity-based differentiation measure), `DM2` (δμ², divergence),
+`HET`, `H2P` all matched DIYABC within ~1-3% (`KS≈0.03`) on both G1
+and G2. If the simulated data really carried 2x less differentiation,
+`DAS` would be visibly higher and `DM2` lower. They weren't. So the
+simulated data was right and the deficit had to be in the FST
+*computation* — which is the only stat consuming `_length_by_pop_and_
+individuals` (individual-level `(taille1, taille2)` pairs → `AA`,
+`nA`); every other stat goes through `_length_by_population`'s
+`(taille, compte)` frequency table.
+
+**Step 3 — the one unexploited clue.** The 2026-09-14 entry above
+records that `scikit-allel`'s own `weir_cockerham_fst` gave ~2x our
+value on *identical* simulated data, and filed it as "confirms a real
+numerical discrepancy exists". That framing was the mistake: two
+correct implementations of the same estimator cannot disagree 2x on
+the same input, so one of them was being misapplied — and this was
+the cheapest, DIYABC-free test available all along. Redone
+brick-by-brick: (a) `_compute_FST_constants_on_all_alleles_for_two_
+populations` on hand-built pairs of Python `int` → identical to allel
+to 15 decimals (so `cal_Fst2p` IS standard WC84 — this time re-derived
+algebraically against the textbook MSG/MSI/MSP definitions, not just
+"matches the C++" — and our transcription is exact); (b) the same
+function on pairs coming out of `_length_by_pop_and_individuals` on
+real `TreeSequence`s → 0.034 vs allel 0.134 on the same locus; (c) the
+pairs themselves verified identical to `ts.individuals()` — so the
+only difference left was the **dtype**: the pipeline's pairs are
+`np.int64` (from `np.array(...)[variant.genotypes]`).
+
+**Root cause**: `_compute_ni_nA_AA_for_one_population` computed
+`nA = sum((p[0] == al) + (p[1] == al) for p in pairs)`. With numpy
+operands, `p[0] == al` is an `np.bool_`, and `np.bool_ + np.bool_` is
+a **logical OR**, not an integer sum — `np.True_ + np.True_ == np.True_`
+(=1), whereas Python's `True + True == 2`. Every homozygote for `al`
+was counted `nA += 1` instead of `+= 2`, biasing `s2A`/`MSP`/`MSI` and
+deflating θ. It explains the whole picture with nothing left over:
+`<A>` moderately (only homozygotes undercounted), `<M>` catastrophically
+(the haploid duplication `(taille, taille)` makes EVERY individual a
+"homozygote", so `nA` is halved everywhere → negative FST), and every
+synthetic/golden test passing (all fed Python `int` literals, where
+the same line is correct). Confirmed as the *entire* cause by
+monkeypatching `int()` into the diagnostic: our `compute_FST` then
+equals allel to 6 decimals on 3 real replayed particles
+(0.046339/0.045166/0.116091 both sides).
+
+**Fix (`30fa872`, written by the user)**: `_length_by_pop_and_
+individuals` now builds its tuples with `int(tailles[...])`, so the
+`np.int64` never leaks past the tskit layer — every consumer of these
+pairs (and `al`, derived from them) gets Python ints. Golden values
+`FST_1_1.2` regenerated in `tests/test_summary_statistics.py`/
+`test_pipeline.py` (0.00537 → 0.03084). **Validation**: full replay +
+per-scenario notebook on `toy_example1_ms_modified` — scenario 1 (no
+admixture): 0/152 stats with KS `p<0.05`; scenario 2 (admixture): 2/152
+(`V2P_2_1.3` p=0.036, `MGW_2_4` p=0.043) — with 304 tests at α=0.05
+~15 false positives are *expected*, so this is below noise, no
+residual on `<A>` or `<M>`. The 11 MicroSat stats are now all
+validated against real DIYABC output.
+
+**Hardened and tested (`b8b0657`, written by the user)**: belt and
+braces — `_compute_ni_nA_AA_for_one_population` itself now does
+`int(p[0] == al) + int(p[1] == al)`, so the brick is correct whatever
+its caller feeds it, independently of the `int()` conversion in
+`_length_by_pop_and_individuals`. Two tests guard the two layers:
+`test_compute_ni_nA_AA_for_one_population` feeds `np.int64` pairs
+(3 homozygotes + 1 heterozygote → `nA == 7`; the buggy line gave 4),
+and `test_compute_FST_vs_scikit_allel` (`allel = pytest.importorskip
+("allel")` INSIDE the function, not at module level — at module level
+it would skip the whole file) runs `compute_FST` on the real
+`toy_example1_ms_modified` G1 loci (new `microsat_context_te1_
+modified` fixture in `conftest.py`) and asserts equality with
+`allel.weir_cockerham_fst` accumulated as `A.sum()/(A+B+C).sum()`
+over loci and alleles (a ratio of sums, never a mean of per-locus
+ratios), individuals paired via `ts.individuals()`, loci with
+`num_sites == 0` skipped on the allel side (they contribute zero on
+both). Verified to discriminate: with BOTH `int()` conversions
+removed it fails, with either one present it passes (the two
+protections are redundant by design, so removing only one does not
+break it — that is expected, not a weak test). `scikit-allel` is not
+declared in `pyproject.toml`; the `importorskip` keeps the suite green
+on environments without it.
+
+**Still not audited**: `_genotypes_by_pop_and_individuals` (LIK) builds
+its tuples from the same numpy `tailles` and may leak `np.int64` the
+same way — harmless today (LIK's formula does no boolean addition and
+matches DIYABC), but the next consumer of those tuples inherits the
+trap. Throwaway diagnostics in `tmp/fst_diag/` (`diag.py`/`diag2.py`/
+`diag3.py`).
+
+**Two review lessons, recorded in memory (`feedback_numpy_bool_
+addition`)**: (1) a cross-check that disagrees with our code on
+identical input is a software bug on one side, never "a real
+discrepancy" — investigate it before any simulator/biology
+hypothesis; (2) test stat bricks with the real dtype the pipeline
+produces (`np.int64` from tskit), not only Python literals.
+
+**Separate latent bug found the same morning — fixed the same day
+(`2f8363a`, written by the user with the assistant reviewing)**: the
+three readers of a real DIYABC *text* reftable
+(`parse_real_reftable_params`, `parse_real_reftable_params_with_group_
+priors`, `rewrite_real_reftable_txt` in `reftable_loop.py`) ordered a
+scenario's parameter columns by iterating `priors` in the order of the
+`historical parameters priors` *declaration* section. The real rule,
+read in `reftable.cpp::bintotxt` (lines 474-542): the text export walks
+the header's **trailer line** (`entetehist`, copied verbatim by
+`header.cpp::readHeaderAllStat`) token by token, looks each name up
+*by name* in the row's own scenario, prints the value if found and 14
+spaces otherwise — so the text file's column order IS the trailer
+order, and a whitespace split loses the blanks. (The `.bin` is
+different: `nparamvar` floats in the scenario's *own* `histparam`
+order from `sethistparamname`, constants excluded — untouched here,
+`write_reftable_bin` was validated on `human` where all orders
+coincided.) Verified on raw tokens: a scenario-1 row's three T values
+are laid out `t32, t21, t41` (trailer order) and satisfy `t41>t21>t32`,
+while declaration order (`t41, t32, t21`) would violate it. Every
+earlier dataset had the two orders identical by coincidence; the first
+hand-edited header that inserted `t41` at a different position in the
+two sections mislabeled every scenario-1 parameter (`t32`'s value read
+as `t41`, etc.) and produced a spurious `FST_1_1.4` `KS=0.80`. Only
+scenario 2 survived, because its dropped column (`t41`) was the LAST
+trailer token, so removing it shifted nothing.
+
+Fix: new `_historical_columns_order(header_line, priors, scenarios)`
+next to `_kept_param_names_by_scenario` — the two are complementary
+(the latter gives the SET of names a scenario has, constants excluded;
+the former gives their ORDER, read from the first line of the reftable
+file being parsed, stopping at the first token that is not a declared
+prior). A `ValueError` guard compares the count of names read against
+the union of non-constant names used by any scenario and prints the
+symmetric difference — a trailer typo (`t14` for `t41`) now fails
+loudly with `différence ['t41']` instead of silently shifting every
+value after it. The three readers keep `_kept_param_names_by_scenario`
+as the set and filter the file order by it, per row, AFTER reading the
+row's scenario index (the filter depends on it, so the order of
+operations is forced). `_kept_param_names_by_scenario` itself and the
+two writers are unchanged. Tests: `test_historical_columns_order`
+(order follows the line, not the declaration; typo raises) and
+`test_parse_real_reftable_params_follows_file_header_order` (a
+3-line `tmp_path` reftable whose header order differs from the
+`toy_example1_ms_modified` declaration order — the only test that
+discriminates, verified to fail with the old `param_names` line and
+pass with the new one; a plain `git stash` cannot be used for this
+check because the test file imports the new helper). Two review
+mishaps during this fix worth remembering: a `break` inside a list
+comprehension (SyntaxError, never executed before being shown), and
+`len(dict)` (number of scenarios) used where the union of its values
+(number of names) was meant — both caught by running the code, not by
+reading it. The same commit also moved `tests/conftest.py`'s
+`REFERENCE_DIR` from `reference/human` to `reference/` (8 call sites
+updated with explicit `/ "human"`), unrelated cleanup bundled in.
 
 ### Serial/temporal sampling not supported (identified 2026-09-17, not started)
 
