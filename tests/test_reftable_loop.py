@@ -17,8 +17,10 @@ from conftest import (
 from bridge.demography_builder import get_parameter_names_used_by_scenario
 from bridge.prior_parser import is_constant_prior, parse_priors
 from bridge.reftable_loop import (
+    _historical_columns_order,
     _kept_param_names_by_scenario,
     group_prior_column_names,
+    parse_real_reftable_params,
     parse_real_reftable_params_with_group_priors,
     run_reftable_simulation,
     run_reftable_simulation_dna,
@@ -36,7 +38,7 @@ def test_simulate_from_directory(tmp_path, snp_context_human):
     reftable_msprime.txt DANS CE MÊME DOSSIER (jamais 'reftable.txt',
     pour ne pas être confondu avec le first_records_of_the_reference_
     table_0.txt d'un vrai run DIYABC)."""
-    shutil.copy(REFERENCE_DIR / "header.txt", tmp_path / "header.txt")
+    shutil.copy(REFERENCE_DIR / "human" / "header.txt", tmp_path / "header.txt")
     (tmp_path / OBSERVED_SNP_FILE_HUMAN.name).symlink_to(OBSERVED_SNP_FILE_HUMAN)
 
     results = simulate_from_directory(tmp_path, snp_context_human, num_loci=10, nrec=4)
@@ -65,7 +67,7 @@ def test_run_reftable_simulation_scenario1(header_text):
 
     nrec = 4
     results = run_reftable_simulation(
-        reference_directory=REFERENCE_DIR,
+        reference_directory=REFERENCE_DIR / "human",
         scenarios=[scenario1],
         num_loci=10,
         nrec=nrec,
@@ -108,7 +110,7 @@ def test_run_reftable_simulation_draws_multiple_scenarios(header_text):
 
     nrec = 6
     results = run_reftable_simulation(
-        reference_directory=REFERENCE_DIR,
+        reference_directory=REFERENCE_DIR / "human",
         scenarios=scenarios,
         num_loci=10,
         nrec=nrec,
@@ -128,7 +130,7 @@ def test_write_reftable_bin(tmp_path, header_text):
 
     nrec = 3
     results = run_reftable_simulation(
-        reference_directory=REFERENCE_DIR,
+        reference_directory=REFERENCE_DIR / "human",
         scenarios=[scenario1],
         num_loci=10,
         nrec=nrec,
@@ -159,7 +161,7 @@ def test_write_reftable_bin_multi_scenario(tmp_path, header_text):
 
     nrec = 6
     results = run_reftable_simulation(
-        reference_directory=REFERENCE_DIR,
+        reference_directory=REFERENCE_DIR / "human",
         scenarios=scenarios,
         num_loci=10,
         nrec=nrec,
@@ -247,7 +249,7 @@ def test_write_reftable_txt_header_lowercase_and_real_value_for_unused_params(
     scenario1 = next(s for s in all_scenarios if s.index == 1)
 
     results = run_reftable_simulation(
-        reference_directory=REFERENCE_DIR,
+        reference_directory=REFERENCE_DIR / "human",
         scenarios=[scenario1],
         num_loci=10,
         nrec=2,
@@ -283,11 +285,73 @@ def test_write_reftable_txt_header_lowercase_and_real_value_for_unused_params(
 
 
 def test_kept_param_names_by_scenario(header_text_te1):
+    """Vérifie que _kept_param_names_by_scenario retourne bien le même
+    nombre de noms de paramètres à garder par scénarios
+    """
     priors = parse_priors(header_text_te1)[0]
     scenarios = parse_header_scenarios(header_text_te1)
     result = _kept_param_names_by_scenario(priors, scenarios)
 
     assert len(result) == 2
+
+
+def test_historical_columns_order(microsat_context_te1_modified):
+    """Vérifie que _historical_columns_order retourne bien l'ordre des
+    colonnes historiques tel qu'il est dans l'en-tête du reftable.txt
+    (et non pas l'ordre de déclaration dans le header.txt).
+    """
+    header_line = "scenario N1 N2 N3 N4 ra t32 t21 t421 t41 mumic_1 pmic_1 snimic_1"
+    header_text_te1 = microsat_context_te1_modified.header_text
+    priors = parse_priors(header_text_te1)[0]
+    scenarios = parse_header_scenarios(header_text_te1)
+    result = _historical_columns_order(header_line, priors, scenarios)
+
+    # Vérifie que l'ordre des colonnes historiques est bien celui de l'en-tête
+    assert result == [
+        "N1",
+        "N2",
+        "N3",
+        "N4",
+        "ra",
+        "t32",
+        "t21",
+        "t421",
+        "t41",
+    ]
+
+    header_line_error = (
+        "scenario N1 N2 N3 N4 ra t32 t21 t421 t14 mumic_1 pmic_1 snimic_1"
+    )
+    with pytest.raises(ValueError, match="t41"):
+        _historical_columns_order(header_line_error, priors, scenarios)
+
+
+def test_parse_real_reftable_params_follows_file_header_order(
+    tmp_path, header_text_te1_modified
+):
+    priors, _ = parse_priors(header_text_te1_modified)
+    scenarios = parse_header_scenarios(header_text_te1_modified)
+    # ordre d'en-tête volontairement différent de la déclaration (ra, t41, t32, t21, t421)
+    reftable = tmp_path / "reftable.txt"
+    reftable.write_text(
+        "scenario N1 N2 N3 N4 ra t32 t21 t421 t41 NAL_1_1\n"
+        "1 2279 626 1391 6439 174 595 674 7.7\n"
+        "2 1096 8342 1730 1983 0.191 203 892 284 7.4\n"
+    )
+    rows = parse_real_reftable_params(reftable, priors, scenarios)
+    assert rows[0] == (
+        1,
+        {
+            "N1": 2279,
+            "N2": 626,
+            "N3": 1391,
+            "N4": 6439,
+            "t32": 174,
+            "t21": 595,
+            "t41": 674,
+        },
+    )
+    assert rows[1][1]["t421"] == 284 and "t41" not in rows[1][1]
 
 
 def test_parse_real_reftable_params_with_group_priors(header_text_te2):
@@ -345,7 +409,7 @@ def test_run_reftable_simulation_dna_scenario1(header_text_te2):
 
     nrec = 4
     results = run_reftable_simulation_dna(
-        reference_directory=REFERENCE_DIR.parent / "toy_example2_ms_dna",
+        reference_directory=REFERENCE_DIR / "toy_example2_ms_dna",
         scenarios=[scenario1],
         nrec=nrec,
         stats_filter="ALL",
@@ -383,7 +447,7 @@ def test_run_reftable_simulation_dna_draws_multiple_scenarios(header_text_te2):
 
     nrec = 6
     results = run_reftable_simulation_dna(
-        reference_directory=REFERENCE_DIR.parent / "toy_example2_ms_dna",
+        reference_directory=REFERENCE_DIR / "toy_example2_ms_dna",
         scenarios=scenarios,
         nrec=nrec,
         stats_filter="ALL",

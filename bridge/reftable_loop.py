@@ -310,6 +310,53 @@ def _kept_param_names_by_scenario(
     return result
 
 
+def _historical_columns_order(
+    header_line: str, priors: list, scenarios: list[Scenario]
+) -> list[str]:
+    """Ordre des colonnes de paramètres historiques d'un reftable texte réel.
+
+    Complément de _kept_param_names_by_scenario : elle donne l'ENSEMBLE
+    des noms présents pour un scénario, celle-ci donne leur ORDRE. Cet
+    ordre est celui de la ligne d'en-tête du fichier lu (`entetehist`,
+    c'est-à-dire la ligne trailer du header, reproduite telle quelle par
+    reftable.cpp::bintotxt), PAS celui de la section `historical
+    parameters priors` -- les deux coïncident sur les headers générés
+    par l'interface, mais peuvent diverger sur un header édité à la
+    main, ce qui mélabelle alors silencieusement toutes les valeurs
+    (trouvé le 2026-09-21 sur toy_example1_ms_modified).
+
+    Args:
+        header_line: La première ligne du reftable texte réel
+            (`scenario N1 N2 ... <group priors> <stats>`).
+        priors: Les priors déclarés dans header.txt.
+        scenarios: Les scénarios candidats.
+
+    Returns:
+        Les noms de colonnes historiques, dans l'ordre du fichier.
+
+    Raises:
+        ValueError: Si le nombre de noms lus ne correspond pas à l'union
+            des priors non constants utilisés par au moins un scénario
+            (typiquement une faute de frappe dans la ligne trailer).
+    """
+    tokens = header_line.split()[1:]
+    prior_names = {p.name for p in priors}
+    columns = []
+    for token in tokens:
+        if token not in prior_names:
+            break
+        columns.append(token)
+    kept = _kept_param_names_by_scenario(priors, scenarios)
+    expected = {name for names in kept.values() for name in names}
+    if len(columns) != len(expected):
+        raise ValueError(
+            "Colonnes historiques du reftable incohérentes avec header.txt : "
+            f"lues {columns}, attendues {sorted(expected)}, "
+            f"différence {sorted(set(columns) ^ expected)}"
+        )
+    return columns
+
+
 # ── Écriture du reftable (formats binaire et texte) ────────────────────────
 
 
@@ -512,11 +559,14 @@ def rewrite_real_reftable_txt(
     que documenté dans parse_real_reftable_params/write_reftable_txt,
     mais ici côté fichier DIYABC lui-même plutôt que côté notre pipeline.
 
-    Le fichier réécrit a EXACTEMENT le même format que celui produit par
-    write_reftable_txt (mêmes colonnes de paramètres -- union dans
-    l'ordre de déclaration des priors --, dans le même ordre), donc
-    directement comparable colonne à colonne avec un reftable_msprime
-    généré par run_reftable_simulation/replay_reftable_simulation.
+    Le fichier réécrit garde les colonnes de paramètres du fichier
+    d'entrée, dans l'ordre de SA ligne d'en-tête (`entetehist`, voir
+    _historical_columns_order) -- pas dans l'ordre de déclaration des
+    priors, qui peut en différer sur un header édité à la main. Les
+    colonnes suivantes (priors de groupe s'il y en a, puis statistiques)
+    sont recopiées telles quelles. Le résultat se compare colonne à
+    colonne, PAR NOM, avec un reftable_msprime généré par
+    run_reftable_simulation/replay_reftable_simulation.
 
     Args:
         input_path: Chemin du reftable réel brut (format texte).
@@ -525,10 +575,9 @@ def rewrite_real_reftable_txt(
         scenarios: Les scénarios candidats.
     """
     kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
-    used_by_any = {name for names in kept_by_scenario.values() for name in names}
-    all_param_names = [p.name for p in priors if p.name in used_by_any]
 
     lines = [line for line in Path(input_path).read_text().splitlines() if line.strip()]
+    all_param_names = _historical_columns_order(lines[0], priors, scenarios)
     header_tokens = lines[0].split()
     stat_names = header_tokens[1 + len(all_param_names) :]
     data_lines = lines[1:]
@@ -547,7 +596,8 @@ def rewrite_real_reftable_txt(
         for line in data_lines:
             tokens = line.split()
             scenario_index = int(tokens[0])
-            param_names = kept_by_scenario[scenario_index]
+            kept = set(kept_by_scenario[scenario_index])
+            param_names = [name for name in all_param_names if name in kept]
             n_params = len(param_names)
             param_values = dict(zip(param_names, tokens[1 : 1 + n_params], strict=True))
             stat_values = dict(zip(stat_names, tokens[1 + n_params :], strict=True))
@@ -661,14 +711,22 @@ def parse_real_reftable_params(
     principe côté écriture dans write_reftable_txt, qui l'évite en
     n'écrivant jamais de case vide).
 
-    On lit donc, pour CHAQUE ligne, le nombre de tokens de paramètres
-    correspondant SPÉCIFIQUEMENT au scénario de cette ligne
-    (kept_by_scenario[scenario_index], même filtre non-constant +
-    utilisé-par-ce-scénario que write_reftable_txt/write_reftable_bin),
-    pas une union appliquée uniformément -- ce qui gère aussi, en
-    particulier, le cas single-scénario où certains priors sont devenus
-    constants (is_constant_prior) et donc absents des colonnes de
-    sortie.
+    On lit donc, pour CHAQUE ligne, les tokens de paramètres
+    correspondant SPÉCIFIQUEMENT au scénario de cette ligne, avec deux
+    sources distinctes qu'il ne faut pas confondre :
+    - l'ENSEMBLE des noms présents vient de _kept_param_names_by_scenario
+      (non constant + utilisé par ce scénario, même filtre que
+      write_reftable_txt/write_reftable_bin) -- ce qui gère aussi le cas
+      single-scénario où certains priors sont devenus constants
+      (is_constant_prior) et donc absents des colonnes de sortie ;
+    - leur ORDRE vient de la ligne d'en-tête du fichier lu
+      (_historical_columns_order), c'est-à-dire de `entetehist` tel que
+      reftable.cpp::bintotxt l'imprime -- PAS de l'ordre de déclaration
+      des priors dans header.txt. Les deux coïncident sur les headers
+      générés par l'interface, mais un header édité à la main peut les
+      faire diverger, et l'ordre de déclaration mélabelle alors
+      silencieusement toutes les valeurs (2026-09-21,
+      toy_example1_ms_modified : la valeur de t32 lue comme t41, etc.).
 
     Args:
         path: Chemin du reftable réel (format texte).
@@ -678,17 +736,22 @@ def parse_real_reftable_params(
     Returns:
         Une liste de tuples (scenario_index, {nom_paramètre: valeur}),
         un par ligne du reftable (dans l'ordre du fichier).
+
+    Raises:
+        ValueError: Voir _historical_columns_order (ligne d'en-tête
+            incohérente avec header.txt).
     """
     priors_kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
 
     lines = [line for line in Path(path).read_text().splitlines() if line.strip()]
-    data_lines = lines[1:]  # ligne 0 = en-tête
-
+    data_lines = lines[1:]
+    hist_order = _historical_columns_order(lines[0], priors, scenarios)
     rows = []
     for line in data_lines:
         tokens = line.split()
         scenario_index = int(tokens[0])
-        param_names = priors_kept_by_scenario[scenario_index]
+        kept = set(priors_kept_by_scenario[scenario_index])
+        param_names = [name for name in hist_order if name in kept]
         values = {name: float(tokens[1 + i]) for i, name in enumerate(param_names)}
         rows.append((scenario_index, values))
     return rows
@@ -1052,6 +1115,11 @@ def parse_real_reftable_params_with_group_priors(
     IMMÉDIATEMENT les colonnes de paramètres historiques (elles-mêmes
     variables en nombre selon le scénario tiré par cette ligne -- voir
     priors_kept_by_scenario) et précèdent les colonnes de statistiques.
+    L'offset des priors de groupe dépend donc du nombre de paramètres
+    historiques de CETTE ligne, et leur ordre suit la ligne d'en-tête du
+    fichier, pas la déclaration des priors -- même règle que
+    parse_real_reftable_params (voir sa docstring et
+    _historical_columns_order).
 
     Contrairement aux paramètres historiques, les priors de groupe NE
     SONT JAMAIS filtrées par scénario : `group_priors_names` (voir
@@ -1083,13 +1151,14 @@ def parse_real_reftable_params_with_group_priors(
     priors_kept_by_scenario = _kept_param_names_by_scenario(priors, scenarios)
 
     lines = [line for line in Path(path).read_text().splitlines() if line.strip()]
-    data_lines = lines[1:]  # ligne 0 = en-tête
-
+    data_lines = lines[1:]
+    hist_order = _historical_columns_order(lines[0], priors, scenarios)
     rows = []
     for line in data_lines:
         tokens = line.split()
         scenario_index = int(tokens[0])
-        priors_param_names = priors_kept_by_scenario[scenario_index]
+        kept = set(priors_kept_by_scenario[scenario_index])
+        priors_param_names = [name for name in hist_order if name in kept]
         priors_values = {
             name: float(tokens[1 + i]) for i, name in enumerate(priors_param_names)
         }

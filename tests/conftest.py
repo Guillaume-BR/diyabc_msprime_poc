@@ -33,60 +33,55 @@ from bridge.observed_data import (
     parse_sex_ratio,
 )
 
-REFERENCE_DIR = Path(__file__).parent.parent / "reference" / "human"
+REFERENCE_DIR = Path(__file__).parent.parent / "reference"
 GENERAL_BINARY_PATH = os.environ.get("DIYABC_GENERAL_PATH")
 
-OBSERVED_SNP_FILE_HUMAN = REFERENCE_DIR / "human_snp_all22chr_maf5.snp"
+OBSERVED_SNP_FILE_HUMAN = REFERENCE_DIR / "human" / "human_snp_all22chr_maf5.snp"
+
+OBSERVED_MSS_FILE_TE1 = (
+    REFERENCE_DIR
+    / "toy_example1_ms"
+    / "pseudo_observed_DATASET_toy_example1_microsatellites_one_pop_multiple_samples_over_time_001.mss"
+)
+
 OBSERVED_MSS_FILE_TE2 = (
-    Path(__file__).parent.parent
-    / "reference"
+    REFERENCE_DIR
     / "toy_example2_ms_dna"
     / "pseudo_observed_DATASET_toy_example2_microsatellites_DNAsequences_ancestral_admixture_unsampled_pops_001.mss"
 )
-OBSERVED_SNP_FILE_TE5 = (
-    Path(__file__).parent.parent
-    / "reference"
-    / "toy_example5"
-    / "simu_dataset_test_divergence_admixture_001.snp"
+
+OBSERVED_MSS_FILE_TE2_XY = (
+    REFERENCE_DIR
+    / "toy_example2_ms_dna_XY"
+    / "pseudo_observed_DATASET_toy_example2_microsatellites_DNAsequences_ancestral_admixture_unsampled_pops_001.mss"
 )
+
 OBSERVED_SNP_FILE_TE3 = (
-    Path(__file__).parent.parent
-    / "reference"
+    REFERENCE_DIR
     / "toy_example3"
     / "pseudo_observed_DATASET_SNP_INDSEQ_4pops_Scenario3_MER.snp"
 )
+
 OBSERVED_SNP_FILE_TE3_SCENARIO1 = (
-    Path(__file__).parent.parent
-    / "reference"
+    REFERENCE_DIR
     / "toy_example3_scenario1"
     / "pseudo_observed_DATASET_SNP_INDSEQ_4pops_Scenario3_MER.snp"
 )
 
 OBSERVED_SNP_FILE_TE4 = (
-    Path(__file__).parent.parent
-    / "reference"
+    REFERENCE_DIR
     / "toy_example4"
     / "pseudo_observed_DATASET_SNP_POOLSEQ_4pops_Scenario3_MER.snp"
 )
 
-OBSERVED_MSS_FILE_TE2_XY = (
-    Path(__file__).parent.parent
-    / "reference"
-    / "toy_example2_ms_dna_XY"
-    / "pseudo_observed_DATASET_toy_example2_microsatellites_DNAsequences_ancestral_admixture_unsampled_pops_001.mss"
-)
-
-OBSERVED_MSS_FILE_TE1 = (
-    Path(__file__).parent.parent
-    / "reference"
-    / "toy_example1_ms"
-    / "pseudo_observed_DATASET_toy_example1_microsatellites_one_pop_multiple_samples_over_time_001.mss"
+OBSERVED_SNP_FILE_TE5 = (
+    REFERENCE_DIR / "toy_example5" / "simu_dataset_test_divergence_admixture_001.snp"
 )
 
 
 @pytest.fixture
 def header_text() -> str:
-    return (REFERENCE_DIR / "header.txt").read_text()
+    return (REFERENCE_DIR / "human" / "header.txt").read_text()
 
 
 @pytest.fixture
@@ -109,25 +104,25 @@ def header_text_te3_scenario1() -> str:
 
 @pytest.fixture
 def header_text_te1() -> str:
-    path_te1 = REFERENCE_DIR.parent / "toy_example1_ms" / "headerRF.txt"
+    path_te1 = REFERENCE_DIR / "toy_example1_ms" / "headerRF.txt"
     return path_te1.read_text()
 
 
 @pytest.fixture
 def header_text_te1_modified() -> str:
-    path_te1 = REFERENCE_DIR.parent / "toy_example1_ms_modified" / "headerRF.txt"
+    path_te1 = REFERENCE_DIR / "toy_example1_ms_modified" / "headerRF.txt"
     return path_te1.read_text()
 
 
 @pytest.fixture
 def header_text_te2() -> str:
-    path_te2 = REFERENCE_DIR.parent / "toy_example2_ms_dna" / "headerRF.txt"
+    path_te2 = REFERENCE_DIR / "toy_example2_ms_dna" / "headerRF.txt"
     return path_te2.read_text()
 
 
 @pytest.fixture
 def header_text_te2_XY() -> str:
-    path_te2_XY = REFERENCE_DIR.parent / "toy_example2_ms_dna_XY" / "headerRF.txt"
+    path_te2_XY = REFERENCE_DIR / "toy_example2_ms_dna_XY" / "headerRF.txt"
     return path_te2_XY.read_text()
 
 
