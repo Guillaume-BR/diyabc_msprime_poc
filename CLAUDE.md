@@ -89,13 +89,15 @@ column order == prior declaration order, whereas DIYABC writes them in
 trailer-line order (`_historical_columns_order`). Also as of 2026-09-18,
 `header.txt`/`.snp`/`.mss` are read once per whole run rather than once
 per particle across SNP, MicroSat, and DNA sequences alike (see
-"ReplayContext refactor" below) — and two further gaps were identified
+"ReplayContext refactor" below) — and one further gap was identified
 but not yet started: a dataset sampling one population at several
 times rather than several distinct populations is not supported (see
-"Serial/temporal sampling not supported" below), and DIYABC reportedly
-switches to a simplified substitution model below some sequence-count
-threshold, not yet even located in the C++ source (see "Simplified
-substitution model for low sequence counts" below). The goal is to
+"Serial/temporal sampling not supported" below). A second suspected
+gap (a "simplified substitution model" DIYABC would switch to below
+some sequence-count threshold) was checked against the C++ source on
+2026-09-21 and does not exist — for any of SNP/MicroSat/DNA (see
+"CLOSED 2026-09-21: no simplified substitution model" below). The goal
+is to
 demonstrate that a
 `header.txt` → `msprime.Demography` → coalescent+mutation → summary
 statistics pipeline built in Python produces a `reftable.bin`
@@ -1850,20 +1852,59 @@ exists in the pipeline today. Worked around for AML validation by using
 statistics) instead of solving this. A real architecture chantier, not
 started.
 
-### Simplified substitution model for low sequence counts (mentioned 2026-09-18, not yet located in the C++ source)
+### CLOSED 2026-09-21: no "simplified substitution model" exists in the C++ (flagged 2026-09-18, falsified by direct source reading)
 
-Flagged by the user at the close of this session: DIYABC reportedly
-switches to a simplified substitution model below some threshold of
-variable sites or individuals (too few sequences to support the full
-model). Not yet located in the C++ source — no function/line identified
-at this point; likely candidates to check first are `data.cpp`'s
-`do_sequence`/`cal_numvar`, or wherever `dnavar` gets computed (see
-"DNA sequence substitution model" below for context on `dnavar`'s
-existing, unrelated role in this codebase). This pipeline
-(`bridge/ancestry_simulation.py`) currently has no special-case logic
-of this kind at all — whether this represents a real, exercised gap
-(and on which of this project's reference datasets, if any) still needs
-confirming before implementing anything.
+Flagged by the user at the close of the 2026-09-18 session: DIYABC
+reportedly switches to a simplified substitution model below some
+threshold of variable sites or individuals. **Checked exhaustively in
+`~/Documents/Github/diyabc/src-JMC-C++` on 2026-09-21 for all three
+data families — nothing of the kind exists. Chantier closed, nothing
+to implement.** Evidence, so this isn't reopened on the same rumor:
+
+- **DNA sequences**: `mutmod` (`JK`/`K2P`/`HKY`/`TN`, `history.hpp:151`)
+  is written ONLY when the header token is read (`header.cpp:671-678`
+  and its twin `1784-1791`) plus two copy-constructors (`history.cpp:
+  257/303`) — no conditional reassignment anywhere. `comp_matQ`
+  (`particuleC.cpp:1121-1170`) branches on `mutmod` alone, never on
+  `dnavar`/`nloc`/`ngenes`/sample size. `mute`/`draw_nuc`/`put_
+  mutations` (`1535-1790`) are a pure cumulative walk over `matQ`/`pi`.
+  `do_sequence`'s base-frequency computation (`data.cpp:1532-1568`) has
+  a single `if (nn > 0.0)` guard against division by zero on a fully-
+  missing locus — no `0.25` fallback, no "too few sequences" branch.
+  `grep -i "simplif|too few|trop peu"` finds nothing relevant; the only
+  non-stats uses of `dnavar` are in `sumstat.cpp` (observed variable
+  sites for the statistics, unrelated to the mutation model).
+- **MicroSat**: `mute` (`particuleC.cpp:1683-1708`) has one branch,
+  `if (Pgeom > 0.001) d = 1 + log(ra)/log(Pgeom); else d = 1;` — the SMM
+  special case, a numerical guard against `log(0)`, not a data-driven
+  fallback (already covered by `build_microsat_transition_matrix`'s
+  `epsilon` clamp, tested at `Pgeom=0`). `setMutParamValue`
+  (`803-825`) falls back to the group mean when `sdshape <= 0.001` or
+  `nloc <= 1` — the per-locus dispersion tier, already ported via
+  `check_nloc`, not a model switch. `kmin`/`kmax` (`particleset.cpp:
+  80-82`: `kmoy = (maxi+mini)/2` integer division, `kmin = kmoy -
+  (motif_range/2 - 1)*motif_size`, `kmax = kmin + (motif_range-1)*
+  motif_size`) are deterministic from the observed alleles and the
+  header's `motif_range`, no threshold.
+- **SNP**: there is no model to simplify — `mute` sets `state = 1`
+  (`1765`); `put_one_mutation` (`1644-1680`) is plain Hudson (one branch
+  drawn proportionally to length), its only branch being `if (weight ==
+  0.0) return` (zero-length tree → locus rejected and redrawn via
+  `loc--`). `cherche_branchesOK` (`1549-1553`) sets every branch `OK`/
+  `OKOK` to `true` — the reference-population filtering (`refnindtot`/
+  `popref`) is entirely commented out, so `weight` is always 1 in the
+  compiled binary and `simulate_snp_genotypes`'s "draw over all edges"
+  is exact. `mafreached` (`2194-2211`) has no sample-size-dependent
+  mode.
+
+The only genuine "second mode" anywhere in `particuleC.cpp` remains the
+discrete generation-by-generation coalescent selected by
+`evalcriterium` (`1251-1275`) for very small `N` — a coalescent-side
+switch, not a mutation-model one, already documented above as
+un-replicated and never triggered on any of this project's datasets.
+The original claim most likely came from documentation or memory of a
+different tool; if a precise DIYABC source (doc page, paper) turns up,
+cross-check it against the line numbers above before reopening.
 
 ### DNA sequence substitution model (started 2026-07-29, mutation placement done 2026-07-31)
 
