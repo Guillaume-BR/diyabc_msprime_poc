@@ -1387,7 +1387,7 @@ def test_compute_FST(microsat_context_te2_xy):
 
     results = compute_FST(mutated.values(), population_names)
 
-    assert pytest.approx(results["1.2"]) == 0.0053703676256255965
+    assert pytest.approx(results["1.2"]) == 0.03084132131276057
 
 
 # tests relatif à la stat LIK

@@ -3058,9 +3058,13 @@ def _length_by_pop_and_individuals(
         nodes = ind.nodes
         population = next(pop for pop, inds in population_layout if nodes[0] in inds)
         if len(nodes) == 1:
-            length_by_pop[population].append((tailles[nodes[0]], tailles[nodes[0]]))
+            length_by_pop[population].append(
+                (int(tailles[nodes[0]]), int(tailles[nodes[0]]))
+            )
         else:
-            length_by_pop[population].append((tailles[nodes[0]], tailles[nodes[1]]))
+            length_by_pop[population].append(
+                (int(tailles[nodes[0]]), int(tailles[nodes[1]]))
+            )
 
     return length_by_pop
 
