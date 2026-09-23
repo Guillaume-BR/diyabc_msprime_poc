@@ -249,6 +249,21 @@ def microsat_context_te2_xy(header_text_te2_XY) -> MicrosatReplayContext:
 
 
 @pytest.fixture
+def microsat_context_te1(header_text_te1) -> MicrosatReplayContext:
+    list_loci = parse_loci_description(header_text_te1)
+    microsat_observed = observed_microsatellites(OBSERVED_MSS_FILE_TE1, list_loci)
+    return MicrosatReplayContext(
+        header_text=header_text_te1,
+        mss_path=OBSERVED_MSS_FILE_TE1,
+        list_loci=list_loci,
+        microsat_observed=microsat_observed,
+        bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
+        samples_default=observed_count_population(OBSERVED_MSS_FILE_TE1),
+        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE1),
+    )
+
+
+@pytest.fixture
 def microsat_context_te1_modified(header_text_te1_modified) -> MicrosatReplayContext:
     list_loci = parse_loci_description(header_text_te1_modified)
     microsat_observed = observed_microsatellites(OBSERVED_MSS_FILE_TE1, list_loci)

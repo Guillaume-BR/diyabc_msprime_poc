@@ -42,11 +42,13 @@ from bridge.configuration import (
     _SHARED_Y_ANCESTRY_SEED_OFFSET,
     _SITE_RATE_SEED_OFFSET,
 )
-from bridge.demography_builder import rescale_demography
+from bridge.demography_builder import evaluate_expression, rescale_demography
 from bridge.header_dataclasses import (
     DnaReplayContext,
     LociDescriptionDetailed,
     MicrosatReplayContext,
+    SampleEvent,
+    Scenario,
     SnpReplayContext,
 )
 from bridge.loci_parser import parse_loci_description
@@ -147,6 +149,72 @@ def build_samples_argument(
         f"pop{index}": count
         for index, count in enumerate(counts_by_name.values(), start=1)
     }
+
+
+def build_sample_sets_from_scenario(
+    scenario: Scenario, values: dict[str, float], counts_by_samples: dict[str, int]
+) -> list[msprime.SampleSet]:
+    """Construit les SampleSet msprime décrits par les événements `sample` d'un scénario.
+
+    Un SampleSet par ligne `sample`, dans l'ordre du header -- et cet
+    ordre EST l'indice d'échantillon de DIYABC : history.cpp::read_events
+    attribue `event.sample = ++nsamp` dans l'ordre de lecture, et
+    particuleC.cpp:1528 apparie un événement SAMPLE aux noeuds portant ce
+    même indice.
+
+    ATTENTION -- `counts_by_samples` est indexé par ÉCHANTILLON, jamais
+    par population. Ses clés ("pop1", "pop2"...) sont un héritage de
+    count_samples_per_population / observed_count_population et sont
+    IGNORÉES ici : seul l'ordre des valeurs fait foi, le k-ième effectif
+    allant au k-ième événement `sample`. Les deux notions ne coïncident
+    que par accident sur les jeux de données non sériels ; dès qu'un
+    scénario échantillonne la MÊME population à plusieurs dates,
+    indexer par `f"pop{event.pop}"` renverrait le même effectif pour
+    tous les échantillons (voir history.cpp::read_events, qui compte
+    `nsamp` séparément de `nn0`).
+
+    Args:
+        scenario: Le scénario parsé (header_dataclasses.Scenario).
+        values: Les valeurs de priors déjà tirées, {nom: valeur}.
+            Nécessaires uniquement pour les temps exprimés par un nom de
+            paramètre (ex. "tbn sample 1", cf. particuleC.cpp:599-605) --
+            peut être vide si tous les temps sont littéraux.
+        counts_by_samples: Les effectifs observés, UN PAR ÉCHANTILLON,
+            dans l'ordre des événements `sample` (voir ci-dessus).
+
+    Returns:
+        La liste des msprime.SampleSet, un par événement `sample`, dans
+        le même ordre.
+
+    Raises:
+        ValueError: Si le nombre d'événements `sample` du scénario ne
+            correspond pas au nombre d'effectifs fournis.
+    """
+
+    sample_sets = []
+    sample_events = [
+        event for event in scenario.events if isinstance(event, SampleEvent)
+    ]
+
+    if len(sample_events) != len(counts_by_samples):
+        raise ValueError(
+            f"{len(sample_events)} événements sample mais {len(counts_by_samples)} échantillons observés"
+        )
+
+    # L'ORDRE des valeurs est le contrat, pas les clés -- extrait une seule
+    # fois plutôt qu'à chaque tour de boucle.
+    counts_in_sample_order = list(counts_by_samples.values())
+
+    for i, event in enumerate(sample_events):
+        population_name = f"pop{event.pop}"
+        num_samples = counts_in_sample_order[i]
+        time_sample = evaluate_expression(event.time_expr, values)
+        sample_sets.append(
+            msprime.SampleSet(
+                num_samples=num_samples, population=population_name, time=time_sample
+            )
+        )
+    return sample_sets
 
 
 def _sample_sets_from_sexes(
@@ -476,6 +544,41 @@ def compute_population_layout(
             continue
         pop_name = population.metadata.get("name") if population.metadata else None
         layout.append((pop_name, sample_ids))
+    return layout
+
+
+def compute_sample_layout(
+    ts: tskit.TreeSequence, counts_by_samples: dict[str, int]
+) -> list[tuple[str | None, np.ndarray]]:
+    """Calcule le layout (IDs des noeuds échantillons) d'une TreeSequence.
+
+    Args:
+        ts: La TreeSequence à inspecter.
+        counts_by_samples: Les effectifs observés, UN PAR ÉCHANTILLON,
+            dans l'ordre des événements `sample` (voir build_sample_sets_from_scenario).
+
+    Returns:
+        La liste des (nom_echantillon, IDs des noeuds échantillons de
+        cette population), une entrée par échantillon non vide.
+
+    Raises:
+        ValueError: Si le nombre total d'individus dans counts_by_samples
+            ne correspond pas au nombre d'individus dans la TreeSequence.
+    """
+    layout = []
+
+    if sum(counts_by_samples.values()) != ts.num_individuals:
+        raise ValueError(
+            f"Le nombre total d'individus dans counts_by_samples ({sum(counts_by_samples.values())}) ne correspond pas au nombre d'individus dans la TreeSequence ({ts.num_individuals})."
+        )
+    individuals = iter(
+        ts.individuals()
+    )  # on crée un itérateur sur les individus de la TreeSequence
+    for sample_name, count in counts_by_samples.items():
+        block = list(itertools.islice(individuals, count))
+        if not block:
+            continue
+        layout.append((sample_name, np.concatenate([ind.nodes for ind in block])))
     return layout
 
 

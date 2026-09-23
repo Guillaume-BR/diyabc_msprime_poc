@@ -30,10 +30,13 @@ from bridge.ancestry_simulation import (
     build_microsat_transition_matrix_with_sni,
     build_rate_map,
     build_rate_map_per_locus,
+    build_sample_sets_from_scenario,
     build_samples_argument,
     build_sex_stratified_samples_argument,
     build_sex_stratified_samples_argument_ms_dna,
     build_transition_matrix,
+    compute_population_layout,
+    compute_sample_layout,
     count_loci_per_group,
     dna_mutation_simulation_per_locus,
     microsat_mutation_simulation_per_locus,
@@ -50,7 +53,7 @@ from bridge.ancestry_simulation import (
     with_mrc_filter,
 )
 from bridge.demography_builder import rescale_demography
-from bridge.header_dataclasses import LociDescriptionDetailed
+from bridge.header_dataclasses import LociDescriptionDetailed, SampleEvent, Scenario
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
     coalescence_coefficient,
@@ -59,6 +62,97 @@ from bridge.observed_data import (
 )
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.prior_parser import parse_group_priors
+from bridge.scenario_parser import parse_header_scenarios
+
+
+# Petit helper pour créer un TreeSequence minimal avec une population et un individu, pour tester compute_sample_layout
+def _ts_from_sample_sets(sample_sets):
+    """TreeSequence minimale pour tester un layout : la topologie n'importe pas."""
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    return msprime.sim_ancestry(
+        samples=sample_sets,
+        demography=demography,
+        sequence_length=1,
+        random_seed=3,
+    )
+
+
+def test_build_sample_sets_from_scenario(microsat_context_te1):
+    """Sur le vrai header sériel : 4 événements `sample`, tous sur pop1.
+
+    Vérifie surtout que les effectifs sont pris DANS L'ORDRE des
+    événements et non par nom de population -- d'où des effectifs
+    volontairement tous différents : une indexation par
+    `f"pop{event.pop}"` renverrait 20 quatre fois, les quatre `sample`
+    de ce scénario pointant tous la population 1.
+    """
+    scenarios = parse_header_scenarios(microsat_context_te1.header_text)
+    counts = {"pop1": 20, "pop2": 15, "pop3": 30, "pop4": 10}
+
+    sample_sets = build_sample_sets_from_scenario(
+        scenario=scenarios[0], values={}, counts_by_samples=counts
+    )
+
+    assert len(sample_sets) == 4
+    assert [s.population for s in sample_sets] == ["pop1"] * 4
+    assert [s.num_samples for s in sample_sets] == [20, 15, 30, 10]
+    assert [s.time for s in sample_sets] == [0, 50, 200, 500]
+
+
+def test_build_sample_sets_from_scenario_evaluates_time_expressions():
+    """Un temps littéral et un temps paramétré dans le même scénario.
+
+    Le chemin "temps exprimé par un nom de paramètre"
+    (particuleC.cpp:599-605) n'est exercé par AUCUN jeu de données réel
+    du dépôt -- toy_example1_ms n'a que des littéraux -- d'où ce
+    scénario synthétique.
+    """
+    fake_scenario = Scenario(
+        index=1,
+        weight=1.0,
+        initial_pop_size_exprs=["100"],
+        events=[
+            SampleEvent(time_expr="0", pop=1),
+            SampleEvent(time_expr="tbn", pop=1),
+        ],
+    )
+    # 317.0 : valeur non confondable avec un littéral du scénario, pour
+    # qu'une assertion ne puisse pas réussir par coïncidence.
+    values = {"tbn": 317.0}
+    counts = {"pop1": 20, "pop2": 15}
+
+    sample_sets = build_sample_sets_from_scenario(
+        scenario=fake_scenario, values=values, counts_by_samples=counts
+    )
+
+    assert len(sample_sets) == 2
+    assert [s.population for s in sample_sets] == ["pop1", "pop1"]
+    assert [s.num_samples for s in sample_sets] == [20, 15]
+    assert [s.time for s in sample_sets] == [0.0, 317.0]
+
+
+def test_build_sample_sets_from_scenario_raises_on_count_mismatch():
+    """Vérifie que build_sample_sets_from_scenario lève une ValueError si le
+    nombre de comptes d'échantillons ne correspond pas au nombre d'événements sample.
+    """
+    # test pour lever l'erreur
+    fake_scenario = Scenario(
+        index=1,
+        weight=1.0,
+        initial_pop_size_exprs=["100"],
+        events=[SampleEvent(time_expr="0", pop=1), SampleEvent(time_expr="50", pop=2)],
+    )
+    values = {}
+    counts = {"pop1": 20, "pop2": 15, "pop3": 30}
+    with pytest.raises(
+        ValueError, match="2 événements sample mais 3 échantillons observés"
+    ):
+        build_sample_sets_from_scenario(
+            scenario=fake_scenario, values=values, counts_by_samples=counts
+        )
 
 
 def test_simulate_independent_loci_scenario1(header_text):
@@ -206,6 +300,106 @@ def test_simulate_genotypes_for_locus_type(snp_context_te5):
                 0,
                 1,
             }, f"Locus non polymorphe : {locus_genotypes}"
+
+
+def test_compute_sample_layout_different_count():
+    """Vérifie que compute_sample_layout renvoie bien une liste de tuples
+    (nom_population, sample_ids) avec les bons noms de populations et le
+    bon nombre d'individus par population.
+    """
+
+    # test effectifs inégaux
+    ts = _ts_from_sample_sets(
+        [msprime.SampleSet(7, "pop1"), msprime.SampleSet(3, "pop2")]
+    )
+    samples = {"pop1": 7, "pop2": 3}
+    computed_layout = compute_sample_layout(ts, samples)
+
+    assert [pop_name for pop_name, _ in computed_layout] == ["pop1", "pop2"]
+    assert np.array_equal(computed_layout[0][1], np.arange(14))
+    assert np.array_equal(computed_layout[1][1], np.arange(14, 20))
+
+
+def test_compute_sample_layout_with_mixed_ploidy():
+    # test sur la ploidie
+    ts = _ts_from_sample_sets(
+        [
+            msprime.SampleSet(3, "pop1", ploidy=2),
+            msprime.SampleSet(2, "pop1", ploidy=1),
+            msprime.SampleSet(4, "pop2", ploidy=2),
+            msprime.SampleSet(1, "pop2", ploidy=1),
+        ]
+    )
+    samples = {"pop1": 5, "pop2": 5}
+    computed_layout = compute_sample_layout(ts, samples)
+
+    assert [pop_name for pop_name, _ in computed_layout] == ["pop1", "pop2"]
+    assert np.array_equal(computed_layout[0][1], np.arange(8))
+    assert np.array_equal(computed_layout[1][1], np.arange(8, 17))
+
+
+def test_compute_sample_layout_with_null_effectif():
+    # test avec effectif nul pour une population
+    ts = _ts_from_sample_sets(
+        [
+            msprime.SampleSet(5, "pop1"),
+            msprime.SampleSet(0, "pop2"),
+            msprime.SampleSet(3, "anc"),
+        ]
+    )
+    samples = {"pop1": 5, "pop2": 0, "anc": 3}
+    computed_layout = compute_sample_layout(ts, samples)
+
+    assert [pop_name for pop_name, _ in computed_layout] == ["pop1", "anc"]
+    assert np.array_equal(computed_layout[0][1], np.arange(10))
+    assert np.array_equal(computed_layout[1][1], np.arange(10, 16))
+
+
+def test_compute_sample_layout_with_mismatched_count():
+    # test sur le garde
+    ts = _ts_from_sample_sets(
+        [
+            msprime.SampleSet(5, "pop1"),
+            msprime.SampleSet(0, "pop2"),
+            msprime.SampleSet(3, "anc"),
+        ]
+    )
+    samples = {"pop1": 5, "pop2": 0, "anc": 2}
+    with pytest.raises(ValueError, match="Le nombre total d'individus"):
+        compute_sample_layout(ts, samples)
+
+
+def test_compute_sample_layout_matches_population_layout_on_non_serial_data(
+    dna_context_te2,
+):
+    """Sur un jeu NON sÃ©riel, le dÃ©coupage par Ã©chantillon doit Ãªtre
+    STRICTEMENT identique au dÃ©coupage par population. C'est cette
+    propriÃ©tÃ© qui rend sÃ»re la substitution dans summary_statistics.py :
+    sans elle, remplacer compute_population_layout changerait les
+    rÃ©sultats sur tous les jeux dÃ©jÃ  validÃ©s.
+    """
+    scenarios = parse_header_scenarios(dna_context_te2.header_text)
+    demography, values = build_random_demography_for_scenario_index(
+        dna_context_te2.header_text, scenario_index=1, seed=7
+    )
+    counts = dna_context_te2.samples_default
+
+    ts = msprime.sim_ancestry(
+        samples=build_sample_sets_from_scenario(scenarios[0], values, counts),
+        demography=demography,
+        sequence_length=1,
+        random_seed=7,
+        ploidy=2,
+    )
+
+    by_population = compute_population_layout(ts)
+    by_sample = compute_sample_layout(ts, counts)
+
+    assert [n for n, _ in by_population] == [n for n, _ in by_sample]
+    assert all(
+        np.array_equal(a, b)
+        for (_, a), (_, b) in zip(by_population, by_sample, strict=True)
+    )
 
 
 def test_with_maf_filter_no_filter_matches_direct_call(header_text):

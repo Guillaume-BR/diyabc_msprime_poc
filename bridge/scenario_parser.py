@@ -71,46 +71,6 @@ def split_scenario_blocks(header_text: str) -> list[str]:
     return blocks
 
 
-def parse_scenario_block(block_text: str) -> Scenario:
-    """Transforme un bloc brut en objet Scenario rempli.
-
-    Args:
-        block_text: Bloc brut, en commençant par la ligne 'scenario N [...]'.
-
-    Returns:
-        Le Scenario correspondant.
-
-    Raises:
-        ValueError: Si la première ligne n'est pas un en-tête de scénario
-            valide ('scenario N [poids] (nlignes)').
-        NotImplementedError: Propagée par _parse_event_line si une ligne
-            d'événement utilise un mot-clé non géré.
-    """
-    lines = [line.strip() for line in block_text.splitlines() if line.strip()]
-
-    header_match = _SCENARIO_HEADER_RE.match(lines[0])
-    if not header_match:
-        raise ValueError(
-            f"Première ligne inattendue, pas un en-tête de scénario : {lines[0]!r}"
-        )
-    index = int(header_match.group(1))
-    weight = float(header_match.group(2))
-
-    # Deuxième ligne : tailles de population initiales, ex: "N1 N2 N3 N4"
-    initial_pop_size_exprs = lines[1].split()
-
-    events = []
-    for line in lines[2:]:
-        events.append(_parse_event_line(line))
-
-    return Scenario(
-        index=index,
-        weight=weight,
-        initial_pop_size_exprs=initial_pop_size_exprs,
-        events=events,
-    )
-
-
 def _parse_event_line(line: str):
     """Transforme une ligne d'événement en objet Event correspondant.
 
@@ -174,6 +134,46 @@ def _parse_event_line(line: str):
     )
 
 
+def parse_scenario_block(block_text: str) -> Scenario:
+    """Transforme un bloc brut en objet Scenario rempli.
+
+    Args:
+        block_text: Bloc brut, en commençant par la ligne 'scenario N [...]'.
+
+    Returns:
+        Le Scenario correspondant.
+
+    Raises:
+        ValueError: Si la première ligne n'est pas un en-tête de scénario
+            valide ('scenario N [poids] (nlignes)').
+        NotImplementedError: Propagée par _parse_event_line si une ligne
+            d'événement utilise un mot-clé non géré.
+    """
+    lines = [line.strip() for line in block_text.splitlines() if line.strip()]
+
+    header_match = _SCENARIO_HEADER_RE.match(lines[0])
+    if not header_match:
+        raise ValueError(
+            f"Première ligne inattendue, pas un en-tête de scénario : {lines[0]!r}"
+        )
+    index = int(header_match.group(1))
+    weight = float(header_match.group(2))
+
+    # Deuxième ligne : tailles de population initiales, ex: "N1 N2 N3 N4"
+    initial_pop_size_exprs = lines[1].split()
+
+    events = []
+    for line in lines[2:]:
+        events.append(_parse_event_line(line))
+
+    return Scenario(
+        index=index,
+        weight=weight,
+        initial_pop_size_exprs=initial_pop_size_exprs,
+        events=events,
+    )
+
+
 def parse_header_scenarios(header_text: str) -> list[Scenario]:
     """Point d'entrée principal : header.txt complet -> liste de Scenario.
 
@@ -185,7 +185,7 @@ def parse_header_scenarios(header_text: str) -> list[Scenario]:
         header_text: Texte complet de header.txt.
 
     Returns:
-        Les Scenario parsés avec succès. Un bloc dont le vocabulaire n'est
+        Liste de Scenarios parsés avec succès. Un bloc dont le vocabulaire n'est
         pas géré est silencieusement ignoré (warning émis), pas levé.
     """
     blocks = split_scenario_blocks(header_text)
