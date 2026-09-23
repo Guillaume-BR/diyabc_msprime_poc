@@ -2396,6 +2396,7 @@ def build_microsat_transition_matrix_with_sni(
     )
 
 
+# fonction obsolète, conservée pour compatibilité avec l'ancienne interface de simulation microsatellite
 def build_microsat_transition_matrix(
     kmin: int, kmax: int, motif_size: int, Pgeom: float, epsilon: float = 1e-16
 ) -> msprime.MatrixMutationModel:
