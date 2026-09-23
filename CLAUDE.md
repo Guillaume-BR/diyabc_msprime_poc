@@ -595,8 +595,9 @@ real genealogy).
   mixed header), total count, bounds (`mut_rate>0`, `0<=Pgeom<=1`),
   inter-locus diversity, 2 golden values, reproducibility.
 
-- **`build_matrix_microsat_per_locus(header_text, mss_file_path,
-  seed)`** → `dict[locus_name, MatrixMutationModel]`: assembles
+- **`build_matrix_microsat_per_locus(context, seed)`** (signature as of
+  the ReplayContext refactor — `(header_text, mss_file_path, seed)` at
+  the time of `740b9e6`) → `dict[locus_name, MatrixMutationModel]`: assembles
   `allele_bounds_per_locus` + `build_microsat_local_param_per_locus` +
   `build_microsat_transition_matrix`, mirroring `build_matrix_per_locus`
   (DNA). Tested (`740b9e6`): MicroSat-only filter (on the right dict —
@@ -611,8 +612,9 @@ real genealogy).
   (`np.array_equal`/`np.allclose`), never `==` on the object or a dict
   containing one.
 
-- **`microsat_mutation_simulation_per_locus(header_text, mss_file_path,
-  demography, seed)`** (`ancestry_simulation.py`, commit `c50e37c`) →
+- **`microsat_mutation_simulation_per_locus(context, demography, seed)`**
+  (`ancestry_simulation.py`, commit `c50e37c` — took `(header_text,
+  mss_file_path, demography, seed)` before the ReplayContext refactor) →
   `dict[locus_name, tskit.TreeSequence]`: the full per-locus assembly,
   copied from `dna_mutation_simulation_per_locus`'s structure
   (ploidy/demography/sex dispatch via `dna_ancestry_parameters_for_
@@ -1531,6 +1533,18 @@ but was pursued anyway as a real, independently-motivated cleanup, and
 is now complete for all three data families (SNP, MicroSat, DNA
 sequences).
 
+**Reading this file: every signature written down in a section dated
+BEFORE 2026-09-16 may be stale because of this refactor** — most
+per-locus builders took `(header_text, mss_file_path, ...)` and now take
+`(context, ...)` instead (e.g. `build_matrix_per_locus`,
+`build_matrix_microsat_per_locus`, `microsat_mutation_simulation_per_
+locus`, `dna_mutation_simulation_per_locus`). Not all of them moved:
+`build_group_local_param_per_locus`, `build_microsat_local_param_per_
+locus` and `build_rate_map_per_locus` still take `(header_text, seed)`,
+since they read nothing off the disk. Check the real signature before
+calling one from a notebook or a script (found stale on 2026-09-22 while
+writing `notebook/visualise_dna_pipeline.py`).
+
 Three new dataclasses in `bridge/header_dataclasses.py` —
 `SnpReplayContext`, `MicrosatReplayContext`, `DnaReplayContext` — each
 built ONCE per `run_reftable_simulation*`/`replay_reftable_simulation*`
@@ -2009,8 +2023,10 @@ of `model_bounds[0]`/`model_bounds[1]`).
   value for any group using `K2P`/`HKY`/`JK` (i.e. absent for the
   entire `toy_example2_ms_dna` dataset, since it's `K2P`-only).
 
-- **`build_matrix_per_locus`** (`ancestry_simulation.py`) is the full
-  `header.txt` + `.mss` + `seed` → `{locus_name: matQ}` pipeline, tying
+- **`build_matrix_per_locus(context, seed)`** (`ancestry_simulation.py`)
+  is the full `header.txt` + `.mss` + `seed` → `{locus_name: matQ}`
+  pipeline (it took `(header_text, mss_file_path, seed)` before the
+  ReplayContext refactor — see below), tying
   together `build_group_local_param_per_locus`, `base_frequency_by_locus`,
   and `build_transition_matrix`. Validated end-to-end on
   `toy_example2_ms_dna` (10/10 sequence loci, every row-stochastic,
