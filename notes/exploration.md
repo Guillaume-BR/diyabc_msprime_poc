@@ -736,6 +736,331 @@ encore écrit.
 - L'algorithme de mutation microsat lui-même (SNI/GSM/Pgeom) — pas
   commencé, à écrire à la main.
 
+## DNA sequence summary statistics (started 2026-08-24, mentor mode — user-driven, reviewed/debugged with the assistant)
+
+*(Entrée migrée verbatim depuis CLAUDE.md le 23/09/2026 ; CLAUDE.md n'en garde qu'un verdict condensé. Rédigée en anglais à l'origine, conservée telle quelle.)*
+
+Picked up right after the ploidy/demography fix above. Goal: reproduce
+the 13 DNA-sequence-specific statistics from `sumstat.cpp` (`cal_nha1p`/
+`2p`, `cal_nss1p`/`2p`, `cal_mpd1p`, `cal_vpd1p`, `cal_mpw2p`, `cal_mpb2p`,
+`cal_dta1p`, `cal_pss1p`, `cal_mns1p`, `cal_vns1p`, `cal_fst2p` —
+confirmed against `toy_example2_ms_dna/headerRF.txt`'s `group summary
+statistics` section, which requests exactly these 13 under the names
+`NHA`/`NSS`/`MPD`/`VPD`/`DTA`/`PSS`/`MNS`/`VNS` per-population and
+`NH2`/`NS2`/`MP2`/`MPB`/`HST` per-pair) in `bridge/summary_statistics.py`,
+building on the mutated `TreeSequence`s from `dna_mutation_simulation_
+per_locus`. Distinct from the MicroSat-specific `NAL`/`HET`/`VAR`/`MGW`/
+`FST`/`LIK`/`DAS`/`DM2` stats declared in the same header's `G1` group —
+those need allele-size arithmetic, not tskit genotypes, and are out of
+scope here.
+
+- **`compute_population_layout`** (`ancestry_simulation.py`, renamed
+  from the private `_population_layout` since `summary_statistics.py`
+  now needs it too) hit a real name-shadowing bug when made public: four
+  call sites inside `simulate_snp_genotypes`/`with_maf_filter_shared_
+  ancestry` (which both also have a **parameter** named `population_layout`)
+  did `population_layout = population_layout(ts)` — the local parameter
+  shadowed the module-level function, so this became `None(ts)` whenever
+  the parameter defaulted to `None`, breaking 24 tests across three test
+  files. Fixed by renaming the function only (not the parameter, which is
+  documented at length in multiple docstrings) — see
+  `feedback_name_shadowing_pattern` project memory, same bug class
+  recurring.
+
+- **`_genotype_matrix_by_population`** (`summary_statistics.py`): one
+  `TreeSequence` (one DNA sequence locus) → `{pop_name: matrix}`, matrix
+  shape `(n_sites, n_samples_pop)` — tskit's native `genotype_matrix()`
+  convention, sliced per population via `compute_population_layout`.
+  `genotype_matrix()` called once per `TreeSequence`, not once per
+  sample (an early draft rebuilt the whole matrix per sample). Tested on
+  both an `<A>` and an `<M>` locus of `toy_example2_ms_dna`: correct
+  `n_sites`/`n_samples` shapes, no sample lost/duplicated across
+  populations, and the 2:1 sample-count ratio between `<A>`/`<M>`
+  confirms it composes correctly with the 2026-08-24 ploidy fix above.
+
+- **Two-tier pattern established for the per-population ("1p") stats**,
+  mirroring `sumstat.cpp`'s own per-locus/per-group split (`cal_*pl` +
+  `cal_*1p` with an `nl` denominator): a `_count_*(matrix)` brick
+  (one locus, one population → a scalar) plus a `mean_*_per_group
+  (tree_sequences, population_names)` aggregator (mean over a **single**
+  header `group Gx`'s loci — never loci from two different groups mixed
+  together, since each group computes its own independent stat).
+  Aggregators pre-fill `{pop_name: 0.0 for pop_name in population_names}`
+  before accumulating, matching the C++'s `res = 0.0` declared before its
+  `if (nl > 0)` guard — so every expected population always has a value,
+  even for an empty `tree_sequences` list, rather than a population
+  silently missing from the result dict. Documented, not fixed: this
+  assumes every population in `population_names` is present on every
+  locus of the group (divides by `len(tree_sequences)`, not a real
+  per-population `nl` count) — true on `toy_example2_ms_dna` (checked
+  empirically), not guaranteed in general; violating it raises `KeyError`
+  rather than silently excluding that locus, unlike the C++.
+  - `NSS` (`_count_segregating_sites` + `mean_segregating_sites_per_group`,
+    `cal_nsspl`/`cal_nss1p`): a site is segregating for a population if
+    not all its samples share the same base — vectorized as
+    `np.any(matrix != matrix[:, [0]], axis=1)`, correct for any number of
+    distinct values per site since "differs from sample 0" is equivalent
+    to "not all identical" (not just "exactly 2 alleles").
+  - `NHA` (`_count_distinct_haplotypes` + `mean_distinct_haplotypes_per_group`,
+    `cal_nha1p`): number of distinct haplotypes = distinct **columns** of
+    the matrix (`np.unique(matrix, axis=1)`). Bug caught and fixed: an
+    early draft returned `.shape[0]` (number of *sites*) instead of
+    `.shape[1]` (number of distinct haplotypes) — both happened to be
+    `3` on the first hand-picked test matrix, masking the bug until a
+    second matrix with `n_sites != n_distinct_haplotypes` was tried.
+    `np.unique` on a `(0, n_samples)` matrix (locus with zero variable
+    sites) correctly returns exactly 1 unique column for free, matching
+    `cal_nha1p`'s explicit `dnavar == 0` → 1-haplotype special case
+    without needing an explicit branch.
+  - Both `_count_segregating_sites`/`_count_distinct_haplotypes` raise
+    `ValueError` on `matrix.shape[1] == 0` (population with zero samples
+    on a locus) rather than crashing obscurely or returning a silently
+    wrong count — deliberately checked against `shape[1]` (samples), not
+    `matrix.size` (an earlier draft used `.size`, which also triggers
+    incorrectly on the *valid* `n_sites == 0` case, a locus with no
+    mutations at all — see `feedback_control_flow_chaining_bugs`-style
+    edge-case conflation).
+  - A `ValueError` was independently added and removed **twice** from
+    `mean_segregating_sites_per_group`'s empty-list handling during this
+    session — once genuinely misplaced (inside `if num_loci > 0` instead
+    of `else`, so it fired on the *normal* case), once syntactically
+    correct but reintroduced the very "raise instead of 0.0-default"
+    design this whole two-tier pattern was built to avoid. Kept as
+    `0.0`-default, confirmed explicitly with the user both times — if
+    this `raise` reappears a third time, check for an editor/autosave
+    restoring a stale buffer rather than assuming it's an intentional
+    edit.
+
+- **`_pairwise_hamming_distances`** (`summary_statistics.py`, brick for
+  `MPD`/`VPD`/`cal_mpdpl`/`cal_vpd1p`): one matrix → the 1D vector of
+  Hamming distances for all `C(n_samples, 2)` pairs, via
+  `(matrix[:, :, None] != matrix[:, None, :]).sum(axis=0)` then
+  `np.triu_indices(..., k=1)` to keep `i < j` pairs only (no double-count,
+  no diagonal). Verified against a hand-computed matrix. Same
+  `matrix.shape[1] == 0` → `ValueError` guard added for consistency with
+  `_count_segregating_sites`/`_count_distinct_haplotypes` (an initial
+  draft silently returned `[]` instead, which would have propagated into
+  `nan` + a numpy `RuntimeWarning` from `mean()`/`var()` on an empty
+  array rather than a clear error at the source).
+
+- **`MPD`/`VPD`** (`mean_pairwise_differences_per_group`/`variance_
+  pairwise_differences_per_group`, `cal_mpd1p`/`cal_vpd1p`) needed a
+  different exclusion regime than `NSS`/`NHA`: instead of a flat
+  `num_loci` denominator, a **per-population** `valid_loci_count` dict,
+  because a locus only contributes if it has at least 1 pair (`MPD`,
+  `nd > 0`) or at least 2 pairs (`VPD`, `nd > 1`) — `_pairwise_hamming_
+  distances` on a 1-sample matrix returns an empty vector, and
+  `.mean()`/`.var()` on that gives `nan`, which would otherwise silently
+  poison the whole group's sum. Not a bug in practice on this project's
+  datasets (20-40 samples/population always) but the C++'s own guard
+  reproduced for fidelity. A `> 1` vs `> 0` threshold confusion on
+  `VPD`'s **final division** guard was flagged as a possible bug and
+  turned out to be a false alarm — dividing by 1 is a no-op, so the two
+  thresholds are numerically indistinguishable in every case; still
+  switched to `> 0` for readability/consistency with the rest of the
+  file, not because the `> 1` version was wrong.
+
+- **`DTA`** (`_tajima_d_per_locus` + `mean_tajima_d_per_group`,
+  `cal_dta1pl`/`cal_dta1p`) is the classic Tajima's D neutrality
+  statistic, built directly on top of `MPD` (π) and `NSS` (S) — no new
+  per-site logic needed beyond `_tajima_constants(n_samples)` (the
+  `a1`/`e1`/`e2` coefficients, pure functions of sample size). Caught
+  before commit: a parenthesization bug, `(n+1) / ((n-1)/3.0)` instead
+  of `(n+1)/(n-1)/3.0`, made `b1` exactly 9× too large (verified
+  numerically). **Two distinct, easy-to-conflate exclusion cases**:
+  `n_samples < 2` excludes the locus entirely (`_tajima_d_per_locus`
+  returns `None`, matching `OKK = false`); `n_samples >= 2` but `S == 0`
+  (no segregating sites → the formula's denominator is 0) still
+  **includes** the locus in the group average with a contributed value
+  of `0.0` — the C++ never resets `OKK` in that second case (`cal_
+  dta1pl` lines 1579/1594-1598). An initial draft used the wrong input
+  shape entirely (SNP-style `genotypes_per_locus: list[dict]`, treating
+  "number of loci" as "number of samples") before being rewritten to
+  match the `tree_sequences`-based two-tier pattern of every other stat
+  here.
+
+- **`PSS`** (`_private_segregating_sites_per_locus` + `mean_private_
+  segregating_sites_per_group`, `cal_pss1p`) is the one per-population
+  stat that needs **every** population's matrix at once, not just the
+  target's — a site counts as "private" to population `i` only if it's
+  segregating in `i` and fixed in **every other population of the whole
+  dataset** (not just the target's group). Required factoring a reusable
+  `_segregating_sites_mask(matrix)` boolean helper out of `_count_
+  segregating_sites` (previously computed the count directly). Since all
+  populations' matrices for one locus come from the same underlying
+  `genotype_matrix()` (just column-sliced), row `i` means the same
+  physical site for every population — booleans compare directly by
+  position, no index-matching search needed (the C++ does need one,
+  `ssa[sample][j] == ssa[sa][k]`, because its per-population variable-
+  site index lists are separate dynamic arrays). `nl` increments
+  unconditionally every locus in `cal_pss1p` (no `samplesize > 0` guard
+  at all, unlike `NSS`/`NHA`) — simple `num_loci` denominator.
+
+- **`MNS`/`VNS`** (`_minor_allele_counts_at_segregating_sites` +
+  `mean_minor_allele_count_per_group`/`variance_minor_allele_count_per_
+  group`, `afs`/`cal_mns1p`/`cal_vns1p`): at each segregating site,
+  `min(counts of each distinct base actually present)` — reproduces the
+  C++'s "sort 4 slots ascending, skip zeros" (`afs`) via `np.unique(site,
+  return_counts=True).min()` when `len(values) > 1`, simpler because
+  `np.unique` only ever returns actually-present values (no need to
+  handle the zero-slots explicitly). **`VNS` is a BIASED variance
+  (`ddof=0`, division by `n` not `n-1`)** — confirmed against `cal_
+  vns1p`'s `v = (sx2 - sx*sx/a) / a`, deliberately different from `VPD`'s
+  `ddof=1`, easy to get wrong by pattern-matching against `VPD`. Both
+  stats use the flat `num_loci` denominator (`nl` increments
+  unconditionally in both `cal_mns1p`/`cal_vns1p`, like `PSS`) — no
+  per-population exclusion needed.
+
+- **Pairwise ("2p") stats reuse the 1p bricks on pooled/cross
+  matrices**, all following the same aggregator skeleton (`{pair_key:
+  0.0}` pre-filled, `num_loci` denominator, `"{i+1}.{j+1}"` keys via a
+  plain double loop — not `_half_arrangements`, see below):
+  - **`NH2`** (`mean_distinct_haplotypes_per_group_pairwize`, `cal_
+    nha2p`): `_count_distinct_haplotypes` on `np.hstack(matrix_a,
+    matrix_b)` — the two populations' matrices are column-slices of the
+    same `genotype_matrix()`, so concatenation along the sample axis
+    needs no realignment.
+  - **`NS2`** (`mean_segregating_sites_per_group_pairwize`, `cal_
+    nss2p`): identical trick with `_count_segregating_sites` instead.
+  - **`MP2`** ("mean pairwise **within**",
+    `mean_pairwise_differences_per_group_pairwize`, `cal_mpw2p`):
+    `_pairwise_hamming_distances` computed **separately** on each
+    population's own matrix (never concatenated), then pooled as a
+    ratio of sums (`(sum_di_a + sum_di_b) / (nd_a + nd_b)`) — NOT a
+    simple average of the two populations' own `MPD` values; only
+    equal to that average when both populations have the same sample
+    size (as they happen to in `toy_example2_ms_dna`).
+  - **`MPB`** ("mean pairwise **between**",
+    `mean_pairwise_differences_between_per_group_pairwize`, `cal_
+    mpb2p`): new brick `_pairwise_hamming_distances_between(matrix_a,
+    matrix_b)` — full cross-product `(matrix_a[:,:,None] !=
+    matrix_b[:,None,:]).sum(axis=0)`, shape `(n_a, n_b)`, **no
+    triangle extraction needed** (unlike the "within" case) since every
+    `(p in a, q in b)` pair is valid, never a self-comparison. An early
+    draft's docstring claimed this returned a flattened 1D vector of
+    length `n_a*n_b`; it actually returns the 2D `(n_a, n_b)` matrix —
+    `.mean()` on it is still numerically correct either way (numpy
+    averages all elements regardless of shape), but a downstream `len(...)
+    > 0` guard was checking the wrong thing (`n_a`, not `n_a*n_b`) —
+    harmless in practice only because the brick's own guard already
+    rejects 0-sample inputs before that check is ever reached.
+  - **`HST`** (`mean_hst_per_group_pairwize`, `cal_fst2p` — note the
+    lowercase C++ name, easy to confuse with MicroSat's unrelated
+    `cal_Fst2p`): `(Hb - Hw) / Hb` where `Hb` = `MPB`-per-locus, `Hw` =
+    `MP2`-per-locus. **Breaks the "mean over loci" pattern used by every
+    other DNA stat** — it's a *ratio of sums* accumulated separately per
+    pair across the whole group (`num[pair]`, `den[pair]`, divided once
+    at the very end), the same style as `_fst_wc` (SNP side, already in
+    this file), not `sum_of_per_locus_values / num_loci`. Took two
+    attempts to get right: a per-pair aggregator needs `num`/`den` as
+    **dicts keyed by pair**, not shared scalars reset once per locus —
+    with a shared scalar, N>2 populations silently mix different pairs'
+    contributions and only the last pair visited by the inner loop ever
+    gets its dict entry updated (every other pair stays stuck at its
+    `0.0` default). Completely invisible on this project's only real
+    DNA-sequence dataset (2 populations = 1 pair, so "the shared scalar"
+    and "the only pair" are the same thing by coincidence) — caught only
+    via a synthetic 3-population mock test
+    (`unittest.mock.patch` on `_genotype_matrix_by_population`). See
+    `feedback_pairwise_accumulator_bug` project memory; the same bug
+    class could in principle recur in `NH2`/`NS2`/`MP2`/`MPB` if ever
+    exercised on a 3+ population dataset, even though those four
+    happened to be written correctly.
+  - `_half_arrangements` (built for `AML`/`F3`/`F4`'s asymmetric HALF
+    ordering, where element order matters) was briefly misapplied to
+    generate `NH2`'s plain symmetric pairs — not numerically wrong for
+    `r=2` (its HALF filter happens to keep only the ascending-index
+    permutation), but semantically confusing and needlessly expensive;
+    switched to the plain double loop `compute_HW_HB`/`compute_FST2`
+    already use elsewhere in this file.
+
+**Resolved 2026-08-25**: the column-collision question below WAS a real
+issue and IS handled — see `compute_all_statistics_dna` in the same
+file, which embeds the group index in every column name
+(`stats_group_parser.parse_requested_statistic_names` was fixed
+alongside it), exactly mirroring how the real DIYABC reftable itself
+names these columns (`NSS_2_1` for group G2, `NSS_3_1` for group G3,
+never a bare `NSS_1`) — verified byte-for-byte against real `diyabc`
+output on `toy_example2_ms_dna`. `compute_all_statistics_dna(header_text,
+tree_sequences_by_locus, population_names)` is the top-level DNA entry
+point (mirrors `compute_all_statistics`), now wired into `pipeline.py`
+(see "DIYABC-replay pipeline for DNA sequences" below) — the
+`stats_group_parser.py` docstring's old "dedup deferred, unclear if
+legitimate" framing is stale, ignore it.
+
+**Resolved 2026-09-11**: MicroSat's own stats (`NAL`/`HET`/`VAR`/`MGW`/
+`N2P`/`H2P`/`V2P`/`FST`/`LIK`/`DAS`/`DM2`) are now implemented too — see
+"MicroSat summary statistics" above. They needed a different data shape
+than tskit genotype matrices (allele sizes from `_length_by_population`,
+plus individual/ploidy-aware genotypes for `FST`/`LIK` specifically),
+confirming the original note below was right that this wasn't a simple
+reuse of the DNA-sequence bricks. See `notes/resume_stat_dna_ms.md` for
+a biology-first (not code-first) explanation of what each of the 13 DNA
+stats and 11 MicroSat stats measures.
+
+
+## DIYABC-replay pipeline for DNA sequences (2026-08-26) — cross-validated against a real reftable
+
+*(Entrée migrée verbatim depuis CLAUDE.md le 23/09/2026 ; CLAUDE.md n'en garde qu'un verdict condensé. Rédigée en anglais à l'origine, conservée telle quelle.)*
+
+Mirrors the SNP-side replay architecture (see item 12 above,
+`run_reftable_simulation` vs. `replay_reftable_simulation`) exactly: a
+`_dna`/`_from_values` sibling of each SNP function, never modifying the
+SNP originals, so this can't regress the already-validated SNP path.
+Six pieces, all in `bridge/`:
+
+1. `reftable_loop.group_prior_column_names(header_text)` — real
+   reftable column names for group priors (`µseq_2`, `k1seq_2`,
+   `µmic_1`, `pmic_1`...). Verified scenario-INDEPENDENT (`nparamut` is
+   a constant across scenarios, unlike `nparam` for historical params)
+   — do NOT reuse `_kept_param_names_by_scenario` here, it expects
+   `Prior` objects with `.bounds` (not strings) and filters by
+   scenario, a concept group priors don't have.
+2. `reftable_loop.parse_real_reftable_params_with_group_priors(path,
+   priors, scenarios, group_priors_names)` — a NEW sibling of
+   `parse_real_reftable_params`, returns triplets `(scenario_index,
+   historical_values, group_priors_values)` with the two value dicts
+   kept SEPARATE (they feed different downstream stages: demography
+   vs. mutation model). Like the SNP original, handles the real
+   reftable's per-row ragged column width (see `parse_real_
+   reftable_params`'s own docstring for why a naive whitespace-split
+   parser silently misaligns columns here).
+3. `ancestry_simulation._group_prior_values_from_columns(group_priors_
+   values, group_priors)` — reshapes the flat real-column dict into the
+   nested `{group: {"MEANMU":.., "MEANK1":..}}` shape `draw_group_
+   parameter_values` already produces, so `build_group_local_param_
+   per_locus`'s existing body (model branching, per-locus `sampling_
+   group_local_param` calls) is reused byte-for-byte in `build_group_
+   local_param_per_locus_from_values`. Only the group-level (tier 1)
+   draw is replaced with the real value; the per-locus (tier 2)
+   dispersion around that mean is NEVER replaced — real DIYABC doesn't
+   record it in the reftable, so there's nothing to replay, it keeps
+   drawing from `seed`. Same principle propagates through `build_
+   matrix_per_locus_from_values`/`build_rate_map_per_locus_from_values`/
+   `dna_mutation_simulation_per_locus_from_values`.
+4. `pipeline.compute_summary_statistics_dna`/`_from_values`,
+   `reftable_loop._run_single_particle_dna`/`_from_values`,
+   `reftable_loop.replay_reftable_simulation_dna` — each a direct
+   mirror of its SNP sibling, no `num_loci`/`observed_reads_per_locus`
+   params (no PoolSeq/loci-truncation concept for DNA sequences).
+5. `write_reftable_txt` needed ZERO new code — already fully generic
+   (`ParticleResult` + `priors`/`scenarios`), reused as-is for DNA
+   results.
+6. `scripts/replay_diyabc_priors_dna.py` (and its 50-loci-dataset copy
+   `scripts/replay_diyabc_priors_dna_50loci.py`) — the runnable
+   end-to-end script, mirrors `scripts/replay_diyabc_priors.py`. Run as
+   `python3 -m scripts.replay_diyabc_priors_dna` from the repo root
+   (see the `scripts/` section below for why). A 1000-particle real
+   reftable replay runs in under 2 minutes.
+
+**Validation result** (`toy_example2_ms_dna`, scenario 1, 1000
+particles, 5+5 DNA loci): historical params match the real reftable
+EXACTLY (`rdiff_mean = 0`, KS `p = 1.0` on `N1`/`t1`/`ta`/`ra`/`t2` —
+confirms the replay plumbing itself is correct). Of the 42 DNA stat
+columns, 11 show KS `p<0.05` — see the next section for the full
+investigation of that gap.
+
+
 ## Note du 27/08/26 — écart de variance sur les stats ADN séquence du groupe G3 (<M>) : investigation complète, du dataset stress-test jusqu'au code source C++
 
 Contexte : la validation appariée DIYABC/msprime sur `toy_example2_ms_dna`
@@ -1194,6 +1519,331 @@ corriger et recompiler `do_sequence` pour obtenir une vraie référence
 reste ouverte, toujours à trancher avec l'encadrant si une validation
 face au vrai DIYABC devient nécessaire un jour.
 
+## MicroSat GSM mutation model (2026-09-04 to 2026-09-08, mentor mode — user-driven, reviewed/debugged with the assistant)
+
+*(Entrée migrée verbatim depuis CLAUDE.md le 23/09/2026 ; CLAUDE.md n'en garde qu'un verdict condensé. Rédigée en anglais à l'origine, conservée telle quelle.)*
+
+Picked up as the natural continuation of "MicroSat / sequences-mut
+header parsing" above (parsing was complete, simulation wasn't started
+at all). Covers the full path from `header.txt` + `.mss` to a mutated
+`tskit.TreeSequence` per MicroSat (`[M]`) locus, validated end-to-end
+on `toy_example1_ms`/`toy_example2_ms_dna`/`toy_example2_ms_dna_XY`,
+plus the `pipeline.py`/`reftable_loop.py` orchestration layer mirroring
+the DNA-sequence path. The DIYABC model (confirmed by direct reading of
+`particuleC.cpp::mute`/`setMutParamValue`/`cree_haplo`, and by the
+user's own doc research): at each mutation event (Poisson per branch,
+rate `mut_rate` — SNI is a separate, deferred channel, see below), a
+GSM step of `d` repeat units is drawn via a geometric distribution
+parameterized by `Pgeom` (`Pgeom=0` is the SMM special case), clamped
+to `[kmin, kmax]`. Ancestral state = midpoint of `[kmin, kmax]`, not
+drawn.
+
+**Key discovery (proposed by the user, verified empirically)**:
+`msprime.TPM` (Two-Phase Model) with `p→ε` (literal `p=0` raises
+`ValueError`) reproduces the GSM channel alone exactly — verified by
+inspecting `.transition_matrix` directly: the geometric ratio between
+`P(d=k)` and `P(d=k+1)` equals `Pgeom` (so `m_msprime = 1 - Pgeom`,
+same epsilon-clamp requirement, relevant because `Pgeom=0`/`Pgeom=1`
+are both valid DIYABC inputs that map to msprime's forbidden `m=1`/`m=0`
+literals), each row sums to 1, zero diagonal except at the clamped
+edges (faithfully reproducing DIYABC's own "auto-mutation at the
+boundary"). **Non-obvious fix caught before code was written**: the
+`TPM` grid must be anchored on `root` (the ancestral state), NOT on
+`kmin` — verified on real data (`toy_example1_ms`'s `Locus_M_A_1_`:
+`root - kmin = 39`, ODD, while `motif_size = 2` is even) that the
+ancestral state doesn't necessarily fall on a `motif_size`-multiple
+offset from `kmin`, and GSM steps happen from the CURRENT state, not
+from `kmin`. Accepted consequence (explicit choice, not a silent
+approximation): `TPM`'s own bounds can differ from DIYABC's literal
+`kmin`/`kmax` by up to `motif_size - 1` bp — negligible in practice
+(`kmin`/`kmax` are a generous guard-rail, almost never reached by a
+real genealogy).
+
+- **`build_microsat_transition_matrix(kmin, kmax, motif_size, Pgeom,
+  epsilon=1e-16)`** (`ancestry_simulation.py`) → `msprime.
+  MatrixMutationModel`: computes `root`, `n_minus`/`n_plus`, builds
+  `msprime.TPM(p=epsilon, m=clamp(1-Pgeom, epsilon, 1-epsilon), lo=0,
+  hi=n_alleles-1).transition_matrix`, relabels alleles to real bp
+  (`root + (i-n_minus)*motif_size`), one-hot `root_distribution` at
+  `n_minus`. Tested (commit `740b9e6`): nominal case plus both `Pgeom`
+  edges — `Pgeom=0` gives exactly `0.5`/`0.5` to the two immediate
+  neighbors and zero elsewhere (pure SMM), `Pgeom=1` gives a uniform
+  `1/(n_alleles-1)` off-diagonal (no distance preference at all).
+  **Non-obvious**: at the `Pgeom` edges, `epsilon` must stay near its
+  default (`1e-16`), NOT the nominal case's `epsilon=0.01` — at
+  `epsilon=0.01` the `TPM`'s `p` clamp has a real, measurable (~1%)
+  effect that breaks the exact `0.5` assertion, since `p` is the
+  probability of a "long jump" (uniform anywhere), not just a numerical
+  guard-rail.
+
+- **`build_microsat_local_param_per_locus(header_text, seed)`** →
+  `dict[locus_name, (mut_rate, Pgeom)]`: same two-tier hierarchy as the
+  DNA-sequence `k1`/`k2`/`mus_rate` draw (`draw_group_parameter_values`
+  then `sampling_group_local_param`, both generalize for free — no
+  MicroSat-specific changes needed in `parameter_sampling.py`, verified
+  empirically before writing the rest). **Naming pitfall, already
+  documented and re-triggered here**: DIYABC uses `mut_rate` for
+  MicroSat and a DIFFERENT variable, `mus_rate`, for DNA sequences —
+  reusing `mus_rate` for MicroSat (copy-paste from the DNA-sequence
+  code) was caught and corrected before commit. A `next(gp for gp in
+  group_priors[group] if gp.name == "GAM")` bug (real name is `"GAMP"`,
+  not `"GAM"` — `StopIteration` otherwise) was also caught before
+  commit. Tested (`740b9e6`): MicroSat-only filter (the dict must
+  contain ONLY `ms_or_seq=="M"` keys, never the `[S]` loci of the same
+  mixed header), total count, bounds (`mut_rate>0`, `0<=Pgeom<=1`),
+  inter-locus diversity, 2 golden values, reproducibility.
+
+- **`build_matrix_microsat_per_locus(context, seed)`** (signature as of
+  the ReplayContext refactor — `(header_text, mss_file_path, seed)` at
+  the time of `740b9e6`) → `dict[locus_name, MatrixMutationModel]`: assembles
+  `allele_bounds_per_locus` + `build_microsat_local_param_per_locus` +
+  `build_microsat_transition_matrix`, mirroring `build_matrix_per_locus`
+  (DNA). Tested (`740b9e6`): MicroSat-only filter (on the right dict —
+  an early draft looped over `params_per_locus` instead of the
+  function's own return value, testing the wrong thing), integration
+  cross-check against the first test (`Locus_M_A_1_` → 39 alleles,
+  confirming bounds+params+matrix wiring), reproducibility.
+  **`MatrixMutationModel` does NOT implement `__eq__` usefully** (`m1
+  == m2` is `False` even for two identically-constructed models,
+  verified empirically) — reproducibility tests must compare
+  `.alleles`/`.root_distribution`/`.transition_matrix` separately
+  (`np.array_equal`/`np.allclose`), never `==` on the object or a dict
+  containing one.
+
+- **`microsat_mutation_simulation_per_locus(context, demography, seed)`**
+  (`ancestry_simulation.py`, commit `c50e37c` — took `(header_text,
+  mss_file_path, demography, seed)` before the ReplayContext refactor) →
+  `dict[locus_name, tskit.TreeSequence]`: the full per-locus assembly,
+  copied from `dna_mutation_simulation_per_locus`'s structure
+  (ploidy/demography/sex dispatch via `dna_ancestry_parameters_for_
+  heritage`/`build_sex_stratified_samples_argument_dna`/`build_male_
+  only_samples_argument_dna` reused as-is — all already generic enough,
+  verified before writing). Three bugs caught and fixed during review,
+  none survived to the committed version:
+  - `msprime.sim_mutations(..., seed=...)` instead of `random_seed=...`
+    — confirmed via `inspect.signature`: the real keyword is
+    `random_seed`; `seed` isn't a recognized parameter at all
+    (`TypeError` at the very first call, caught by actually running the
+    function rather than just reading the diff).
+  - `mut_rate` was never retrieved at all — `build_matrix_microsat_
+    per_locus` (called internally) discards it (`_, Pgeom = params_
+    per_locus[...]`), so an early draft passed no `rate=` to
+    `sim_mutations` at all. Fixed by calling `build_microsat_local_
+    param_per_locus` a second time (deterministic given the same seed,
+    so no correctness risk, just a redundant computation — a known,
+    accepted minor inefficiency, not fixed) to recover `mut_rate`
+    alongside the matrix.
+  - `sequence_length=locus.motif_size * locus.motif_range` instead of
+    `sequence_length=1` — a MicroSat locus is a SINGLE site with a
+    large allele-space alphabet (like DNA sequence's 4-base alphabet,
+    but ~39 states here), not multiple independent sites; with
+    msprime's default `discrete_genome=True`, a length `>1` would have
+    silently simulated several INDEPENDENT big-alphabet sites per
+    locus instead of one repeat-length state — caught by comparing
+    against the plan agreed the session before (session memory /
+    `notes` had already flagged `sequence_length=1` as the right
+    answer), not by running the code first.
+  Validated by direct execution (not just `pytest`): 10/10 MicroSat
+  loci on `toy_example2_ms_dna_XY`, `num_sites=1` everywhere, mutation
+  counts scaling plausibly with each locus's own drawn `mut_rate`
+  (cross-checked against `build_microsat_local_param_per_locus`'s own
+  output), correct `<X>`/`<Y>` sample-count dispatch (`79`/`20` on this
+  dataset's real heterogeneous sex ratio).
+  Tests (same commit, later fixed in follow-up commits): reproducibility
+  and cross-locus independence must compare `np.array_equal(...
+  .genotype_matrix(), ...)`, NEVER `.genotype_matrix().all()` (the
+  latter collapses the whole matrix to one boolean — two completely
+  different matrices can coincidentally have the same `.all()`,
+  verified empirically on this exact dataset, making such an assertion
+  pass without proving anything). Ploidy-matches-heritage test needed a
+  fixture edit (`toy_example2_ms_dna_XY`'s `Locus_M_A_2_` relabeled
+  `<A>`→`<M>` in both `headerRF.txt` and the `.mss`, since the original
+  fixture had no MicroSat `<M>` locus at all) — confirmed this didn't
+  disturb any already-committed golden-value test elsewhere (the
+  per-group RNG draw sequence depends only on locus order/count within
+  the group, never on the `heritage` field). Also confirmed empirically
+  that `<Y>` (`num_samples=20`) is NOT expected to equal `<M>`
+  (`num_samples=40`) on this dataset — `<M>` includes every individual
+  regardless of sex while `<Y>` filters to males only, and this
+  dataset's real sex distribution happens to put ALL males in `pop1`
+  (`{"pop1": 20, "pop2": 0}`, verified via `observed_count_population`/
+  `build_male_only_samples_argument_dna`) — the right assertion compares
+  `<Y>`'s sample count against the real male count, not against `<M>`.
+  **Known gap, not a blocker**: no fixture currently has more than one
+  MicroSat `<M>`/`<Y>` locus, so the shared-genealogy behavior for those
+  heritage types (same mechanism as DNA sequences, `_SHARED_M_
+  ANCESTRY_SEED_OFFSET`/`_SHARED_Y_ANCESTRY_SEED_OFFSET`) can't be
+  tested end-to-end on MicroSat the way it is on DNA sequences.
+
+- **`summary_statistics.compute_all_statistics_microsat`,
+  `pipeline.compute_summary_statistics_microsat`, `reftable_loop.
+  run_reftable_simulation_microsat`/`_run_single_particle_microsat`**
+  (commits `fbada23`/`3066a16`/`35d3164`): the orchestration layer,
+  each a direct structural mirror of its DNA-sequence sibling (same
+  "two generations of architecture" duplication philosophy as SNP→DNA,
+  see below — deliberately NOT factored into a single parameterized
+  function even though `_run_single_particle_dna`/`_run_single_
+  particle_microsat` are identical but for one function call; discussed
+  explicitly with the user, who agreed to keep the duplication given
+  MicroSat's stats aren't real yet and only 2 similar cases exist so
+  far).
+  `compute_all_statistics_microsat` is a deliberate skeleton:
+  `_MICROSAT_STATS = {}` (empty catalog dict, mirroring `_DNA_
+  PAIRWISE_STATS`'s structure) and an explicit `if not _MICROSAT_STATS:
+  raise NotImplementedError(...)` guard before the (currently
+  unreachable) aggregation loop — verified by direct execution (not
+  just reading the diff) that it parses a real header's loci correctly
+  and raises at the right point, past the parsing, not before it. Two
+  test-writing bugs caught along the way, both about `pytest.raises`
+  misuse (recurring pattern worth flagging in review): a second
+  positional argument to `pytest.raises(ExceptionType, "some string")`
+  is NOT a message-matching pattern (that's the `match=` keyword) —
+  it's legacy API expecting a callable, so a bare string raises
+  `TypeError: '...' object must be callable`; and calling the
+  exception-raising function BEFORE entering the `with pytest.raises
+  (...):` block means the exception fires outside the context manager
+  and is never caught at all.
+
+**RESOLVED 2026-09-11** — the actual MicroSat summary statistics
+(`compute_all_statistics_microsat`'s body) are now fully implemented
+and wired — see "MicroSat summary statistics" below for the full
+account (formulas, architecture, bugs caught). The hypotheses below
+(11 categories including `N2P`/`H2P`/`V2P`, `LIK` asymmetric) were both
+confirmed correct against `statdefs.cpp`/`sumstat.cpp`.
+SNI mutation channel remains deferred too (placeholder comment already
+in place in `build_microsat_local_param_per_locus`, see above).
+
+**Update 2026-09-08 — MicroSat `_from_values` replay chain done, mirroring
+the DNA-sequence one.** Before tackling the stats catalog above, the
+user chose to first build MicroSat's `_from_values` sibling chain (same
+architecture as "DIYABC-replay pipeline for DNA sequences" below),
+since it shares a lot of structure with the DNA-sequence one and stays
+useful groundwork regardless of when the stats themselves get written.
+
+- **Two `reftable_loop.py` functions needed ZERO changes** —
+  `group_prior_column_names` and `parse_real_reftable_params_with_
+  group_priors` already handle MicroSat groups generically (confirmed
+  by re-reading them, not assumed): the former's `else` branch already
+  emits `µmic_N`/`pmic_N`/`snimic_N`, the latter never inspects
+  `ms_or_seq` at all, just splits columns positionally by count.
+- **Five new sibling functions were needed**, each a direct structural
+  mirror of its DNA-sequence counterpart (same "two generations of
+  architecture" duplication choice as SNP→DNA→MicroSat elsewhere in
+  this file — see [[project_dry_vs_duplication_reftable_loop]] project
+  memory for the explicit discussion that reaffirmed this, this time
+  specifically about whether `_group_prior_values_from_columns` should
+  gain an `if ms_or_seq=="S" elif =="M"` branch instead of a sibling
+  function — decided against it: unlike the identical `_run_single_
+  particle_dna`/`_microsat` pair, this function's DNA and MicroSat
+  branches have genuinely different shapes (conditional `k1`/`k2`
+  model dispatch vs. flat `mut_rate`/`Pgeom`), and it's already part of
+  the DNA replay chain validated against a real 1000-particle DIYABC
+  reftable — modifying it in place, even for a low-risk addition,
+  breaks the project's "never touch an already-validated original"
+  rule for no strong enough reason):
+  `ancestry_simulation._group_prior_values_microsat_from_columns`,
+  `build_group_local_param_per_locus_microsat_from_values`,
+  `build_matrix_microsat_per_locus_from_values`, `microsat_mutation_
+  simulation_per_locus_from_values`, and `pipeline.compute_summary_
+  statistics_microsat_from_values` + `reftable_loop._run_single_
+  particle_microsat_from_values`/`replay_reftable_simulation_microsat`.
+  **No MicroSat equivalent of `build_rate_map_per_locus_from_values`**
+  — per-site rate heterogeneity (`RateMap`) is a DNA-sequence-only
+  concept; a MicroSat locus has `sequence_length=1` and a single
+  scalar `mut_rate`, so there's nothing to mirror there.
+- **Renamed `build_sex_stratified_samples_argument_dna`/`build_male_
+  only_samples_argument_dna` to `..._ms_dna`** (all call sites in
+  `ancestry_simulation.py` and `tests/test_ancestry_simulation.py`
+  updated, confirmed via `grep`, 142/142 tests green): both were
+  already used by MicroSat's `.mss`-based sex dispatch too, so the
+  `_dna` suffix was misleading — `_ms_dna` reflects "the `.mss`-file
+  path" (MicroSat+DNA sequence), distinct from the SNP `.snp`-based
+  originals (`build_sex_stratified_samples_argument`/`build_male_only_
+  samples_argument`, no suffix, unchanged).
+- **Several bugs caught by direct execution, not just reading the
+  diff** (consistent with this whole MicroSat effort's review style):
+  - `random.Random(seed + _MICROSAT_SNI_SEED_OFFSET)` referenced a
+    constant that didn't exist in `configuration.py` at all —
+    `ImportError` at module load, breaking every test in the file.
+    Fixed by commenting the line out (matching the existing deferred-
+    SNI placeholder convention in `build_microsat_local_param_per_
+    locus`) rather than adding a real unused constant.
+  - `f"µmiq_{group_number}"` typo (real column name is `µmic_`,
+    confirmed against `group_prior_column_names`) — `KeyError` the
+    first time a real column name was used.
+  - `params_per_locus[locus.name] = (mut_rate, Pgeom)` in `build_
+    group_local_param_per_locus_microsat_from_values` assigned the
+    **whole per-group dicts** returned by `sampling_group_local_param`
+    to every locus, instead of indexing them by `locus.name`
+    (`mut_rate[locus.name]`, `Pgeom[locus.name]`) — every locus in a
+    group would have ended up with the identical `(dict, dict)` pair
+    instead of its own scalar values. Confirmed by inspecting
+    `sampling_group_local_param`'s actual return type directly.
+  - Return type hint said `tuple[float, float, float]` (copy-pasted
+    from the DNA version's `k1`/`k2`/`mus_rate`), but the function
+    returns 2-tuples (`mut_rate`, `Pgeom`).
+  - **Duplicate function definitions, three separate times in this
+    session** (`build_matrix_microsat_per_locus_from_values`, `dna_
+    mutation_simulation_per_locus_from_values`, `microsat_mutation_
+    simulation_per_locus_from_values`) — a leftover copy-paste block
+    left underneath a freshly-written correct one, same name, so
+    Python's module-level namespace silently kept whichever one was
+    defined LAST. In the `microsat_mutation_simulation_per_locus_
+    from_values` case this was actively dangerous: the correct version
+    was first, the leftover broken copy-paste (calling `build_matrix_
+    microsat_per_locus_from_values` with a missing argument) was
+    second, so the BROKEN one was the one actually callable — caught
+    only by executing the function directly (`TypeError: missing 1
+    required positional argument: 'seed'`), not by reading the diff.
+    `grep -n "^def name" file.py` before declaring a function "done"
+    is now the standing suggestion to the user for catching this
+    early.
+  - **The most consequential bug**: `compute_summary_statistics_
+    microsat_from_values` initially called `build_random_demography_
+    for_scenario_index(header_text, scenario_index, seed)` — the
+    RANDOM-draw variant — and reassigned its own `values` parameter
+    with that function's freshly-drawn return value, silently
+    discarding the real DIYABC values the caller had passed in. Since
+    this whole `_from_values` chain exists specifically to compare
+    DIYABC and msprime on IDENTICAL draws, this bug would have made
+    every such comparison meaningless without raising any error.
+    Caught by direct execution with deliberately recognizable
+    placeholder values (`{"N1": 999999.0, "ta": 12345.0}`) and
+    confirming the constructed demography used freshly-drawn values
+    instead (`{"N1": 6398.0, "ta": 2758.0, ...}`) — the bug produced no
+    exception, only silently wrong behavior, so this is the kind of
+    thing that must be verified by executing with recognizable inputs,
+    not just checked for absence of errors. Fixed in two more passes
+    (first fixing the wrong function but with a wrong argument count/
+    order — `build_demography_for_scenario_index` takes `(header_text,
+    scenario_index, values)`, no `seed`; then fixing an incorrect
+    2-tuple unpacking of its single-`Demography` return value) before
+    landing on the correct one-liner, matching `compute_summary_
+    statistics_dna_from_values`'s existing pattern exactly.
+  - An unrelated accidental edit to `compute_summary_statistics_dna_
+    from_values`'s docstring (the already-validated DNA sibling, edited
+    by mistake while working on the MicroSat function right below it in
+    the same file) — its indentation was shifted and a stray truncated
+    line ("cette approche pourra ensuite être appliquée à des jeux de
+    don") was inserted mid-docstring. Not a functional bug (docstrings
+    tolerate arbitrary indentation), but a reminder that editing near
+    an already-validated function carries a real risk of unintentional
+    collateral changes — caught by reading the diff, not by any test.
+- **Validated by direct execution up to the expected stopping point**:
+  the full chain (`_run_single_particle_microsat_from_values` →
+  `compute_summary_statistics_microsat_from_values` → real `values`-based
+  demography → `microsat_mutation_simulation_per_locus_from_values` →
+  `compute_all_statistics_microsat`) runs cleanly and raises
+  `NotImplementedError` only at the final, expected point (the stats
+  catalog itself, deliberately not yet implemented) — confirming
+  everything upstream of the stats is correctly wired. **Not yet
+  validated against an actual real MicroSat DIYABC reftable** (no such
+  reference file has been used in this session — `replay_reftable_
+  simulation_microsat` is wired but untested end-to-end against real
+  data, unlike its DNA-sequence sibling which IS cross-validated
+  against a real 1000-particle reftable).
+
+
 ## 2026-09-08 à 2026-09-11 — Statistiques résumées MicroSat (les 11 dernières pièces du chantier MicroSat)
 
 Reprise du chantier MicroSat là où "MicroSat GSM mutation model" et le
@@ -1563,6 +2213,151 @@ groupe pour éviter une corrélation entre deux groupes tombant tous les
 deux dans le cas dégénéré — même classe de bug que documenté ailleurs
 dans ce fichier pour les tirages de groupe) sont corrects.
 
+## ReplayContext refactor — read header.txt/.snp/.mss once per run, not once per particle (2026-09-16/18, mentor mode — user-driven, reviewed/debugged with the assistant)
+
+*(Entrée migrée verbatim depuis CLAUDE.md le 23/09/2026 ; CLAUDE.md n'en garde qu'un verdict condensé. Rédigée en anglais à l'origine, conservée telle quelle.)*
+
+Triggered by a genuine performance investigation (a `toy_example1_ms_
+modified` real-reftable replay was taking 20-40+ minutes, occasionally
+hanging outright) that turned out to have TWO unrelated root causes —
+see "Serial/temporal sampling" and the trailer-line bug below for the
+real cause of the hang. This refactor itself was found, by direct
+measurement, NOT to be the cause of that particular slowness (~7.6ms/
+particle of avoidable disk I/O, negligible against a 20+ minute hang) —
+but was pursued anyway as a real, independently-motivated cleanup, and
+is now complete for all three data families (SNP, MicroSat, DNA
+sequences).
+
+**Reading this file: every signature written down in a section dated
+BEFORE 2026-09-16 may be stale because of this refactor** — most
+per-locus builders took `(header_text, mss_file_path, ...)` and now take
+`(context, ...)` instead (e.g. `build_matrix_per_locus`,
+`build_matrix_microsat_per_locus`, `microsat_mutation_simulation_per_
+locus`, `dna_mutation_simulation_per_locus`). Not all of them moved:
+`build_group_local_param_per_locus`, `build_microsat_local_param_per_
+locus` and `build_rate_map_per_locus` still take `(header_text, seed)`,
+since they read nothing off the disk. Check the real signature before
+calling one from a notebook or a script (found stale on 2026-09-22 while
+writing `notebook/visualise_dna_pipeline.py`).
+
+Three new dataclasses in `bridge/header_dataclasses.py` —
+`SnpReplayContext`, `MicrosatReplayContext`, `DnaReplayContext` — each
+built ONCE per `run_reftable_simulation*`/`replay_reftable_simulation*`
+call (not once per particle), holding every value previously obtained
+by re-reading `header.txt`/`.snp`/`.mss` from disk
+(`read_header_text`, `observed_microsatellites`/`observed_sequences`,
+`observed_count_population`, `parse_sex_ratio`, `parse_maf_ratio`,
+`parse_mrc_ratio`, `observed_reads`, `individual_sexes_per_population`,
+`detect_snp_file_type`...), then passed through `ProcessPoolExecutor.
+submit` to every particle instead of a raw `reference_directory`/
+`mss_file_path`/`snp_file_path`. Covers both the "draw fresh values"
+and `_from_values` (replay) path for all three families — 180 tests
+green, `ruff` clean.
+
+**Field selection principle, stated explicitly by the user querying
+each candidate field**: include a value in the context if and only if
+computing it involves an actual disk `read_text()` (directly or
+transitively) — NOT merely "does this value vary by locus/particle".
+`SnpReplayContext`'s `sexes_per_population` illustrates why the second
+criterion is wrong: unlike DNA/MicroSat's `individual_sexes_from_
+locus_genotype` (which must be recomputed per LOCUS, since sex is
+inferred from that locus's own genotype ploidy — caching it once
+dataset-wide would be meaningless), `.snp`'s `individual_sexes_per_
+population` reads a real SEX column, a single dataset-wide value with
+no locus dependence at all — so unlike the DNA/MicroSat `<X>`/`<Y>`
+case (where the "keep it simple, just pass the path through" choice
+was deliberately made because there was no cheap alternative), here
+caching it AND updating `build_sex_stratified_samples_argument`/
+`build_male_only_samples_argument` to consume it was both correct and
+cheap, and the "keep it simple" precedent did not apply. Conversely,
+`observed_reads`'s own internal `detect_snp_file_type`/`parse_mrc_
+ratio` calls (redundant with fields already in the context) were left
+alone after explicit discussion — real duplication, but happening once
+per RUN inside context construction itself, not once per particle, so
+below the threshold of what this refactor was for.
+
+**Bugs found in series while wiring this through — well beyond the 5
+already logged for MicroSat/DNA context work (see the [[feedback_
+signature_refactor_mismatch]] persistent-memory checklist)**:
+- `context.loci_desciption` (typo, missing the "r") in `pipeline.py::
+  _simulate_genotypes_for_all_locus_types` — `AttributeError`.
+- `context, context,` — a duplicated positional argument in
+  `replay_reftable_simulation`'s `executor.submit(_run_single_particle_
+  from_values, ...)` call, shifting every subsequent positional
+  argument by one slot.
+- `haploid_pool_sizes`/`pool_sizes` built from `context.count_samples`
+  used AS-IS (real `.snp` population names as keys) instead of
+  translated to msprime's `"pop1"/"pop2"` convention — what `build_
+  samples_argument` used to do internally before this refactor.
+  `msprime.Demography` only recognizes `"pop1"/"pop2"`, so this
+  produces `KeyError: "Population with name '<real name>' not found"`
+  downstream — the SAME error class as the serial-sampling limitation
+  below, different root cause. Found and fixed independently at two
+  call sites (`ancestry_simulation.py::simulate_poolseq_reads_with_mrc_
+  filter` and `pipeline.py::compute_summary_statistics`), both needing
+  the same `{f"pop{i}": count for i, count in enumerate(context.count_
+  samples.values(), 1)}` translation.
+- **A real bug in production code, invisible to the full test suite**:
+  `run_reftable_simulation`'s context construction had `reads_observed
+  = None` hardcoded — none of the 5 existing `run_reftable_simulation`
+  calls in `tests/test_reftable_loop.py` exercise a PoolSeq dataset
+  (all use `human`, IndSeq), so 180/180 tests stayed green while this
+  path was fully broken. Only caught by directly executing `run_
+  reftable_simulation` against `toy_example4` (a real PoolSeq
+  reference dataset) — `TypeError: 'NoneType' object is not iterable`.
+  Fixed in two passes: first by computing `reads_observed` unconditionally
+  (broke `human`/IndSeq instead, since `observed_reads` explicitly
+  rejects any non-POOLSEQ file); then by gating it on `snp_file_type ==
+  "POOL"` but using the function's own `num_loci` parameter (can be a
+  small testing value) instead of `loci_description.loci_counts_by_
+  heritage["A"]` (the real declared count) — `RuntimeError: generator
+  raised StopIteration` in `with_mrc_filter` from premature pool
+  exhaustion. A reminder that "N tests pass" only proves what those N
+  tests actually exercise, not the untested branches.
+- A test that writes a modified `header.txt` to a `tmp_path` and
+  expects the function under test to pick it up
+  (`test_compute_summary_statistics_stats_filter_header`) broke for a
+  structural reason, not a typo: before this refactor, `compute_
+  summary_statistics` re-read `header.txt` from disk on every call, so
+  "write a new file, then call the function on that directory" worked.
+  Now that everything flows through `context.header_text` (read once,
+  never re-read), that technique silently uses the ORIGINAL, unmodified
+  header — the fix is to build a fresh `SnpReplayContext` with the
+  modified `header_text` rather than reuse an existing context
+  unchanged. Worth remembering for any other test in this codebase that
+  mutates the observed environment on disk and expects a fresh read.
+- Three `conftest.py` fixtures (`snp_context_human`/`_te4`/`_te5`)
+  shared two copy-pasted bugs: `maf_ratio`/`mrc_ratio` hardcoded to
+  `None` instead of calling `parse_maf_ratio`/`parse_mrc_ratio`; and
+  `header_text=header_text` — referencing the WRONG name (each
+  fixture's own parameter is `header_text_te4`/`header_text_te5`, not
+  bare `header_text`, which happens to collide with an unrelated
+  module-level fixture defined for `human`) — a pytest fixture
+  referenced by its bare (undecorated) name resolves to the fixture
+  FUNCTION OBJECT, not its value, producing `AttributeError:
+  'FixtureFunctionDefinition' object has no attribute 'splitlines'`
+  deep inside unrelated parsing code. `snp_context_human` itself
+  initially had no `return` statement at all (computed every field,
+  returned nothing) — a bare Python fixture without `return` resolves
+  to `None`, caught via `AttributeError: 'NoneType' object has no
+  attribute 'header_text'`.
+
+**Two `headerRF.txt` trailer-line bugs found and fixed on `toy_example1_
+ms_modified/`, same class as [[diyabc_header_trailer_line_bug]]**: the
+file's last line (re-read as INPUT by the real DIYABC binary to derive
+`nparamhist`, despite looking like pure output-column documentation)
+still declared the 3 historical parameter names of the *original*,
+unmodified `toy_example1_ms` (`Npast Npresent tbn`) instead of the 9
+real ones (`N1 N2 N3 N4 t423 ra t32 t21 t421`) — corrupting the real
+DIYABC binary's own `nparamhist` and producing nonsensical replayed
+values (`ra=512.0` against a declared `[0.05,0.95]` prior). Fixed once,
+then a SECOND time after `headerRF.txt` was edited again post-regeneration
+without rerunning the real `diyabc` binary — caught both times by
+comparing `stat -c '%y %n'` on `headerRF.txt` vs `first_records_of_the_
+reference_table_0.txt` (the real reftable must always be NEWER than the
+header it was generated from, never the reverse).
+
+
 ## 2026-09-18 — FST microsat : nouvelle résolution grâce à 4 populations, piste redirigée vers la généalogie `<M>`
 
 Jusqu'ici, l'investigation FST (voir plus haut, entrées du 2026-09-14/15)
@@ -1642,4 +2437,430 @@ MÊME population msprime, puis les statistiques devraient traiter ces
 aucun morceau de ce mécanisme n'existe aujourd'hui dans le pipeline.
 Contourné cette session en travaillant sur `toy_example1_ms_modified`
 (vraies populations distinctes, mêmes stats) plutôt que résolu.
+
+## RESOLVED 2026-09-21: FST microsat gap — a numpy bool-addition bug, not the genealogy, not the formula (investigated 2026-09-14/18, fixed by the user 2026-09-21, commits `30fa872` + `b8b0657`)
+
+*(Entrée migrée verbatim depuis CLAUDE.md le 23/09/2026 ; CLAUDE.md n'en garde qu'un verdict condensé. Rédigée en anglais à l'origine, conservée telle quelle.)*
+
+Closes the gap first documented in "MicroSat stats cross-validated
+against a real reftable" above (`FST` ~1.8-2x too low on `<A>`, SNI
+and admixture ruled out, formula reverified 6 times with no bug
+found). On `toy_example1_ms_modified` (4 real populations) the gap had
+two magnitudes: `KS≈0.37-0.46` on `<A>` (G1), `KS≈0.68-0.75` on `<M>`
+(G2, msprime median **negative**, whole distribution shifted toward
+zero). The 2026-09-18 hypothesis — the shared `<M>` genealogy's
+interaction with split/admixture producing less population structure —
+is **wrong**, see below.
+
+**Step 1 — admixture falsified for FST, cleanly, for both locus
+types.** The user rewrote scenario 1 of `toy_example1_ms_modified` to
+remove its `split` event (`t41 merge 1 4` / `t32 merge 2 3` / `t21
+merge 1 2`, no `ra`), keeping scenario 2's `t421 split 4 2 1 ra`,
+regenerated the real reftable, replayed, and split the 1000 particles
+by real `scenario_index` (same methodology as the 2026-08-31 DNA G3
+falsification, never done for FST before): `rdiff_mean` on `FST_1_*`
+was -52..-70% (no admixture) vs -55..-65% (admixture), on `FST_2_*`
+-90..-121% vs -91..-113%, std ratio ~2.2x in all four cells. **No
+difference.** Admixture is not a factor, for `<A>` or `<M>`.
+
+**Step 2 — the decisive observation was already in the data.** On the
+same replay, `DAS` (shared alleles between populations — a *direct*
+identity-based differentiation measure), `DM2` (δμ², divergence),
+`HET`, `H2P` all matched DIYABC within ~1-3% (`KS≈0.03`) on both G1
+and G2. If the simulated data really carried 2x less differentiation,
+`DAS` would be visibly higher and `DM2` lower. They weren't. So the
+simulated data was right and the deficit had to be in the FST
+*computation* — which is the only stat consuming `_length_by_pop_and_
+individuals` (individual-level `(taille1, taille2)` pairs → `AA`,
+`nA`); every other stat goes through `_length_by_population`'s
+`(taille, compte)` frequency table.
+
+**Step 3 — the one unexploited clue.** The 2026-09-14 entry above
+records that `scikit-allel`'s own `weir_cockerham_fst` gave ~2x our
+value on *identical* simulated data, and filed it as "confirms a real
+numerical discrepancy exists". That framing was the mistake: two
+correct implementations of the same estimator cannot disagree 2x on
+the same input, so one of them was being misapplied — and this was
+the cheapest, DIYABC-free test available all along. Redone
+brick-by-brick: (a) `_compute_FST_constants_on_all_alleles_for_two_
+populations` on hand-built pairs of Python `int` → identical to allel
+to 15 decimals (so `cal_Fst2p` IS standard WC84 — this time re-derived
+algebraically against the textbook MSG/MSI/MSP definitions, not just
+"matches the C++" — and our transcription is exact); (b) the same
+function on pairs coming out of `_length_by_pop_and_individuals` on
+real `TreeSequence`s → 0.034 vs allel 0.134 on the same locus; (c) the
+pairs themselves verified identical to `ts.individuals()` — so the
+only difference left was the **dtype**: the pipeline's pairs are
+`np.int64` (from `np.array(...)[variant.genotypes]`).
+
+**Root cause**: `_compute_ni_nA_AA_for_one_population` computed
+`nA = sum((p[0] == al) + (p[1] == al) for p in pairs)`. With numpy
+operands, `p[0] == al` is an `np.bool_`, and `np.bool_ + np.bool_` is
+a **logical OR**, not an integer sum — `np.True_ + np.True_ == np.True_`
+(=1), whereas Python's `True + True == 2`. Every homozygote for `al`
+was counted `nA += 1` instead of `+= 2`, biasing `s2A`/`MSP`/`MSI` and
+deflating θ. It explains the whole picture with nothing left over:
+`<A>` moderately (only homozygotes undercounted), `<M>` catastrophically
+(the haploid duplication `(taille, taille)` makes EVERY individual a
+"homozygote", so `nA` is halved everywhere → negative FST), and every
+synthetic/golden test passing (all fed Python `int` literals, where
+the same line is correct). Confirmed as the *entire* cause by
+monkeypatching `int()` into the diagnostic: our `compute_FST` then
+equals allel to 6 decimals on 3 real replayed particles
+(0.046339/0.045166/0.116091 both sides).
+
+**Fix (`30fa872`, written by the user)**: `_length_by_pop_and_
+individuals` now builds its tuples with `int(tailles[...])`, so the
+`np.int64` never leaks past the tskit layer — every consumer of these
+pairs (and `al`, derived from them) gets Python ints. Golden values
+`FST_1_1.2` regenerated in `tests/test_summary_statistics.py`/
+`test_pipeline.py` (0.00537 → 0.03084). **Validation**: full replay +
+per-scenario notebook on `toy_example1_ms_modified` — scenario 1 (no
+admixture): 0/152 stats with KS `p<0.05`; scenario 2 (admixture): 2/152
+(`V2P_2_1.3` p=0.036, `MGW_2_4` p=0.043) — with 304 tests at α=0.05
+~15 false positives are *expected*, so this is below noise, no
+residual on `<A>` or `<M>`. The 11 MicroSat stats are now all
+validated against real DIYABC output.
+
+**Hardened and tested (`b8b0657`, written by the user)**: belt and
+braces — `_compute_ni_nA_AA_for_one_population` itself now does
+`int(p[0] == al) + int(p[1] == al)`, so the brick is correct whatever
+its caller feeds it, independently of the `int()` conversion in
+`_length_by_pop_and_individuals`. Two tests guard the two layers:
+`test_compute_ni_nA_AA_for_one_population` feeds `np.int64` pairs
+(3 homozygotes + 1 heterozygote → `nA == 7`; the buggy line gave 4),
+and `test_compute_FST_vs_scikit_allel` (`allel = pytest.importorskip
+("allel")` INSIDE the function, not at module level — at module level
+it would skip the whole file) runs `compute_FST` on the real
+`toy_example1_ms_modified` G1 loci (new `microsat_context_te1_
+modified` fixture in `conftest.py`) and asserts equality with
+`allel.weir_cockerham_fst` accumulated as `A.sum()/(A+B+C).sum()`
+over loci and alleles (a ratio of sums, never a mean of per-locus
+ratios), individuals paired via `ts.individuals()`, loci with
+`num_sites == 0` skipped on the allel side (they contribute zero on
+both). Verified to discriminate: with BOTH `int()` conversions
+removed it fails, with either one present it passes (the two
+protections are redundant by design, so removing only one does not
+break it — that is expected, not a weak test). `scikit-allel` is not
+declared in `pyproject.toml`; the `importorskip` keeps the suite green
+on environments without it.
+
+**Still not audited**: `_genotypes_by_pop_and_individuals` (LIK) builds
+its tuples from the same numpy `tailles` and may leak `np.int64` the
+same way — harmless today (LIK's formula does no boolean addition and
+matches DIYABC), but the next consumer of those tuples inherits the
+trap. Throwaway diagnostics in `tmp/fst_diag/` (`diag.py`/`diag2.py`/
+`diag3.py`).
+
+**Two review lessons, recorded in memory (`feedback_numpy_bool_
+addition`)**: (1) a cross-check that disagrees with our code on
+identical input is a software bug on one side, never "a real
+discrepancy" — investigate it before any simulator/biology
+hypothesis; (2) test stat bricks with the real dtype the pipeline
+produces (`np.int64` from tskit), not only Python literals.
+
+**Separate latent bug found the same morning — fixed the same day
+(`2f8363a`, written by the user with the assistant reviewing)**: the
+three readers of a real DIYABC *text* reftable
+(`parse_real_reftable_params`, `parse_real_reftable_params_with_group_
+priors`, `rewrite_real_reftable_txt` in `reftable_loop.py`) ordered a
+scenario's parameter columns by iterating `priors` in the order of the
+`historical parameters priors` *declaration* section. The real rule,
+read in `reftable.cpp::bintotxt` (lines 474-542): the text export walks
+the header's **trailer line** (`entetehist`, copied verbatim by
+`header.cpp::readHeaderAllStat`) token by token, looks each name up
+*by name* in the row's own scenario, prints the value if found and 14
+spaces otherwise — so the text file's column order IS the trailer
+order, and a whitespace split loses the blanks. (The `.bin` is
+different: `nparamvar` floats in the scenario's *own* `histparam`
+order from `sethistparamname`, constants excluded — untouched here,
+`write_reftable_bin` was validated on `human` where all orders
+coincided.) Verified on raw tokens: a scenario-1 row's three T values
+are laid out `t32, t21, t41` (trailer order) and satisfy `t41>t21>t32`,
+while declaration order (`t41, t32, t21`) would violate it. Every
+earlier dataset had the two orders identical by coincidence; the first
+hand-edited header that inserted `t41` at a different position in the
+two sections mislabeled every scenario-1 parameter (`t32`'s value read
+as `t41`, etc.) and produced a spurious `FST_1_1.4` `KS=0.80`. Only
+scenario 2 survived, because its dropped column (`t41`) was the LAST
+trailer token, so removing it shifted nothing.
+
+Fix: new `_historical_columns_order(header_line, priors, scenarios)`
+next to `_kept_param_names_by_scenario` — the two are complementary
+(the latter gives the SET of names a scenario has, constants excluded;
+the former gives their ORDER, read from the first line of the reftable
+file being parsed, stopping at the first token that is not a declared
+prior). A `ValueError` guard compares the count of names read against
+the union of non-constant names used by any scenario and prints the
+symmetric difference — a trailer typo (`t14` for `t41`) now fails
+loudly with `différence ['t41']` instead of silently shifting every
+value after it. The three readers keep `_kept_param_names_by_scenario`
+as the set and filter the file order by it, per row, AFTER reading the
+row's scenario index (the filter depends on it, so the order of
+operations is forced). `_kept_param_names_by_scenario` itself and the
+two writers are unchanged. Tests: `test_historical_columns_order`
+(order follows the line, not the declaration; typo raises) and
+`test_parse_real_reftable_params_follows_file_header_order` (a
+3-line `tmp_path` reftable whose header order differs from the
+`toy_example1_ms_modified` declaration order — the only test that
+discriminates, verified to fail with the old `param_names` line and
+pass with the new one; a plain `git stash` cannot be used for this
+check because the test file imports the new helper). Two review
+mishaps during this fix worth remembering: a `break` inside a list
+comprehension (SyntaxError, never executed before being shown), and
+`len(dict)` (number of scenarios) used where the union of its values
+(number of names) was meant — both caught by running the code, not by
+reading it. The same commit also moved `tests/conftest.py`'s
+`REFERENCE_DIR` from `reference/human` to `reference/` (8 call sites
+updated with explicit `/ "human"`), unrelated cleanup bundled in.
+
+
+## CLOSED 2026-09-21: no "simplified substitution model" exists in the C++ (flagged 2026-09-18, falsified by direct source reading)
+
+*(Entrée migrée verbatim depuis CLAUDE.md le 23/09/2026 ; CLAUDE.md n'en garde qu'un verdict condensé. Rédigée en anglais à l'origine, conservée telle quelle.)*
+
+Flagged by the user at the close of the 2026-09-18 session: DIYABC
+reportedly switches to a simplified substitution model below some
+threshold of variable sites or individuals. **Checked exhaustively in
+`~/Documents/Github/diyabc/src-JMC-C++` on 2026-09-21 for all three
+data families — nothing of the kind exists. Chantier closed, nothing
+to implement.** Evidence, so this isn't reopened on the same rumor:
+
+- **DNA sequences**: `mutmod` (`JK`/`K2P`/`HKY`/`TN`, `history.hpp:151`)
+  is written ONLY when the header token is read (`header.cpp:671-678`
+  and its twin `1784-1791`) plus two copy-constructors (`history.cpp:
+  257/303`) — no conditional reassignment anywhere. `comp_matQ`
+  (`particuleC.cpp:1121-1170`) branches on `mutmod` alone, never on
+  `dnavar`/`nloc`/`ngenes`/sample size. `mute`/`draw_nuc`/`put_
+  mutations` (`1535-1790`) are a pure cumulative walk over `matQ`/`pi`.
+  `do_sequence`'s base-frequency computation (`data.cpp:1532-1568`) has
+  a single `if (nn > 0.0)` guard against division by zero on a fully-
+  missing locus — no `0.25` fallback, no "too few sequences" branch.
+  `grep -i "simplif|too few|trop peu"` finds nothing relevant; the only
+  non-stats uses of `dnavar` are in `sumstat.cpp` (observed variable
+  sites for the statistics, unrelated to the mutation model).
+- **MicroSat**: `mute` (`particuleC.cpp:1683-1708`) has one branch,
+  `if (Pgeom > 0.001) d = 1 + log(ra)/log(Pgeom); else d = 1;` — the SMM
+  special case, a numerical guard against `log(0)`, not a data-driven
+  fallback (already covered by `build_microsat_transition_matrix`'s
+  `epsilon` clamp, tested at `Pgeom=0`). `setMutParamValue`
+  (`803-825`) falls back to the group mean when `sdshape <= 0.001` or
+  `nloc <= 1` — the per-locus dispersion tier, already ported via
+  `check_nloc`, not a model switch. `kmin`/`kmax` (`particleset.cpp:
+  80-82`: `kmoy = (maxi+mini)/2` integer division, `kmin = kmoy -
+  (motif_range/2 - 1)*motif_size`, `kmax = kmin + (motif_range-1)*
+  motif_size`) are deterministic from the observed alleles and the
+  header's `motif_range`, no threshold.
+- **SNP**: there is no model to simplify — `mute` sets `state = 1`
+  (`1765`); `put_one_mutation` (`1644-1680`) is plain Hudson (one branch
+  drawn proportionally to length), its only branch being `if (weight ==
+  0.0) return` (zero-length tree → locus rejected and redrawn via
+  `loc--`). `cherche_branchesOK` (`1549-1553`) sets every branch `OK`/
+  `OKOK` to `true` — the reference-population filtering (`refnindtot`/
+  `popref`) is entirely commented out, so `weight` is always 1 in the
+  compiled binary and `simulate_snp_genotypes`'s "draw over all edges"
+  is exact. `mafreached` (`2194-2211`) has no sample-size-dependent
+  mode.
+
+The only genuine "second mode" anywhere in `particuleC.cpp` remains the
+discrete generation-by-generation coalescent selected by
+`evalcriterium` (`1251-1275`) for very small `N` — a coalescent-side
+switch, not a mutation-model one, already documented above as
+un-replicated and never triggered on any of this project's datasets.
+The original claim most likely came from documentation or memory of a
+different tool; if a precise DIYABC source (doc page, paper) turns up,
+cross-check it against the line numbers above before reopening.
+
+## 2026-09-23/24 — Échantillonnage sériel : implémenté et validé, et un bug de port sur `LIK` révélé au passage
+
+Dernier gros chantier du POC. Mené en mode mentor : conception et revue avec
+l'assistant, code écrit par l'utilisateur.
+
+### Le cadrage, qui n'était pas celui annoncé
+
+La limitation notée le 17/09 disait « échantillonnage sériel non supporté ».
+La lecture du C++ montre que le vrai manque est plus général : **le pipeline
+n'avait aucune notion d'échantillon distincte de population**, et le sériel est
+simplement le premier jeu où les deux divergent.
+
+- `history.cpp::read_events` compte `nsamp` **séparément** de `npop` (`nn0`) et
+  attribue `event[i].sample = ++nsamp` dans l'ordre du fichier. Rien ne
+  contraint `nsamp == nn0`.
+- `data.cpp` ne parle **que** d'échantillons : `nsample`, `samplesize[ech]`,
+  `haplosnp[ech]`, `ssize[locustype][sa]`. Les indices des statistiques sont
+  des indices d'échantillon, jamais de population.
+- `particuleC.cpp:1185/1213/1528` : la taille d'un échantillon est lue dans les
+  données observées, chaque nœud est étiqueté `gt.nodes[i].sample = sa + 1`, et
+  un événement SAMPLE active exactement les nœuds portant son indice. Le
+  mapping bloc de données `sa` ↔ `sa+1`-ième ligne `sample` est donc
+  **positionnel**, sans référence croisée nominale.
+- `buildSuperScen` (`header.cpp:1057-1108`) ne fait que des maxima : DIYABC ne
+  garantit **rien** sur la cohérence de cet ordre entre scénarios.
+
+Côté nous, la confusion était encodée dans `observed_count_population` /
+`build_samples_argument`, qui nomment les blocs `pop1..popN` par ordre
+d'apparition — c'est-à-dire par indice d'échantillon — et passent ce nom tel
+quel à msprime comme nom de **population**. D'où le symptôme :
+`KeyError "Population with name 'pop2' not found"`.
+
+### Quatre faits mesurés avant d'écrire une ligne
+
+1. Le temps d'un `sample` peut être un **nom de paramètre**
+   (`particuleC.cpp:599-605`), donc la construction des samples vient après le
+   tirage des priors. Accessoirement, `demography_builder.py:102` évalue déjà
+   ces expressions puis les jette (le `continue` sur `SampleEvent` est ligne
+   107) : preuve empirique gratuite que `values` suffit, dans les deux chemins.
+2. msprime alloue les IDs de nœuds échantillons **contigus, dans l'ordre de la
+   liste de `SampleSet`** ; les individus suivent le même ordre.
+3. Cela reste vrai à **ploïdie hétérogène** (3 femelles diploïdes + 2 mâles
+   haploïdes → individus 0-2 à 2 nœuds, 3-4 à 1 nœud).
+4. `samples={"pop1":20,"pop2":20}` et la liste de `SampleSet` équivalente
+   produisent des tables `edges`/`nodes`/`individuals` **byte-identiques** à
+   graine égale. C'est ce qui autorise à basculer le chemin existant au lieu
+   d'en dupliquer un frère — l'équivalence est mesurable, pas postulée.
+
+### Trois routes, une fausse piste assumée
+
+- **A** — propager le layout jusqu'aux helpers. Explicite, ~38 éditions sur du
+  code validé contre la sortie réelle de DIYABC.
+- **F** — dériver le découpage de la `ts` elle-même, en groupant les nœuds
+  échantillons par `(population, temps)`. 9 éditions. Implémentée, testée,
+  fonctionnelle — y compris sur `<X>`, dont les deux `SampleSet` fusionnent
+  naturellement puisqu'ils partagent la même paire.
+- **C** — envelopper la `ts` dans un objet portant son layout, `__getattr__`
+  délégant le reste. 4 éditions. Vérifié sans obstacle : aucun `isinstance` sur
+  `TreeSequence` dans le dépôt, la couche stats n'utilise que 4 attributs, et
+  les `TreeSequence` ne traversent jamais la frontière de processus.
+
+**F a été abandonnée après implémentation**, pour une raison découverte en la
+testant : un échantillon d'effectif **nul** ne laisse aucun nœud dans la `ts`,
+donc il est invisible à la dérivation, et tous les échantillons suivants
+glissent d'un rang. `compute_population_layout` y était immunisée (elle tire
+ses noms des métadonnées). Le déclenchement demande trois conditions cumulées
+(un locus `<Y>`, une population sans mâle, et qu'elle ne soit pas la dernière)
+et aucun jeu du dépôt ne les réunit — mais documenter une régression n'est pas
+la corriger. Retour à A, choisie par l'utilisateur pour son caractère explicite.
+
+### Les deux briques
+
+`build_sample_sets_from_scenario(scenario, values, counts_by_samples)` et
+`compute_sample_layout(ts, counts_by_samples)` — voir CLAUDE.md, section
+« Serial/temporal sampling », pour leur contrat et l'invariant positionnel.
+
+Bugs attrapés en revue, tous par exécution et non par lecture du diff :
+
+- **Indexation par nom de population** dans la première brique
+  (`counts_by_samples.get(f"pop{event.pop}")`). Sur `toy_example1_ms` les
+  quatre `sample` pointent tous `pop=1`, donc le même effectif était lu quatre
+  fois — **juste par coïncidence**, les quatre blocs ayant 20 individus. Le
+  test initial ne discriminait pas : la version buguée passait toutes ses
+  assertions. Verrouillé par un cas à effectifs volontairement inégaux
+  (20/15/30/10), vérifié échouer sur l'ancienne version.
+- **`assert [np.array_equal(...), ...]`** — une liste non vide est toujours
+  vraie, donc toutes les comparaisons de tableaux étaient inertes. Même famille
+  que le bug `.genotype_matrix().all()` déjà consigné. `assert all(...)`.
+- **`if layout is None: population_layout = ...`** dans deux helpers dont la
+  variable locale ne s'appelait pas `layout` : `UnboundLocalError` dès qu'un
+  layout était fourni. Bug **latent** — la suite restait verte tant que
+  personne ne passait l'argument.
+- **`from matplotlib.style import context`**, auto-import de l'IDE déclenché
+  par le nom `context`, dans `bridge/pipeline.py`. matplotlib n'est pas une
+  dépendance déclarée : sur un environnement propre, tout le pipeline aurait
+  échoué à l'import. Invisible ici car chaque fonction a un paramètre `context`
+  qui masque l'import — d'où 9 `F811` de `ruff`. Cinquième occurrence du motif
+  `feedback_name_shadowing_pattern`.
+- **Paramètre sans valeur par défaut** (`layouts_by_locus: ... | None` sans
+  `= None`) dans `compute_all_statistics_dna` : tous les appelants cassaient.
+  Le réflexe initial a été d'ajuster le test qui le signalait ; c'est le test
+  qui avait raison.
+- **Deux normalisations manquantes** (`compute_MGW`, `compute_DM2`) sur 27
+  éditions quasi identiques — précisément les deux où le geste différait
+  (allonger un `zip` existant à trois termes au lieu d'en créer un).
+  `strict=True` n'aide pas ici : il valide des longueurs, pas la nullité.
+
+### Le vrai bug de port, révélé par le jeu sériel
+
+Premier rejeu apparié contre la reftable réelle de `toy_example1_ms` : 152
+colonnes, historiques exactes, et un bloc d'écarts KS **entièrement concentré
+sur `LIK_2_*`** — jamais G1, toujours G2. En scénario 1, exactement les 6
+paires ordonnées impliquant l'échantillon 4 ; en scénario 2 (sans goulot), les
+12 paires, plus faiblement.
+
+Cause, trouvée en lisant `cal_lik2p` :
+
+```c
+nal = 0;
+for (k = 0; k < locuslist[loc].nal; k++) {
+    frt = 0.0;
+    for (pop = 0; pop < this->nsample; pop++) frt += freq[pop][k];
+    if (frt > 0.000001) nal++;        // seulement si l'allèle est OBSERVÉ
+}
+b = 1.0 / nal;
+```
+
+`_compute_LIK_for_one_locus` calculait `nb_allele` à partir des clés de
+`length_by_pop`, c'est-à-dire de `variant.alleles` — **tous** les états
+apparaissant dans la table de mutations, y compris ceux qu'aucun échantillon ne
+porte plus (écrasés par une mutation ultérieure sur la même lignée). Le
+pseudo-compte `b = 1/nal` était donc jusqu'à **deux fois trop petit**.
+
+Mesuré sur un locus réel : `nal` = 13/6/14/12/18 chez nous contre 7/3/11/10/9
+dans le C++.
+
+Deux choses expliquent le profil des écarts. **Pourquoi G2 et pas G1** : le
+header donne à G2 `MEANMU UN[5e-4,5e-3]` contre `UN[1e-4,1e-3]` pour G1 — cinq
+fois plus de mutations, donc beaucoup plus d'états créés puis perdus (G2 cumule
+en plus haploïdie et `Ne` rescalé). **Pourquoi l'échantillon 4 en scénario 1** :
+`b` ne pèse que lorsque l'allèle testé est absent de l'échantillon de
+référence ; l'échantillon 4 (t=500) traverse le goulot `tbn ∈ [10,1000]` et est
+donc le plus divergent.
+
+La docstring de la fonction affirmait que le comportement était « exactement le
+`nal` du C++ puisque ce projet n'a que 2 populations ». Elle était fausse deux
+fois : le vrai écart n'est pas le périmètre du pooling mais le filtre sur les
+allèles non observés — et l'union `count_i ∪ count_j` qu'elle décrivait est un
+**no-op**, `_length_by_population` donnant la même liste de clés à toutes les
+populations. Une docstring qui déclare une approximation « équivalente dans
+notre cas » est une dette qui expire sans prévenir ; celle-ci a tenu deux mois.
+
+Correction : sommer les comptes sur toutes les populations de `length_by_pop`
+et ne garder que les non nuls. Vérifiée contre l'oracle (7/3/11/10/9 exactement)
+avant rejeu. Après correction, les 12 colonnes `LIK_2_*` rentrent dans le bruit
+sur les deux scénarios.
+
+### Reste
+
+- **`AML` résiduel : bruit, confirmé par falsification.** Trois rejeux
+  indépendants comparés colonne à colonne, jamais les mêmes colonnes
+  signalées : 4 significatifs sur 153 dans le
+  premier (`AML_2_4.2.3`, `AML_1_2.1.3`, `DM2_1_1.4`, `DM2_1_2.4`), 3 dans le
+  second (`AML_2_3.2.4`, `DM2_2_2.4`, `AML_2_3.1.2`) — **recouvrement nul**.
+  Les p s'effondrent d'un run à l'autre (`DM2_1_1.4` 0,039 → 0,953 ;
+  `DM2_1_2.4` 0,046 → 0,877), quand un effet réel garderait son ordre de
+  grandeur. Les comptes sont sous l'attendu (~7,7 à α=0,05) et la
+  distribution des p penche vers le HAUT (médianes 0,578 et 0,661, histogrammes
+  lourds dans les derniers déciles) — l'inverse de la signature d'un effet.
+  Le troisième rejeu signale encore 3 colonnes, encore différentes.
+
+  Fausse alerte levée puis close au passage : un `Npast` non nul
+  (`diff_mean = 1297`) dans le deuxième fichier laissait croire que le rejeu
+  avait cessé d'être apparié. C'était un artefact de notebook —
+  `replay_reftable_simulation_microsat` restaure l'ordre du fichier via
+  `results_by_index[i] for i in range(len(rows))`, jamais par ordre d'arrivée
+  d'`as_completed`, donc l'appariement ne peut pas s'y perdre. Confirmé au
+  troisième rejeu (`diff_mean = 0` à nouveau). Contrôle à remettre en tête de
+  tout notebook de comparaison : `(reel["scenario"].values !=
+  notre["scenario"].values).sum()` doit valoir 0.
+
+  Corollaire méthodologique réutilisable : sur un rejeu **apparié**, les
+  particules partagent leurs priors, les statistiques sont donc corrélées et le
+  test de KS est **conservateur** — il sous-estime l'écart. Un « 0 significatif »
+  n'y prouve pas beaucoup plus qu'un « 3 ou 4 sans recouvrement ».
+- `<X>`/`<Y>` sériels non câblés, **sans garde** : la dispatch par locus
+  écrase silencieusement les `SampleSet` sériels. Aucun jeu ne le déclenche.
+- SNP sériel non traité : `build_samples_argument` rend toujours un dict.
+- Fausse alerte levée en cours de route : le `mumic_1` ASCII de ce header face
+  au `µmic_1` codé en dur dans `group_prior_column_names` est **sans effet** —
+  `parse_real_reftable_params_with_group_priors` lit les valeurs
+  positionnellement et n'utilise ces noms que comme clés de son dict de sortie.
 

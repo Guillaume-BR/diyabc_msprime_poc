@@ -24,12 +24,17 @@ structurally and statistically equivalent to the real DIYABC's output.
 | MicroSat | complete, 11 stats + `AML` | `toy_example2_ms_dna`, `toy_example1_ms_modified` |
 | DNA sequences | complete, 13 stats | `toy_example2_ms_dna` (`K2P` only) |
 | DNA sequences `<X>`/`<Y>` | implemented | synthetic fixture only — the real binary SIGSEGVs on this case |
-| Serial/temporal sampling | **not supported** | — current chantier, see "Open work" |
+| Serial/temporal sampling (MicroSat) | complete | `toy_example1_ms` (1 population, 4 sampling times) |
 
 Validation means a *paired* comparison: the real DIYABC priors are replayed
 particle-by-particle through our pipeline (`replay_reftable_simulation*`,
 `scripts/replay_diyabc_priors*.py`) and the two reftables compared
-column-by-column with a two-sample Kolmogorov-Smirnov test.
+column-by-column with a two-sample Kolmogorov-Smirnov test. That test is
+**conservative** on a paired replay: both sides share the same prior draws, so
+their statistics are correlated and the KS understates the gap. Judge a
+residual flag by whether it **persists across two independent replays**, not by
+its p-value alone — a real effect keeps its order of magnitude, noise moves to
+other columns (see `notes/exploration.md`, 24/09, for a worked example).
 
 `reference/` holds ground truth produced by the real DIYABC binary —
 **never modify these files.**
@@ -256,6 +261,23 @@ under the date given.
   coalescent-side switch, never triggered on any dataset here, not replicated.
   Don't reopen on the same rumor; if a precise source turns up, check it
   against those line numbers first.
+- **`LIK` pseudo-count `nal` too large (24/09)** — `_compute_LIK_for_one_locus`
+  counted every allele appearing in `variant.alleles`, i.e. every state ever
+  produced by a mutation, **including states no sample carries any more**
+  (overwritten by a later mutation on the same lineage). `cal_lik2p` counts an
+  allele only when its frequency summed over all samples is non-zero
+  (`frt > 0.000001`), so our `b = 1/nal` was up to **2x too small**. Measured on
+  `toy_example1_ms` G2: `nal` 13/6/14/12/18 against the C++'s 7/3/11/10/9.
+  Invisible on every 2-sample dataset; surfaced only on a group with a 5x
+  higher mutation rate (`MEANMU UN[5e-4,5e-3]` vs G1's `UN[1e-4,1e-3]`), where
+  many more states are created then lost. The function's own docstring
+  asserted the old behaviour was "exactly the C++'s `nal` since this project
+  only has 2 populations" — that claim was wrong in a second way too: the
+  `count_i ∪ count_j` union it described is a **no-op**, since
+  `_length_by_population` gives every population the same key list (taken from
+  `variant.alleles`). Fixed by summing counts across all populations of
+  `length_by_pop` and keeping only non-zero ones. Golden `LIK` values
+  regenerated.
 - **Text-reftable column order (21/09)** — `reftable.cpp::bintotxt` walks the
   header's **trailer line** (`entetehist`) and looks each name up *by name*,
   so a text reftable's column order is trailer order, **not** prior-declaration
@@ -387,6 +409,75 @@ their type (`simulate_shared_ancestry_loci`, `particuleC.cpp:2422-2435`
   (`multi_group`) depends on the number of distinct groups in the **whole**
   header, any type — not the number of groups of the stat's own type.
 
+### Serial/temporal sampling
+
+A scenario may sample the **same** population at several dates
+(`reference/toy_example1_ms`: `0 sample 1`, `50 sample 1`, `200 sample 1`,
+`500 sample 1`, 4 `POP` blocks of 20 individuals, statistics declared on
+indices 1..4). The underlying gap was never "temporal sampling" — it is that
+**a sample is not a population**, and serial data is simply the first case
+where the two differ:
+
+- `history.cpp::read_events` counts `nsamp` separately from `npop` (`nn0`) and
+  assigns `event[i].sample = ++nsamp` in file order; nothing ties them.
+- `data.cpp` speaks only of samples (`nsample`, `samplesize[ech]`,
+  `ssize[locustype][sa]`). Statistics indices are **sample** indices.
+- `particuleC.cpp:1185/1213/1528` reads a sample's size from the observed data
+  and tags each node `gt.nodes[i].sample = sa + 1`; a SAMPLE event activates
+  exactly the nodes carrying its own index. The data block `sa` therefore maps
+  to the `sa+1`-th `sample` line **positionally**, with no name cross-reference
+  — and `buildSuperScen` (`header.cpp:1057`) only takes maxima, so DIYABC
+  guarantees nothing about this ordering *across* scenarios.
+
+**THE INVARIANT the whole feature rests on** — node order = `SampleSet` order =
+`sample`-event order = `POP`-block order = `samples_default` key order =
+statistics column indices. Verified empirically: msprime allocates sample node
+IDs contiguously in the order of the `SampleSet` list, individuals too, and
+this holds under heterogeneous ploidy.
+
+Two bricks and a wiring:
+
+- **`build_sample_sets_from_scenario(scenario, values, counts_by_samples)`**
+  (`ancestry_simulation.py`) — one `msprime.SampleSet(n, population, time)` per
+  `sample` event, in order. `counts_by_samples`'s **keys are ignored**: only the
+  order of its values matters, the k-th count going to the k-th event. Indexing
+  it by `f"pop{event.pop}"` returns the same count for every serial sample —
+  that bug was written, caught by a deliberately unequal-count test, and is now
+  locked by it. A sample time may be a parameter name, not a literal
+  (`particuleC.cpp:599-605`), so this must be called **after** the prior draw;
+  `build_demography` already evaluates those expressions (and discards them),
+  which is why no constant-prior failure mode is introduced here. Guards on
+  `len(sample_events) != len(counts)` — DIYABC does not, and a silent
+  misalignment is the worst possible outcome.
+- **`compute_sample_layout(ts, counts_by_samples)`** — the sample-aware twin of
+  `compute_population_layout`, same return shape so the two are
+  interchangeable. Slices `ts.individuals()` by cumulative counts and
+  concatenates their `.nodes`; slicing `ts.samples()` by `count × ploidy`
+  instead would break on `<X>`, whose sample is described by **two**
+  `SampleSet`s (females `ploidy=2`, males `ploidy=1`). On a non-serial dataset
+  it returns exactly what `compute_population_layout` returns — that equality
+  is a test, and it is what makes the substitution provably neutral on every
+  already-validated dataset.
+- **Wiring**: the 4 layout-consuming helpers of `summary_statistics.py` take an
+  optional `layout=`; the 27 stat functions that call them take a parallel
+  `layouts=` list (`zip(..., strict=True)` everywhere); `compute_all_statistics_
+  dna`/`_microsat` take `layouts_by_locus`, a dict **keyed by locus name** —
+  never a flat list, because the dispatch filters and reorders loci per group
+  and two divergent comprehensions would misalign silently. `pipeline.py`
+  builds both the `SampleSet` list and the layouts, per particle, from the
+  scenario it re-parses plus `counts_by_sample_for_locus` (`samples_default` for
+  `<A>/<H>/<M>/<X>`, male counts for `<Y>`).
+
+**Deliberately not done, and it is silent**: `<X>`/`<Y>` loci override the
+sample sets inside the per-locus loop with
+`build_sex_stratified_samples_argument_ms_dna` /
+`build_male_only_samples_argument_ms_dna`, which are **not** serial-aware. On a
+serial dataset carrying such loci the serial `SampleSet`s would be ignored for
+them. `toy_example1_ms` has only `<A>` and `<M>`, so nothing triggers today —
+but no guard raises either. The SNP path is untouched for the same reason:
+`build_samples_argument` still returns a `{name: count}` dict and would raise
+`KeyError "Population with name 'pop2' not found"` on serial `.snp` data.
+
 ### Replay (`_from_values`) chain
 
 Every `_from_values` function is a **sibling** of its drawing counterpart,
@@ -434,8 +525,34 @@ slips, kept because DIYABC's own output depends on them.
 
 ## Open work
 
-- **Serial/temporal sampling — the current chantier.** See the dedicated
-  section below.
+- **Serial sampling is not wired for SNP — next chantier.** `build_samples_
+  argument` still returns a `{name: count}` dict handed straight to msprime, so
+  serial `.snp` data raises `KeyError "Population with name 'pop2' not found"`.
+  The MicroSat path is the template: `build_sample_sets_from_scenario` +
+  `compute_sample_layout` + the optional `layout=`/`layouts=` parameters already
+  exist and are generic. No reference dataset exists yet; one is to be built so
+  the result can be validated by paired replay, not merely run.
+- **Serial sampling is not wired for `<X>`/`<Y>`, and nothing guards it.** The
+  per-locus dispatch overrides the serial `SampleSet`s silently. See
+  "Serial/temporal sampling" under Domain knowledge.
+- **Rename `pop` → `samp` for everything that comes from the `.snp`/`.mss`**,
+  and **only then**. Two distinct families of `f"pop{...}"` coexist, and only
+  one is misnamed:
+  - *real msprime populations* — `demography_builder.py` (7 sites) and
+    `build_sample_sets_from_scenario`'s `population=f"pop{event.pop}"`. These
+    are correct and must keep the name.
+  - *samples wearing a population name* — `observed_count_population`,
+    `individual_sexes_from_locus_genotype`, `build_samples_argument`. Their keys
+    come from file-block order, i.e. the **sample** index.
+
+  The rename is **blocked by the SNP serial chantier**, not merely deferred:
+  the second family's strings are passed straight to msprime as population
+  names (`sim_ancestry(samples={"pop1": 20})`), so renaming them today raises
+  `KeyError`. They can only be renamed once the SNP path builds `SampleSet`s
+  like the MicroSat one does. Scope, for planning: 329 `population_names`,
+  86 `_by_population`, 40 `population_layout`, 226 literal `"popN"` in tests —
+  do it in the same commit as the SNP wiring, never as a half-rename leaving
+  two vocabularies side by side.
 - **`DTA_2_2` mean shift** on the 50+50-loci DNA dataset: a small but real
   mean difference (real ≈0.018, sim ≈0.043) on a **G2** column, with a std
   ratio near 1 — so it does not fit the (now resolved) G3 variance story. Never
@@ -450,58 +567,6 @@ slips, kept because DIYABC's own output depends on them.
   `MODEL` line, with no positive validation — a malformed line is silently
   mis-parsed rather than raising.
 - **`rewrite_loci_count`** still handles the condensed single-type format only.
-
-### Serial/temporal sampling (chantier in progress, opened 2026-09-23)
-
-`reference/toy_example1_ms/` samples a **single** population at 4 different
-times (`0 sample 1`, `50 sample 1`, `200 sample 1`, `500 sample 1`), with 4
-`POP` blocks of 20 individuals in the `.mss` and summary statistics declared
-on indices 1..4 (`NAL 1 2 3 4`, `FST 1.2 ... 3.4`, `AML` on the 4 triplets).
-
-**The real gap is not "temporal sampling" — it is that the pipeline has no
-notion of *sample* distinct from *population*.** Serial sampling is simply the
-first dataset where the two differ. Evidence:
-
-- `history.cpp::read_events` counts `nsamp` **separately** from `npop`
-  (`nn0`) and assigns `event[i].sample = ++nsamp` in file order; nothing
-  constrains `nsamp == nn0`.
-- `data.cpp` speaks **only** of samples — `nsample`, `samplesize[ech]`,
-  `haplosnp[ech]`, `ssize[locustype][sa]`. The statistics indices are sample
-  indices, never population indices.
-- `particuleC.cpp::setSequence` treats a SAMPLE event as "inject lineages into
-  `pop` at `t0`" — exactly `msprime.SampleSet(n, population=..., time=...)`.
-
-Where the conflation is encoded on our side: `observed_count_population` (and
-the SNP twin `build_samples_argument`) name the file's blocks `pop1..popN` by
-order of appearance — i.e. by *sample* index — and that name is handed
-straight to msprime as a *population* name. Concrete failure:
-
-```
-build_demography(scenario 1) -> [Population(name='pop1', N=200)]   # correct
-sim_ancestry(samples={'pop1':20,'pop2':20,'pop3':20,'pop4':20})
-  -> KeyError "Population with name 'pop2' not found"
-```
-
-Everything downstream is already sample-indexed by accident: `pipeline.py`
-does `population_names = list(context.samples_default.keys())` and the stats
-column naming uses `population_names.index(name) + 1`. The only link that
-truly assumes "sample == msprime population" is `compute_population_layout`,
-which slices a `TreeSequence` by `ts.tables.populations`.
-
-So the chantier is two points, not ten: **building the samples** (with a
-`time`) and **re-slicing the TreeSequence**. Two routes were identified:
-ghost populations (one msprime population per sample event, joined to the real
-one at its sampling time — zero downstream change, but a false demography and
-exact-time-tie behavior to trust), or honest serial `SampleSet`s plus a
-sample-aware layout (matches DIYABC 1:1; the layout cannot be derived from the
-`ts` alone, so it must come either from node times, which is implicit and
-fragile, or from arithmetic on the ordered `SampleSet` list).
-
-**Unverified assumption to check before relying on it**: the sample → (pop,
-time) table would be derived from the *scenario*, which changes per particle.
-Both scenarios of this dataset list the same 4 `sample` events in the same
-order, so the mapping to the `.mss` `POP` blocks is stable — but it is not
-established that DIYABC guarantees this in general.
 
 ## `scripts/` — ad hoc investigation scripts
 
