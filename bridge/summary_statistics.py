@@ -3530,11 +3530,21 @@ def _compute_LIK_for_one_locus(
     if pop_i not in length_by_pop or pop_j not in length_by_pop:
         return 0.0, False
 
-    count_i = {length: count for length, count in length_by_pop[pop_i]}
     count_j = {length: count for length, count in length_by_pop[pop_j]}
     total_count_j = sum(count_j.values())
-    nb_allele = len(set(count_i.keys()).union(set(count_j.keys())))
+
+    # nal du C++ (cal_lik2p) : un allèle n'est compté que si sa fréquence
+    # SOMMÉE SUR TOUS LES ÉCHANTILLONS est non nulle. `length_by_pop` porte
+    # déjà toutes les populations, et ses clés viennent de variant.alleles --
+    # donc elles incluent des états créés par une mutation puis écrasés, que
+    # plus aucun échantillon ne porte. Les compter gonfle nal et écrase b.
+    total_counts = {}
+    for rows in length_by_pop.values():
+        for length, count in rows:
+            total_counts[length] = total_counts.get(length, 0) + count
+    nb_allele = sum(1 for count in total_counts.values() if count > 0)
     b = 1 / nb_allele if nb_allele > 0 else 0.0
+
     a = 1 / len(genotypes_by_pop[pop_i]) if len(genotypes_by_pop[pop_i]) > 0 else 0.0
 
     likelihood = 0
