@@ -27,6 +27,8 @@ import msprime
 
 from bridge.ancestry_simulation import (
     build_samples_argument,
+    compute_sample_layout,
+    counts_by_sample_for_locus,
     dna_mutation_simulation_per_locus,
     dna_mutation_simulation_per_locus_from_values,
     microsat_mutation_simulation_per_locus,
@@ -645,8 +647,18 @@ def compute_summary_statistics_dna(
         seed,
     )
 
+    locus_by_name = {locus.name: locus for locus in context.list_loci}
+    layouts_by_locus = {
+        name: compute_sample_layout(
+            ts, counts_by_sample_for_locus(context, locus_by_name[name])
+        )
+        for name, ts in mutated.items()
+    }
+
     population_names = list(context.samples_default.keys())
-    summary_stats = compute_all_statistics_dna(header_text, mutated, population_names)
+    summary_stats = compute_all_statistics_dna(
+        header_text, mutated, population_names, layouts_by_locus=layouts_by_locus
+    )
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 
     return summary_stats, values
@@ -706,8 +718,17 @@ def compute_summary_statistics_dna_from_values(
         seed=seed,
     )
 
+    locus_by_name = {locus.name: locus for locus in context.list_loci}
+    layouts_by_locus = {
+        name: compute_sample_layout(
+            ts, counts_by_sample_for_locus(context, locus_by_name[name])
+        )
+        for name, ts in mutated.items()
+    }
     population_names = list(context.samples_default.keys())
-    summary_stats = compute_all_statistics_dna(header_text, mutated, population_names)
+    summary_stats = compute_all_statistics_dna(
+        header_text, mutated, population_names, layouts_by_locus=layouts_by_locus
+    )
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 
     return summary_stats
@@ -775,9 +796,21 @@ def compute_summary_statistics_microsat(
         seed,
     )
 
+    locus_by_name = {locus.name: locus for locus in context.list_loci}
+    layouts_by_locus = {
+        name: compute_sample_layout(
+            ts, counts_by_sample_for_locus(context, locus_by_name[name])
+        )
+        for name, ts in mutated.items()
+    }
+
     population_names = list(context.samples_default.keys())
     summary_stats = compute_all_statistics_microsat(
-        header_text, mutated, population_names, seed=seed
+        header_text,
+        mutated,
+        population_names,
+        seed=seed,
+        layouts_by_locus=layouts_by_locus,
     )
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 
@@ -837,9 +870,21 @@ def compute_summary_statistics_microsat_from_values(
         seed,
     )
 
+    locus_by_name = {locus.name: locus for locus in context.list_loci}
+    layouts_by_locus = {
+        name: compute_sample_layout(
+            ts, counts_by_sample_for_locus(context, locus_by_name[name])
+        )
+        for name, ts in mutated.items()
+    }
+
     population_names = list(context.samples_default.keys())
     summary_stats = compute_all_statistics_microsat(
-        context.header_text, mutated, population_names, seed=seed
+        context.header_text,
+        mutated,
+        population_names,
+        seed=seed,
+        layouts_by_locus=layouts_by_locus,
     )
     summary_stats = _filter_statistics(summary_stats, context.header_text, stats_filter)
 

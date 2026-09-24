@@ -358,6 +358,31 @@ def build_male_only_samples_argument(snp_file_path: str) -> dict[str, int]:
     return _male_counts_from_sexes(sexes_by_population)
 
 
+def counts_by_sample_for_locus(context, locus) -> dict[str, int]:
+    """
+    Retourne le dict {nom_echantillon: nombre_d_individus} à passer à
+    msprime.sim_ancestry pour le locus donné, selon son type d'héritage.
+
+    Args:
+        context: Le contexte de simulation (SnpReplayContext ou
+            MicrosatReplayContext).
+        locus: Le locus à simuler (LociDescriptionDetailed).
+
+    Returns:
+        Un dict {nom_echantillon: nombre_d_individus}.
+    """
+
+    if locus.heritage in ("A", "H", "M", "X"):
+        return context.samples_default
+    if locus.heritage == "Y":
+        return build_male_only_samples_argument_ms_dna(
+            context.mss_path, context.list_loci, locus.name
+        )
+    raise NotImplementedError(
+        "L'héritage de ce locus n'est pas encore supporté par counts_by_sample_for_locus"
+    )
+
+
 # ── Simulation des généalogies (arbres indépendants ou partagés) ───────────
 
 
