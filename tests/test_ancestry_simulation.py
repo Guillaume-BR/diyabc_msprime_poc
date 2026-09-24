@@ -372,11 +372,11 @@ def test_compute_sample_layout_with_mismatched_count():
 def test_compute_sample_layout_matches_population_layout_on_non_serial_data(
     dna_context_te2,
 ):
-    """Sur un jeu NON sÃ©riel, le dÃ©coupage par Ã©chantillon doit Ãªtre
-    STRICTEMENT identique au dÃ©coupage par population. C'est cette
-    propriÃ©tÃ© qui rend sÃ»re la substitution dans summary_statistics.py :
+    """Sur un jeu NON sériel, le découpage par échantillon doit être
+    STRICTEMENT identique au découpage par population. C'est cette
+    propriété qui rend sûre la substitution dans summary_statistics.py :
     sans elle, remplacer compute_population_layout changerait les
-    rÃ©sultats sur tous les jeux dÃ©jÃ  validÃ©s.
+    résultats sur tous les jeux déjà validés.
     """
     scenarios = parse_header_scenarios(dna_context_te2.header_text)
     demography, values = build_random_demography_for_scenario_index(

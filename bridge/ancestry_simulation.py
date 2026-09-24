@@ -555,10 +555,11 @@ def compute_sample_layout(
     Args:
         ts: La TreeSequence à inspecter.
         counts_by_samples: Les effectifs observés, UN PAR ÉCHANTILLON,
-            dans l'ordre des événements `sample` (voir build_sample_sets_from_scenario).
+            dans l'ordre des événements `sample` (voir
+            build_sample_sets_from_scenario).
 
     Returns:
-        La liste des (nom_echantillon, IDs des noeuds échantillons de
+        La liste des (nom_population, IDs des noeuds échantillons de
         cette population), une entrée par échantillon non vide.
 
     Raises:
@@ -571,9 +572,10 @@ def compute_sample_layout(
         raise ValueError(
             f"Le nombre total d'individus dans counts_by_samples ({sum(counts_by_samples.values())}) ne correspond pas au nombre d'individus dans la TreeSequence ({ts.num_individuals})."
         )
-    individuals = iter(
-        ts.individuals()
-    )  # on crée un itérateur sur les individus de la TreeSequence
+    # iter() UNE SEULE FOIS, hors de la boucle : c'est lui le curseur.
+    # Le déplacer à l'intérieur ferait repartir chaque échantillon de
+    # l'individu 0, silencieusement.
+    individuals = iter(ts.individuals())
     for sample_name, count in counts_by_samples.items():
         block = list(itertools.islice(individuals, count))
         if not block:
