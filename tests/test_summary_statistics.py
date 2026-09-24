@@ -7,10 +7,13 @@ moins une valeur vérifiée à la main (HWm_1/HWv_1) pour attraper une
 régression de formule, pas juste un problème de branchement.
 """
 
+import msprime
 import numpy as np
 import pytest
 
 from bridge.ancestry_simulation import (
+    build_microsat_transition_matrix,
+    compute_population_layout,
     dna_mutation_simulation_per_locus,
     microsat_mutation_simulation_per_locus,
 )
@@ -154,6 +157,103 @@ def test_genotype_matrix_by_population(dna_context_te2):
         assert samples_a[pop_name].shape[1] == 2 * samples_m[pop_name].shape[1]
 
 
+def test_genotype_matrix_by_population_with_same_layout(dna_context_te2):
+    demography, _ = build_random_demography_for_scenario_index(
+        dna_context_te2.header_text, scenario_index=1, seed=42
+    )
+    mutated = dna_mutation_simulation_per_locus(
+        demography=demography,
+        context=dna_context_te2,
+        seed=42,
+    )
+
+    first_key = next(iter(mutated))
+    ts = mutated[first_key]
+    layout = compute_population_layout(ts)
+
+    result_with_layout = _genotype_matrix_by_population(ts, layout=layout)
+    result_without_layout = _genotype_matrix_by_population(ts)
+
+    assert [pop_name for pop_name in result_with_layout] == [
+        pop_name for pop_name in result_without_layout
+    ]
+    for pop_name in result_with_layout:
+        assert np.array_equal(
+            result_with_layout[pop_name], result_without_layout[pop_name]
+        )
+
+
+def _mutated_two_population_ts(seed=3):
+    """TreeSequence mutée minimale : deux populations de 10 individus diploïdes.
+
+    Bien moins coûteuse qu'un `dna_mutation_simulation_per_locus` complet
+    (qui simule les 10 loci du header) quand le test n'a besoin que d'UNE
+    TreeSequence. La population ancestrale est indispensable : sans elle,
+    les lignées des deux populations ne peuvent jamais coalescer et
+    msprime lève `Infinite waiting time until next simulation event`.
+    """
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    return msprime.sim_mutations(
+        msprime.sim_ancestry(
+            samples=[msprime.SampleSet(10, "pop1"), msprime.SampleSet(10, "pop2")],
+            demography=demography,
+            sequence_length=100,
+            random_seed=seed,
+        ),
+        rate=1e-3,
+        random_seed=seed,
+    )
+
+
+def test_genotype_matrix_by_population_with_different_layout():
+    """Un layout qui change le REGROUPEMENT, pas seulement l'ordre des clés.
+
+    Chaque population est coupée en deux : la sortie doit contenir quatre
+    groupes de taille moitié, ce que le découpage par population ne peut
+    structurellement pas produire. Une helper qui ignorerait son paramètre
+    `layout` échouerait dès le nombre de clés -- contrairement à un layout
+    simplement réordonné, qui laisse l'association nom -> noeuds intacte et
+    ne discrimine donc presque rien.
+
+    C'est la forme exacte du cas sériel, où plusieurs échantillons
+    partagent une seule population msprime.
+    """
+    ts = _mutated_two_population_ts()
+    default_layout = compute_population_layout(ts)
+
+    # Les bornes de coupe doivent tomber sur des frontières d'individus
+    # (ici multiples de 2, ploïdie diploïde) : une coupe au milieu d'un
+    # individu l'attribuerait en entier au groupe de son premier noeud,
+    # silencieusement -- voir _length_by_pop_and_individuals, qui retrouve
+    # la population d'un individu par `nodes[0] in inds`.
+    split_layout = []
+    for pop_name, node_ids in default_layout:
+        half = len(node_ids) // 2
+        split_layout.append((f"{pop_name}_a", node_ids[:half]))
+        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+
+    without_layout = _genotype_matrix_by_population(ts)
+    with_split_layout = _genotype_matrix_by_population(ts, layout=split_layout)
+
+    assert list(without_layout) == ["pop1", "pop2"]
+    assert list(with_split_layout) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]
+
+    for pop_name, node_ids in split_layout:
+        assert with_split_layout[pop_name].shape == (ts.num_sites, len(node_ids))
+
+    # Recoller les deux moitiés d'une population redonne exactement la
+    # matrice du découpage par population : le layout change le groupement,
+    # jamais le contenu.
+    for pop_name in ("pop1", "pop2"):
+        rejoined = np.hstack(
+            [with_split_layout[f"{pop_name}_a"], with_split_layout[f"{pop_name}_b"]]
+        )
+        assert np.array_equal(rejoined, without_layout[pop_name])
+
+
 def test_mean_segregating_sites_per_group(dna_context_te2):
     """Vérifie compute_NSS séparément sur G2 (<A>) et
     G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes mélangés,
@@ -226,7 +326,7 @@ def test_mean_distinct_haplotypes_per_group_empty_defaults_to_zero():
     du résultat ni lever d'exception -- chaque population attendue garde
     une valeur (0.0), comme le `res = 0.0` du C++ avant son `if (nl > 0)`."""
     population_names = ["pop1", "pop2"]
-    # test si tree_sequence est vide
+    # test si tree_sequtest_length_by_populationence est vide
     tree_sequences_empty = []
     mean_empty = compute_NHA(tree_sequences_empty, population_names)
     assert mean_empty == {"pop1": 0.0, "pop2": 0.0}
@@ -716,6 +816,32 @@ def test_compute_all_statistics_dna(dna_context_te2):
 # -----------------------------------------------------------------------
 
 
+def _mutated_microsat_ts(seed=3):
+    """TreeSequence mutée minimale pour les helpers MICROSAT.
+
+    `sequence_length=1` : un locus microsat est UN site à grand alphabet,
+    jamais plusieurs sites indépendants.
+    """
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    ts = msprime.sim_ancestry(
+        samples=[msprime.SampleSet(10, "pop1"), msprime.SampleSet(10, "pop2")],
+        demography=demography,
+        sequence_length=1,
+        random_seed=seed,
+    )
+    return msprime.sim_mutations(
+        ts,
+        rate=1e-3,
+        random_seed=seed,
+        model=build_microsat_transition_matrix(
+            kmin=180, kmax=220, motif_size=2, Pgeom=0.2
+        ),
+    )
+
+
 def test_length_by_population(microsat_context_te2_xy):
     """Vérifie _length_by_population sur un locus microsat (Locus_M_A_1_).
 
@@ -754,6 +880,62 @@ def test_length_by_population(microsat_context_te2_xy):
         (199, 1),
         (189, 1),
     ]
+
+
+def test_length_by_population_with_same_layout():
+    ts = _mutated_microsat_ts()
+    default_layout = compute_population_layout(ts)
+
+    result_with_layout = _length_by_population(ts, layout=default_layout)
+    result_without_layout = _length_by_population(ts)
+
+    assert list(result_with_layout.keys()) == list(result_without_layout.keys())
+    for pop_name in result_with_layout:
+        assert result_with_layout[pop_name][0] == result_without_layout[pop_name][0]
+        assert result_with_layout[pop_name][1] == result_without_layout[pop_name][1]
+
+
+def test_length_by_population_with_different_layout():
+    ts = _mutated_microsat_ts()
+    default_layout = compute_population_layout(ts)
+
+    # Create a different layout
+    split_layout = []
+    for pop_name, node_ids in default_layout:
+        half = len(node_ids) // 2
+        split_layout.append((f"{pop_name}_a", node_ids[:half]))
+        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+
+    result_with_layout = _length_by_population(ts, layout=split_layout)
+    result_without_layout = _length_by_population(ts)
+
+    assert list(result_with_layout) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]
+    assert list(result_without_layout) == ["pop1", "pop2"]
+
+    for pop_name, node_ids in split_layout:
+        assert sum(nb_seq for _, nb_seq in result_with_layout[pop_name]) == len(
+            node_ids
+        )
+
+    # Recollement : couper une population coupe les COMPTES, pas la liste --
+    # chaque groupe rend une entrée par allèle distinct, les mêmes allèles
+    # pour tous (la boucle interne itère variant.alleles). D'où une somme
+    # terme à terme, et non une concaténation comme pour les helpers par
+    # individu.
+    for pop_name in ("pop1", "pop2"):
+        half_a = result_with_layout[f"{pop_name}_a"]
+        half_b = result_with_layout[f"{pop_name}_b"]
+
+        # L'alignement des listes est une hypothèse : on la teste au lieu
+        # de s'y fier, sinon le zip apparierait silencieusement deux
+        # allèles différents.
+        assert [taille for taille, _ in half_a] == [taille for taille, _ in half_b]
+
+        rejoined = [
+            (taille, count_a + count_b)
+            for (taille, count_a), (_, count_b) in zip(half_a, half_b, strict=True)
+        ]
+        assert rejoined == result_without_layout[pop_name]
 
 
 def test_count_alleles_per_population():
@@ -1315,6 +1497,48 @@ def test_length_by_pop_and_individuals(microsat_context_te2_xy):
     ]
 
 
+def test_length_by_pop_and_individuals_with_same_layout():
+    ts = _mutated_microsat_ts()
+    default_layout = compute_population_layout(ts)
+
+    result_with_layout = _length_by_pop_and_individuals(ts, layout=default_layout)
+    result_without_layout = _length_by_pop_and_individuals(ts)
+
+    assert list(result_with_layout.keys()) == list(result_without_layout.keys())
+    for pop_name in result_with_layout:
+        assert result_with_layout[pop_name] == result_without_layout[pop_name]
+
+
+def test_length_by_pop_and_individuals_with_different_layout():
+    ts = _mutated_microsat_ts()
+    default_layout = compute_population_layout(ts)
+
+    # calcul de la ploïdie valable ici car notre fixture n'a que des individus diploïdes
+    ploidy = ts.num_samples // ts.num_individuals
+    # Create a different layout
+    split_layout = []
+    for pop_name, node_ids in default_layout:
+        half = len(node_ids) // 2
+        split_layout.append((f"{pop_name}_a", node_ids[:half]))
+        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+
+    result_with_layout = _length_by_pop_and_individuals(ts, layout=split_layout)
+    result_without_layout = _length_by_pop_and_individuals(ts)
+
+    assert list(result_with_layout) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]
+    assert list(result_without_layout) == ["pop1", "pop2"]
+
+    for pop_name, node_ids in split_layout:
+        assert len(result_with_layout[pop_name]) == len(node_ids) // ploidy
+
+    for pop_name in ("pop1", "pop2"):
+        half_a = result_with_layout[f"{pop_name}_a"]
+        half_b = result_with_layout[f"{pop_name}_b"]
+
+        rejoined = half_a + half_b
+        assert rejoined == result_without_layout[pop_name]
+
+
 def test_compute_ni_nA_AA_for_one_population():
     """Vérifie que la fonction _compute_ni_nA_AA_for_one_population fonctionne correctement."""
     alleles_per_individual = [
@@ -1469,6 +1693,48 @@ def test_genotypes_by_pop_and_individuals(microsat_context_te2_xy):
         (203, 203),
         (203,),
     ]
+
+
+def test_genotypes_by_pop_and_individuals_with_same_layout():
+    ts = _mutated_microsat_ts()
+    default_layout = compute_population_layout(ts)
+
+    result_with_layout = _genotypes_by_pop_and_individuals(ts, layout=default_layout)
+    result_without_layout = _genotypes_by_pop_and_individuals(ts)
+
+    assert list(result_with_layout.keys()) == list(result_without_layout.keys())
+    for pop_name in result_with_layout:
+        assert result_with_layout[pop_name] == result_without_layout[pop_name]
+
+
+def test_genotypes_by_pop_and_individuals_with_different_layout():
+    ts = _mutated_microsat_ts()
+    default_layout = compute_population_layout(ts)
+
+    # calcul de la ploïdie valable ici car notre fixture n'a que des individus diploïdes
+    ploidy = ts.num_samples // ts.num_individuals
+    # Create a different layout
+    split_layout = []
+    for pop_name, node_ids in default_layout:
+        half = len(node_ids) // 2
+        split_layout.append((f"{pop_name}_a", node_ids[:half]))
+        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+
+    result_with_layout = _genotypes_by_pop_and_individuals(ts, layout=split_layout)
+    result_without_layout = _genotypes_by_pop_and_individuals(ts)
+
+    assert list(result_with_layout) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]
+    assert list(result_without_layout) == ["pop1", "pop2"]
+
+    for pop_name, node_ids in split_layout:
+        assert len(result_with_layout[pop_name]) == len(node_ids) // ploidy
+
+    for pop_name in ("pop1", "pop2"):
+        half_a = result_with_layout[f"{pop_name}_a"]
+        half_b = result_with_layout[f"{pop_name}_b"]
+
+        rejoined = half_a + half_b
+        assert rejoined == result_without_layout[pop_name]
 
 
 def test_compute_num_den_lik_for_one_individual():

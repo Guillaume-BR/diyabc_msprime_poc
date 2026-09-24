@@ -1180,6 +1180,8 @@ def compute_F4(
 
 def _genotype_matrix_by_population(
     tree_sequence: tskit.TreeSequence,
+    *,
+    layout: list[tuple[str, np.ndarray]] | None = None,
 ) -> dict[str, np.ndarray]:
     """Découpe la matrice de génotypes d'un locus ADN par population.
 
@@ -1189,6 +1191,7 @@ def _genotype_matrix_by_population(
 
     Args:
         tree_sequence: La TreeSequence mutée d'un locus.
+        layout: [(nom_population, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par population à utilisé par le chemin sériel, où un échantillon n'est plus sa propre population
 
     Returns:
         Un dict {nom_pop: matrice (n_sites, n_samples_pop)} --
@@ -1196,7 +1199,8 @@ def _genotype_matrix_by_population(
         samples)), pas de transposition.
     """
     genotype_matrix = tree_sequence.genotype_matrix()
-    layout = compute_population_layout(tree_sequence)
+    if layout is None:
+        layout = compute_population_layout(tree_sequence)
     return {pop_name: genotype_matrix[:, sample_ids] for pop_name, sample_ids in layout}
 
 
@@ -2216,17 +2220,22 @@ def compute_HST(
 
 def _length_by_population(
     tree_sequence: tskit.TreeSequence,
+    *,
+    layout: list[tuple[str, np.ndarray]] | None = None,
 ) -> dict[str, list[tuple[int, int]]]:
     """Construit un dict {nom_population: [(longueur, nb_sequence), ...]}.
 
     Args:
         tree_sequence: Un TreeSequence muté du groupe (un locus [M]).
-
+        layout: [(nom_population, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par population à utilisé par le chemin sériel, où un échantillon n'est plus sa propre population
     Returns:
         Un dict {nom_population: [(longueur, compte), ...]}.
     """
     length_by_pop = {}
-    layout = compute_population_layout(tree_sequence)  # liste(tuple(pop,array(indice)))
+    if layout is None:
+        layout = compute_population_layout(
+            tree_sequence
+        )  # liste(tuple(pop,array(indice)))
     # si locus est monomorphe
     if tree_sequence.num_sites == 0:
         for pop_name, sample_ids in layout:
@@ -3029,6 +3038,8 @@ def compute_DM2(
 
 def _length_by_pop_and_individuals(
     tree_sequence: tskit.TreeSequence,
+    *,
+    layout: list[tuple[str, np.ndarray]] | None = None,
 ) -> dict[str, list[tuple[int, int]]]:
     """Calcule la longueur des séquences pour chaque individupar population.
     La ploidie de l'individu est détectée par le nombre de noeud dans l'arbre via tree_sequence.individuals().
@@ -3037,18 +3048,18 @@ def _length_by_pop_and_individuals(
 
     Args:
         tree_sequence: Un objet TreeSequence de tskit.
+        layout: [(nom_population, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par population à utilisé par le chemin sériel, où un échantillon n'est plus sa propre population
 
     Returns:
         Dict {nom_population: [(longueur_1, longueur_2), ...]}.
     """
-    population_layout = compute_population_layout(tree_sequence)
-    length_by_pop = {pop: [] for pop, _ in population_layout}
+    if layout is None:
+        layout = compute_population_layout(tree_sequence)
+    length_by_pop = {pop: [] for pop, _ in layout}
     if tree_sequence.num_sites == 0:
         for ind in tree_sequence.individuals():
             nodes = ind.nodes
-            population = next(
-                pop for pop, inds in population_layout if nodes[0] in inds
-            )
+            population = next(pop for pop, inds in layout if nodes[0] in inds)
             length_by_pop[population].append((0, 0))
         return length_by_pop
 
@@ -3056,7 +3067,7 @@ def _length_by_pop_and_individuals(
     tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
     for ind in tree_sequence.individuals():
         nodes = ind.nodes
-        population = next(pop for pop, inds in population_layout if nodes[0] in inds)
+        population = next(pop for pop, inds in layout if nodes[0] in inds)
         if len(nodes) == 1:
             length_by_pop[population].append(
                 (int(tailles[nodes[0]]), int(tailles[nodes[0]]))
@@ -3205,6 +3216,8 @@ def compute_FST(
 
 def _genotypes_by_pop_and_individuals(
     tree_sequence: tskit.TreeSequence,
+    *,
+    layout: list[tuple[str, np.ndarray]] | None = None,
 ) -> dict[str, list[tuple[int, int] | tuple[int]]]:
     """Calcule les tailles d'allèles de chaque individu, par population.
 
@@ -3217,18 +3230,18 @@ def _genotypes_by_pop_and_individuals(
 
     Args:
         tree_sequence: Un objet TreeSequence de tskit.
+        layout: [(nom_population, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par population à utilisé par le chemin sériel, où un échantillon n'est plus sa propre population
 
     Returns:
         Dict {nom_population: [(longueur_1, longueur_2) ou (longueur_1,), ...]}.
     """
-    population_layout = compute_population_layout(tree_sequence)
-    genotype_by_pop = {pop: [] for pop, _ in population_layout}
+    if layout is None:
+        layout = compute_population_layout(tree_sequence)
+    genotype_by_pop = {pop: [] for pop, _ in layout}
     if tree_sequence.num_sites == 0:
         for ind in tree_sequence.individuals():
             nodes = ind.nodes
-            population = next(
-                pop for pop, inds in population_layout if nodes[0] in inds
-            )
+            population = next(pop for pop, inds in layout if nodes[0] in inds)
             genotype_by_pop[population].append((0, 0))
         return genotype_by_pop
     else:
@@ -3236,9 +3249,7 @@ def _genotypes_by_pop_and_individuals(
         tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
         for ind in tree_sequence.individuals():
             nodes = ind.nodes
-            population = next(
-                pop for pop, inds in population_layout if nodes[0] in inds
-            )
+            population = next(pop for pop, inds in layout if nodes[0] in inds)
             if len(nodes) == 1:
                 genotype_by_pop[population].append((tailles[nodes[0]],))
             else:
