@@ -1246,6 +1246,8 @@ def _count_segregating_sites(matrix: np.ndarray) -> int:
 def compute_NSS(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule NSS_i (cal_nss1p) : pour chaque population, la moyenne du
     nombre de sites ségrégeants sur tous les loci du groupe passé en
@@ -1269,14 +1271,20 @@ def compute_NSS(
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
         population_names: Les populations attendues.
+        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Un dict {nom_population: valeur_moyenne}.
     """
     num_loci = len(tree_sequences)
     mean_segregating_sites = {pop_name: 0.0 for pop_name in population_names}
-    for ts in tree_sequences:
-        genotype_matrices = _genotype_matrix_by_population(ts)
+
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for pop_name in population_names:
             matrix = genotype_matrices[pop_name]
             mean_segregating_sites[pop_name] += _count_segregating_sites(matrix)
@@ -1316,6 +1324,8 @@ def _count_distinct_haplotypes(matrix: np.ndarray) -> int:
 def compute_NHA(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule le nombre moyen d'haplotypes distincts par population sur un groupe de loci.
 
@@ -1323,14 +1333,19 @@ def compute_NHA(
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
         population_names: Les populations attendues.
+        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Un dict {nom_population: valeur_moyenne}.
     """
     num_loci = len(tree_sequences)
     mean_distinct_haplotypes = {pop_name: 0.0 for pop_name in population_names}
-    for ts in tree_sequences:
-        genotype_matrices = _genotype_matrix_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for pop_name in population_names:
             matrix = genotype_matrices[pop_name]
             mean_distinct_haplotypes[pop_name] += _count_distinct_haplotypes(matrix)
@@ -1373,6 +1388,8 @@ def _pairwise_hamming_distances(matrix: np.ndarray) -> np.ndarray:
 def compute_MPD(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule MPD_i (cal_mpd1p) : pour chaque population, la moyenne du
     nombre de différences par paire (distance de Hamming) sur tous les
@@ -1401,14 +1418,18 @@ def compute_MPD(
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
         population_names: Les populations attendues.
+        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Un dict {nom_population: valeur_moyenne}.
     """
     mean_pairwise_differences = {pop_name: 0.0 for pop_name in population_names}
     valid_loci_count = {pop_name: 0 for pop_name in population_names}
-    for ts in tree_sequences:
-        genotype_matrices = _genotype_matrix_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for pop_name in population_names:
             matrix = genotype_matrices[pop_name]
             pairwise_distances = _pairwise_hamming_distances(matrix)
@@ -1426,6 +1447,8 @@ def compute_MPD(
 def compute_VPD(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule VPD_i (cal_vpd1p) : pour chaque population, la variance du
     nombre de différences par paire (distance de Hamming) sur tous les
@@ -1454,14 +1477,18 @@ def compute_VPD(
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
         population_names: Les populations attendues.
+        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Un dict {nom_population: valeur_variance}.
     """
     variance_pairwise_differences = {pop_name: 0.0 for pop_name in population_names}
     valid_loci_count = {pop_name: 0 for pop_name in population_names}
-    for ts in tree_sequences:
-        genotype_matrices = _genotype_matrix_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for pop_name in population_names:
             matrix = genotype_matrices[pop_name]
             pairwise_distances = _pairwise_hamming_distances(matrix)
@@ -1547,6 +1574,8 @@ def _tajima_d_per_locus(matrix: np.ndarray) -> float | None:
 def compute_DTA(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule DTA_i (cal_dta1p) : pour chaque population, la moyenne du
     D de Tajima (_tajima_d_per_locus) sur tous les loci du groupe passé
@@ -1574,14 +1603,18 @@ def compute_DTA(
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
         population_names: Les populations attendues.
+        layouts: Les layouts à utiliser pour chaque locus, ou None si aucun n'est fourni.
 
     Returns:
         Un dict {nom_population: valeur_moyenne}.
     """
     mean_tajima_d = {pop_name: 0.0 for pop_name in population_names}
     valid_loci_count = {pop_name: 0 for pop_name in population_names}
-    for ts in tree_sequences:
-        genotype_matrices = _genotype_matrix_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for pop_name in population_names:
             matrix = genotype_matrices[pop_name]
             tajima_d = _tajima_d_per_locus(matrix)
@@ -1645,6 +1678,8 @@ def _private_segregating_sites_per_locus(
 def compute_PSS(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule PSS_i (cal_pss1p) : pour chaque population, la moyenne du
     nombre de sites ségrégeants privés (_private_segregating_sites_per_
@@ -1671,14 +1706,18 @@ def compute_PSS(
             chacune).
         population_names: Les populations attendues (toutes celles du
             dataset).
+        layouts: Les layouts à utiliser pour chaque locus, ou None si aucun n'est fourni.
 
     Returns:
         Un dict {nom_population: valeur_moyenne}.
     """
     mean_pss = {pop_name: 0.0 for pop_name in population_names}
     num_loci = len(tree_sequences)
-    for ts in tree_sequences:
-        genotype_matrices = _genotype_matrix_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for pop_name in population_names:
             mean_pss[pop_name] += _private_segregating_sites_per_locus(
                 genotype_matrices, pop_name
@@ -1732,6 +1771,8 @@ def _minor_allele_counts_at_segregating_sites(matrix: np.ndarray) -> np.ndarray:
 def compute_MNS(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule MNS_i (cal_mns1p) : pour chaque population, la moyenne,
     sur les loci du groupe, de la moyenne (par locus) des comptes
@@ -1755,14 +1796,18 @@ def compute_MNS(
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
         population_names: Les populations attendues.
+        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Un dict {nom_population: valeur_moyenne}.
     """
     mean_mns = {pop_name: 0.0 for pop_name in population_names}
     num_loci = len(tree_sequences)
-    for ts in tree_sequences:
-        genotype_matrices = _genotype_matrix_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for pop_name in population_names:
             minor_counts = _minor_allele_counts_at_segregating_sites(
                 genotype_matrices[pop_name]
@@ -1780,6 +1825,8 @@ def compute_MNS(
 def compute_VNS(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule VNS_i (cal_vns1p) : pour chaque population, la moyenne,
     sur les loci du groupe, de la variance (par locus) des comptes
@@ -1809,14 +1856,18 @@ def compute_VNS(
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
         population_names: Les populations attendues.
+        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Un dict {nom_population: valeur_moyenne}.
     """
     variance_vns = {pop_name: 0.0 for pop_name in population_names}
     num_loci = len(tree_sequences)
-    for ts in tree_sequences:
-        genotype_matrices = _genotype_matrix_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for pop_name in population_names:
             minor_counts = _minor_allele_counts_at_segregating_sites(
                 genotype_matrices[pop_name]
@@ -1839,6 +1890,8 @@ def compute_VNS(
 def compute_NH2(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule NH2_ij (cal_nh2p) : pour chaque paire de populations, la
     moyenne du nombre d'haplotypes distincts sur tous les loci du groupe
@@ -1855,6 +1908,7 @@ def compute_NH2(
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
         population_names: Les populations attendues.
+        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Un dict {"i.j": valeur_moyenne}, une entrée par paire de
@@ -1869,8 +1923,12 @@ def compute_NH2(
     ]
     mean_distinct_haplotypes = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
 
-    for ts in tree_sequences:
-        genotype_matrices = _genotype_matrix_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for ia, ib in pairs:
             pop_a = population_names[ia]
             pop_b = population_names[ib]
@@ -1895,6 +1953,8 @@ def compute_NH2(
 def compute_NS2(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule NS2_ij (cal_ns2p) : pour chaque paire de populations, la
     moyenne du nombre de sites ségrégeants sur tous les loci du groupe
@@ -1911,6 +1971,7 @@ def compute_NS2(
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
         population_names: Les populations attendues.
+        layouts: Un layout par locus, ou None partout si l'appelant n'en
 
     Returns:
         Un dict {"i.j": valeur_moyenne}, une entrée par paire de
@@ -1923,9 +1984,11 @@ def compute_NS2(
     ]
     mean_segregating_sites = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
     num_loci = len(tree_sequences)
-
-    for ts in tree_sequences:
-        genotype_matrices = _genotype_matrix_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for ia, ib in pairs:
             pop_a = population_names[ia]
             pop_b = population_names[ib]
@@ -1980,6 +2043,8 @@ def _mean_pairwise_differences_within_per_locus(
 def compute_MP2(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule MP2_ij (cal_mp2p) : pour chaque paire de populations, la
     moyenne du nombre de différences par paire (distance de Hamming)
@@ -1996,6 +2061,7 @@ def compute_MP2(
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
         population_names: Les populations attendues.
+        layouts: Un layout par locus, ou None partout si l'appelant n'en
 
     Returns:
         Un dict {"i.j": valeur_moyenne}, une entrée par paire de
@@ -2008,9 +2074,11 @@ def compute_MP2(
     ]
     mean_pairwise_differences = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
     num_loci = len(tree_sequences)
-
-    for ts in tree_sequences:
-        genotype_matrices = _genotype_matrix_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for ia, ib in pairs:
             pop_a = population_names[ia]
             pop_b = population_names[ib]
@@ -2096,6 +2164,8 @@ def _mean_pairwise_differences_between_per_locus(
 def compute_MPB(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule MPB_ij (cal_mpb2p) : pour chaque paire de populations, la
     moyenne du nombre de différences par paire (distance de Hamming)
@@ -2113,6 +2183,8 @@ def compute_MPB(
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
         population_names: Les populations attendues.
+        layouts: Un layout par locus, ou None partout si l'appelant n'en
+            fournit pas.
 
     Returns:
         Un dict {"i.j": valeur_moyenne}, une entrée par paire de
@@ -2125,9 +2197,11 @@ def compute_MPB(
     ]
     mean_pairwise_differences_between = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
     num_loci = len(tree_sequences)
-
-    for ts in tree_sequences:
-        genotype_matrices = _genotype_matrix_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for ia, ib in pairs:
             pop_a = population_names[ia]
             pop_b = population_names[ib]
@@ -2153,6 +2227,8 @@ def compute_MPB(
 def compute_HST(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule HST_ij (cal_fst2p) : pour chaque paire de populations,
     une mesure de différenciation type FST à partir des loci du groupe
@@ -2176,6 +2252,8 @@ def compute_HST(
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
         population_names: Les populations attendues.
+        layouts: Un layout par locus, ou None partout si l'appelant n'en
+            fournit pas.
 
     Returns:
         Un dict {"i.j": valeur}, une entrée par paire de populations.
@@ -2188,9 +2266,11 @@ def compute_HST(
     mean_hst = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
     num = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
     den = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
-
-    for ts in tree_sequences:
-        genotype_matrices = _genotype_matrix_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for ia, ib in pairs:
             pop_a = population_names[ia]
             pop_b = population_names[ib]
@@ -2228,6 +2308,7 @@ def _length_by_population(
     Args:
         tree_sequence: Un TreeSequence muté du groupe (un locus [M]).
         layout: [(nom_population, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par population à utilisé par le chemin sériel, où un échantillon n'est plus sa propre population
+
     Returns:
         Un dict {nom_population: [(longueur, compte), ...]}.
     """
@@ -2278,7 +2359,10 @@ def count_alleles_per_population(
 
 
 def compute_NAL(
-    tree_sequences: list[tskit.TreeSequence], population_names: list[str]
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule NAL_i : pour chaque population, la moyenne du nombre d'allèles distincts
     sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
@@ -2286,14 +2370,21 @@ def compute_NAL(
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         population_names: Liste des noms de population.
+        layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+
     Returns:
         Dict {nom_population: NAL}.
     """
 
     allele_counts = {pop_name: 0.0 for pop_name in population_names}
     valid_loci_count = {pop_name: 0 for pop_name in population_names}
-    for ts in tree_sequences:
-        length_by_pop = _length_by_population(ts)
+
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        length_by_pop = _length_by_population(ts, layout=layout)
         counts = count_alleles_per_population(length_by_pop)
         for pop_name in counts:
             allele_counts[pop_name] += counts[pop_name]
@@ -2348,7 +2439,10 @@ def _compute_HET_for_one_population(
 
 
 def compute_HET(
-    tree_sequences: list[tskit.TreeSequence], population_names: list[str]
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule HET_i : pour chaque population, la moyenne de la diversité génétique
     sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci
@@ -2357,13 +2451,18 @@ def compute_HET(
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         population_names: Liste des noms de population.
+        layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+
     Returns:
         Dict {nom_population: HET}.
     """
     gene_diversity = {pop_name: 0.0 for pop_name in population_names}
     valid_loci_count = {pop_name: 0 for pop_name in population_names}
-    for ts in tree_sequences:
-        length_by_pop = _length_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        length_by_pop = _length_by_population(ts, layout=layout)
         total_counts = total_genes_copies_per_population(length_by_pop)
         for pop_name in total_counts:
             if total_counts[pop_name] > 1:
@@ -2439,6 +2538,8 @@ def compute_VAR(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
     list_motif_sizes: list[int],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule VAR_i : pour chaque population, la moyenne de la variance de la taille des allèles
     sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
@@ -2447,6 +2548,7 @@ def compute_VAR(
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         population_names: Liste des noms de population.
         list_motif_sizes: Liste des tailles de motifs pour chaque locus.
+        layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Dict {nom_population: VAR}.
@@ -2454,8 +2556,12 @@ def compute_VAR(
 
     allele_size_variance = {pop_name: 0.0 for pop_name in population_names}
     valid_loci_count = {pop_name: 0 for pop_name in population_names}
-    for ts, motif_size in zip(tree_sequences, list_motif_sizes, strict=True):
-        length_by_pop = _length_by_population(ts)
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, motif_size, layout in zip(
+        tree_sequences, list_motif_sizes, layouts, strict=True
+    ):
+        length_by_pop = _length_by_population(ts, layout=layout)
         raw_sizes, raw_square_sizes, total_counts = _compute_VAR_constants(
             length_by_pop
         )
@@ -2516,6 +2622,8 @@ def compute_MGW(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
     list_motif_sizes: list[int],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule MGW_i : pour chaque population, la moyenne de l'indice M
     sur tous les loci du groupe passé en argument (un groupe = les
@@ -2525,14 +2633,20 @@ def compute_MGW(
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         population_names: Liste des noms de population.
         list_motif_sizes: Liste des tailles de motifs pour chaque locus.
+        layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Dict {nom_population: MGW}.
     """
     num_sum = {pop_name: 0.0 for pop_name in population_names}
     den_sum = {pop_name: 0.0 for pop_name in population_names}
-    for ts, motif_size in zip(tree_sequences, list_motif_sizes, strict=True):
-        length_by_pop = _length_by_population(ts)
+
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, motif_size, layout in zip(
+        tree_sequences, list_motif_sizes, layouts, strict=True
+    ):
+        length_by_pop = _length_by_population(ts, layout=layout)
         for pop_name, (num, den) in _compute_MGW_by_locus(
             length_by_pop, motif_size
         ).items():
@@ -2613,7 +2727,10 @@ def _compute_N2P_for_one_locus(
 
 
 def compute_N2P(
-    tree_sequences: list[tskit.TreeSequence], population_names: list[str]
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule N2P_i_j : pour chaque paire de populations, la moyenne du nombre d'allèles distincts
     sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
@@ -2621,13 +2738,18 @@ def compute_N2P(
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         population_names: Liste des noms de population.
+        layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+
     Returns:
         Dict {"i.j": N2P}.
     """
     valid_loci = {}
     all_combined_alleles = {}
-    for ts in tree_sequences:
-        length_by_pop = _length_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        length_by_pop = _length_by_population(ts, layout=layout)
         combined_alleles = _compute_N2P_for_one_locus(length_by_pop, population_names)
         for key in combined_alleles:
             valid_loci.setdefault(key, 0)
@@ -2706,8 +2828,22 @@ def _compute_H2P_for_one_pair(
 
 
 def compute_H2P(
-    tree_sequences: list[tskit.TreeSequence], population_names: list[str]
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
+    """
+    Calcule la diversité génétique H2P pour toutes les paires de populations.
+
+    Args:
+        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        population_names: Liste des noms de population.
+        layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+
+    Returns:
+        Dict {i.j: H2P} pour chaque paire de populations.
+    """
 
     pairs = [
         (i, j)
@@ -2716,8 +2852,13 @@ def compute_H2P(
     ]
 
     H2P_values = {f"{i + 1}.{j + 1}": [] for i, j in pairs}
-    for ts in tree_sequences:
-        length_by_pop = _length_by_population(ts)
+
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        length_by_pop = _length_by_population(ts, layout=layout)
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
             if (
@@ -2789,7 +2930,21 @@ def compute_V2P(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
     list_motif_sizes: list[int],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
+    """
+    Calcule la variance de la taille des allèles entre deux échantillons.
+
+    Args:
+        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        population_names: Liste des noms de population.
+        list_motif_sizes: Liste des tailles de motifs pour chaque locus.
+        layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas
+
+    Returns:
+        Dict {"i.j": V2P} pour chaque paire de populations.
+    """
 
     pairs = [
         (i, j)
@@ -2798,8 +2953,14 @@ def compute_V2P(
     ]
 
     V2P_values = {f"{i + 1}.{j + 1}": [] for i, j in pairs}
-    for ts, motif_size in zip(tree_sequences, list_motif_sizes, strict=True):
-        length_by_pop = _length_by_population(ts)
+
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, motif_size, layout in zip(
+        tree_sequences, list_motif_sizes, layouts, strict=True
+    ):
+        length_by_pop = _length_by_population(ts, layout=layout)
         raw_sizes, raw_square_sizes, total_counts = _compute_VAR_constants(
             length_by_pop
         )
@@ -2861,7 +3022,20 @@ def _compute_identical_pair_for_one_pair(
 def compute_DAS(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
+    """
+    Calcule la distance d'allèle partagée (DAS) entre toutes les paires de populations.
+
+    Args:
+        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        population_names: Liste des noms de population.
+        layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+
+    Returns:
+        Dict {i.j: DAS} pour chaque paire de populations.
+    """
 
     pairs = [
         (i, j)
@@ -2871,8 +3045,11 @@ def compute_DAS(
     identical_sum = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
     total_sum = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
 
-    for ts in tree_sequences:
-        length_by_pop = _length_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        length_by_pop = _length_by_population(ts, layout=layout)
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
             identical_count, total_count = _compute_identical_pair_for_one_pair(
@@ -2975,6 +3152,8 @@ def compute_DM2(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
     list_motif_sizes: list[int],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule DM2_i_j : (delta mu)^2 de Goldstein et al. (1995), pour
     chaque paire de populations, sur tous les loci du groupe passé en
@@ -2992,6 +3171,7 @@ def compute_DM2(
         population_names: Liste des noms de population.
         list_motif_sizes: Liste des tailles de motifs, un par locus,
             dans le même ordre que tree_sequences.
+        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Dict {"i.j": DM2}.
@@ -3006,9 +3186,12 @@ def compute_DM2(
     previous_moy: dict[str, tuple[float, float] | None] = {
         f"{i + 1}.{j + 1}": None for i, j in pairs
     }
-
-    for ts, motif_size in zip(tree_sequences, list_motif_sizes, strict=True):
-        length_by_pop = _length_by_population(ts)
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, motif_size, layout in zip(
+        tree_sequences, list_motif_sizes, layouts, strict=True
+    ):
+        length_by_pop = _length_by_population(ts, layout=layout)
         raw_sizes, _, total_counts = _compute_VAR_constants(length_by_pop)
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
@@ -3172,13 +3355,17 @@ def _compute_FST_constants_on_all_alleles_for_two_populations(
 
 
 def compute_FST(
-    tree_sequences: list[tskit.TreeSequence], population_names: list[str]
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule FST_i_j : pour chaque paire de populations, la moyenne de FST sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         population_names: Liste des noms de population.
+        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Dict {"i.j": FST}.
@@ -3191,8 +3378,11 @@ def compute_FST(
     s1 = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
     # s2_sum = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
     s3 = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
-    for ts in tree_sequences:
-        length_by_pop = _length_by_pop_and_individuals(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        length_by_pop = _length_by_pop_and_individuals(ts, layout=layout)
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
             pop_a, pop_b = population_names[i], population_names[j]
@@ -3361,6 +3551,8 @@ def _compute_LIK_for_one_locus(
 def compute_LIK(
     tree_sequences: list[tskit.TreeSequence],
     population_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule LIK_i_j : indice de vraisemblance d'assignation (Rannala &
     Mountain 1997 ; Pascual et al. 2007), pour chaque paire ORDONNÉE de
@@ -3375,6 +3567,7 @@ def compute_LIK(
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         population_names: Liste des noms de population.
+        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Dict {"i.j": LIK}, une entrée par paire ORDONNÉE de populations.
@@ -3388,10 +3581,12 @@ def compute_LIK(
     ]
     likelihood_sum = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
     valid_loci_count = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
-
-    for ts in tree_sequences:
-        length_by_pop = _length_by_population(ts)
-        genotypes_by_pop = _genotypes_by_pop_and_individuals(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        length_by_pop = _length_by_population(ts, layout=layout)
+        genotypes_by_pop = _genotypes_by_pop_and_individuals(ts, layout=layout)
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
             pop_i, pop_j = population_names[i], population_names[j]
@@ -3417,6 +3612,8 @@ def _prepare_loci_for_admixture(
     focal: str,
     parent1: str,
     parent2: str,
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> list[tuple[dict[int, float], dict[int, float], list[tuple[int, ...]]]]:
     """
     Prépare les loci pour le calcul de la log-vraisemblance d'admixture.
@@ -3427,6 +3624,7 @@ def _prepare_loci_for_admixture(
         focal: Nom de la population focale.
         parent1: Nom de la première population parentale.
         parent2: Nom de la deuxième population parentale.
+        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Une liste de tuples pour chaque locus, contenant :
@@ -3435,8 +3633,11 @@ def _prepare_loci_for_admixture(
         - liste des génotypes des individus de la population focale.
     """
     prepared_loci = []
-    for ts in tree_sequences:
-        length_by_pop = _length_by_population(ts)
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        length_by_pop = _length_by_population(ts, layout=layout)
         count_parent1 = {
             length: count
             for length, count in length_by_pop.get(parent1, [])
@@ -3460,7 +3661,7 @@ def _prepare_loci_for_admixture(
             if total_parent2 > 0
             else {}
         )
-        genotypes_by_pop = _genotypes_by_pop_and_individuals(ts)
+        genotypes_by_pop = _genotypes_by_pop_and_individuals(ts, layout=layout)
         focal_genotypes = genotypes_by_pop.get(focal, [])
 
         prepared_loci.append((f1, f2, focal_genotypes))
@@ -3547,6 +3748,8 @@ def _compute_AML_one_triplet(
     parent1: str,
     parent2: str,
     seed: int,
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> float:
     """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour chaque triplet de populations.
 
@@ -3556,11 +3759,15 @@ def _compute_AML_one_triplet(
         parent1: Nom de la première population parentale.
         parent2: Nom de la deuxième population parentale.
         seed: Seed pour la génération aléatoire (pour les cas où AML ne peut pas être calculé).
+        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
+
     Returns:
         La statistique AML pour le triplet donné.
     """
 
-    prepared_loci = _prepare_loci_for_admixture(tree_sequences, focal, parent1, parent2)
+    prepared_loci = _prepare_loci_for_admixture(
+        tree_sequences, focal, parent1, parent2, layouts=layouts
+    )
 
     i1, i2 = 1, 998
     lik1, p1 = _pente_lik(prepared_loci, i1)
@@ -3593,7 +3800,11 @@ def _compute_AML_one_triplet(
 
 
 def compute_AML_microsat(
-    tree_sequences: list[tskit.TreeSequence], population_names: list[str], seed: int = 0
+    tree_sequences: list[tskit.TreeSequence],
+    population_names: list[str],
+    seed: int = 0,
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour chaque triplet de populations.
 
@@ -3601,6 +3812,7 @@ def compute_AML_microsat(
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         population_names: Liste des noms de population.
         seed: Seed pour la génération aléatoire (pour les cas où AML ne peut pas être calculé).
+        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Dict {"i.j.k": AML} pour chaque triplet de populations.
@@ -3616,7 +3828,12 @@ def compute_AML_microsat(
             population_names[p2],
         )
         results[key] = _compute_AML_one_triplet(
-            tree_sequences, focal, parent1, parent2, seed + _LIKELIHOOD_SEED_OFFSET + i
+            tree_sequences,
+            focal,
+            parent1,
+            parent2,
+            seed + _LIKELIHOOD_SEED_OFFSET + i,
+            layouts=layouts,
         )
     return results
 
