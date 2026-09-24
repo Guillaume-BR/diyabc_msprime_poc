@@ -26,6 +26,7 @@ from pathlib import Path
 import msprime
 
 from bridge.ancestry_simulation import (
+    build_sample_sets_from_scenario,
     build_samples_argument,
     compute_sample_layout,
     counts_by_sample_for_locus,
@@ -641,10 +642,14 @@ def compute_summary_statistics_dna(
         header_text, scenario_index, seed
     )
 
+    scenarios = parse_header_scenarios(context.header_text)
+    scenario = next(s for s in scenarios if s.index == scenario_index)
+    sample_sets = build_sample_sets_from_scenario(
+        scenario, values, context.samples_default
+    )
+
     mutated = dna_mutation_simulation_per_locus(
-        context,
-        demography,
-        seed,
+        context, demography, seed, sample_sets=sample_sets
     )
 
     locus_by_name = {locus.name: locus for locus in context.list_loci}
@@ -711,11 +716,18 @@ def compute_summary_statistics_dna_from_values(
         header_text, scenario_index, values
     )
 
+    scenarios = parse_header_scenarios(context.header_text)
+    scenario = next(s for s in scenarios if s.index == scenario_index)
+    sample_sets = build_sample_sets_from_scenario(
+        scenario, values, context.samples_default
+    )
+
     mutated = dna_mutation_simulation_per_locus_from_values(
         context,
         demography,
         group_priors_values=group_priors_values,
         seed=seed,
+        sample_sets=sample_sets,
     )
 
     locus_by_name = {locus.name: locus for locus in context.list_loci}
@@ -790,10 +802,14 @@ def compute_summary_statistics_microsat(
         header_text, scenario_index, seed
     )
 
+    scenarios = parse_header_scenarios(context.header_text)
+    scenario = next(s for s in scenarios if s.index == scenario_index)
+    sample_sets = build_sample_sets_from_scenario(
+        scenario, values, context.samples_default
+    )
+
     mutated = microsat_mutation_simulation_per_locus(
-        context,
-        demography,
-        seed,
+        context, demography, seed, sample_sets=sample_sets
     )
 
     locus_by_name = {locus.name: locus for locus in context.list_loci}
@@ -863,11 +879,14 @@ def compute_summary_statistics_microsat_from_values(
         context.header_text, scenario_index, values
     )
 
+    scenarios = parse_header_scenarios(context.header_text)
+    scenario = next(s for s in scenarios if s.index == scenario_index)
+    sample_sets = build_sample_sets_from_scenario(
+        scenario, values, context.samples_default
+    )
+
     mutated = microsat_mutation_simulation_per_locus_from_values(
-        context,
-        demography,
-        group_priors_values,
-        seed,
+        context, demography, group_priors_values, seed, sample_sets=sample_sets
     )
 
     locus_by_name = {locus.name: locus for locus in context.list_loci}

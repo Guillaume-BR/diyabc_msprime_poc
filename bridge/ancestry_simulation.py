@@ -1835,6 +1835,8 @@ def dna_mutation_simulation_per_locus(
     context: DnaReplayContext,
     demography: msprime.Demography,
     seed: int,
+    *,
+    sample_sets: list[msprime.SampleSet] | None = None,
 ) -> dict[str, tskit.TreeSequence]:
     """Assemble le pipeline complet de simulation ADN, par locus.
 
@@ -1859,6 +1861,7 @@ def dna_mutation_simulation_per_locus(
         context: Le contexte de la simulation.
         demography: La démographie <A> de base (PAS encore rescalée).
         seed: La graine de la simulation.
+        sample_sets: liste des SampleSet, celle du scenario, communs à tous les loci
 
     Returns:
         Un dict {nom_locus: TreeSequence mutée} pour chaque locus [S].
@@ -1867,7 +1870,9 @@ def dna_mutation_simulation_per_locus(
     mss_file_path = context.mss_path
     list_loci = context.list_loci
     frequencies_by_locus = context.frequencies_per_locus
-    samples_default = context.samples_default
+    samples_default = (
+        sample_sets if sample_sets is not None else context.samples_default
+    )
     sex_ratio = context.sex_ratio
 
     rate_map_per_locus = build_rate_map_per_locus(header_text, seed)
@@ -2229,6 +2234,8 @@ def dna_mutation_simulation_per_locus_from_values(
     demography: msprime.Demography,
     group_priors_values: dict[str, float],
     seed: int,
+    *,
+    sample_sets: list[msprime.SampleSet] | None = None,
 ) -> dict[str, tskit.TreeSequence]:
     """Variante replay de dna_mutation_simulation_per_locus (rejeu apparié DIYABC/msprime).
 
@@ -2260,6 +2267,8 @@ def dna_mutation_simulation_per_locus_from_values(
             dans le vrai reftable.
         seed: La graine du tirage par-locus (second niveau), de la
             généalogie et de la mutation.
+        sample_sets: liste des sample_sets commun à tous les loci (optionnel,
+            sinon utilise context.samples_default).
 
     Returns:
         Un dict {nom_locus: TreeSequence mutée} pour chaque locus [S],
@@ -2269,7 +2278,9 @@ def dna_mutation_simulation_per_locus_from_values(
     mss_file_path = context.mss_path
     list_loci = context.list_loci
     frequencies_by_locus = context.frequencies_per_locus
-    samples_default = context.samples_default
+    samples_default = (
+        sample_sets if sample_sets is not None else context.samples_default
+    )
     sex_ratio = context.sex_ratio
 
     rate_map_per_locus = build_rate_map_per_locus_from_values(
@@ -2663,6 +2674,8 @@ def microsat_mutation_simulation_per_locus(
     context: MicrosatReplayContext,
     demography: msprime.Demography,
     seed: int,
+    *,
+    sample_sets: list[msprime.SampleSet] | None = None,
 ) -> dict[str, tskit.TreeSequence]:
     """Assemble le pipeline complet de simulation microsatellite, par locus.
 
@@ -2675,13 +2688,16 @@ def microsat_mutation_simulation_per_locus(
         mss_file_path: Chemin du fichier .mss.
         demography: La démographie <A> de base (PAS encore rescalée).
         seed: La graine de la simulation.
+        sample_sets: liste des sample_sets commun à tous les loci.
     Returns:
         Un dict {nom_locus: arbre_généalogique} pour chaque locus microsatellite [M].
     """
 
     mss_file_path = context.mss_path
     list_loci = context.list_loci
-    samples_default = context.samples_default
+    samples_default = (
+        sample_sets if sample_sets is not None else context.samples_default
+    )
     sex_ratio = context.sex_ratio
 
     matrix_per_locus = build_matrix_microsat_per_locus(context, seed)
@@ -2920,6 +2936,8 @@ def microsat_mutation_simulation_per_locus_from_values(
     demography: msprime.Demography,
     group_priors_values: dict[str, float],
     seed: int,
+    *,
+    sample_sets: list[msprime.SampleSet] | None = None,
 ) -> dict[str, tskit.TreeSequence]:
     """Assemble le pipeline complet de simulation microsatellite, par locus.
 
@@ -2934,6 +2952,7 @@ def microsat_mutation_simulation_per_locus_from_values(
         group_priors_values: Dict {nom_colonne: valeur} tel que lu
             dans le vrai reftable.
         seed: La graine de la simulation.
+        sample_sets: liste des sample_sets commun à tous les loci.
     Returns:
         Un dict {nom_locus: arbre_généalogique} pour chaque locus microsatellite [M].
     """
@@ -2945,7 +2964,9 @@ def microsat_mutation_simulation_per_locus_from_values(
     )
 
     list_loci = context.list_loci
-    samples_default = context.samples_default
+    samples_default = (
+        sample_sets if sample_sets is not None else context.samples_default
+    )
     sex_ratio = context.sex_ratio
     mutated_tree_sequences = {}
 
