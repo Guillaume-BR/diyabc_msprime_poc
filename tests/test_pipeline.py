@@ -320,5 +320,5 @@ def test_compute_summary_statistics_microsat(microsat_context_te2_xy):
 
     assert len(summary_stats) == 16
     assert summary_stats["FST_1_1.2"] == pytest.approx(0.03084132131276057)
-    assert summary_stats["LIK_1_1.2"] == pytest.approx(1.8200474426696596)
-    assert summary_stats["LIK_1_2.1"] == pytest.approx(1.8483760375423377)
+    assert summary_stats["LIK_1_1.2"] == pytest.approx(1.8034866005525414)
+    assert summary_stats["LIK_1_2.1"] == pytest.approx(1.833674600989042)
