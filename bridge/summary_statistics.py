@@ -3954,6 +3954,9 @@ def compute_all_statistics_dna(
     header_text: str,
     tree_sequences_by_locus: dict[str, tskit.TreeSequence],
     population_names: list[str],
+    *,
+    seed: int = 0,
+    layouts_by_locus: dict[str, list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule les 13 statistiques résumées ADN pour chaque `group Gx`
     séquence (`[S]`) du header, et retourne un dict {nom_colonne: valeur}
@@ -3995,8 +3998,15 @@ def compute_all_statistics_dna(
         group_number = group_label[1:]  # "G2" -> "2", comme stats_group_parser.py
         tree_sequences = [tree_sequences_by_locus[name] for name in locus_names]
 
+        layouts = (
+            None
+            if layouts_by_locus is None
+            else [layouts_by_locus[name] for name in locus_names]
+        )
         for stat_name, stat_fn in _DNA_PER_POPULATION_STATS.items():
-            for pop_name, value in stat_fn(tree_sequences, population_names).items():
+            for pop_name, value in stat_fn(
+                tree_sequences, population_names, layouts=layouts
+            ).items():
                 pop_index = population_names.index(pop_name) + 1
                 key = (
                     f"{stat_name}_{group_number}_{pop_index}"
@@ -4006,7 +4016,9 @@ def compute_all_statistics_dna(
                 results[key] = value
 
         for stat_name, stat_fn in _DNA_PAIRWISE_STATS.items():
-            for pair_key, value in stat_fn(tree_sequences, population_names).items():
+            for pair_key, value in stat_fn(
+                tree_sequences, population_names, layouts=layouts
+            ).items():
                 key = (
                     f"{stat_name}_{group_number}_{pair_key}"
                     if multi_group
@@ -4047,7 +4059,9 @@ def compute_all_statistics_microsat(
     header_text: str,
     tree_sequences_by_locus: dict[str, tskit.TreeSequence],
     population_names: list[str],
+    *,
     seed: int,
+    layouts_by_locus: dict[str, list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule les statistiques résumées microsat pour chaque `group Gx`
     microsat (`[M]`) du header, et retourne un dict {nom_colonne: valeur}
@@ -4088,9 +4102,16 @@ def compute_all_statistics_microsat(
     for group_label, locus_names in loci_by_group.items():
         group_number = group_label[1:]  # "G2" -> "2", comme stats_group_parser.py
         tree_sequences = [tree_sequences_by_locus[name] for name in locus_names]
+        layouts = (
+            None
+            if layouts_by_locus is None
+            else [layouts_by_locus[name] for name in locus_names]
+        )
 
         for stat_name, stat_fn in _MICROSAT_PER_POPULATION_WITHOUT_MOTIF_SIZE.items():
-            for pop_name, value in stat_fn(tree_sequences, population_names).items():
+            for pop_name, value in stat_fn(
+                tree_sequences, population_names, layouts=layouts
+            ).items():
                 pop_index = population_names.index(pop_name) + 1
                 key = (
                     f"{stat_name}_{group_number}_{pop_index}"
@@ -4099,7 +4120,9 @@ def compute_all_statistics_microsat(
                 )
                 results[key] = value
         for stat_name, stat_fn in _MICROSAT_PAIRWISE_WITHOUT_MOTIF_SIZE.items():
-            for stat_index, value in stat_fn(tree_sequences, population_names).items():
+            for stat_index, value in stat_fn(
+                tree_sequences, population_names, layouts=layouts
+            ).items():
                 key = (
                     f"{stat_name}_{group_number}_{stat_index}"
                     if multi_group
@@ -4110,7 +4133,7 @@ def compute_all_statistics_microsat(
         motif_sizes = [motif_sizes_by_locus[name] for name in locus_names]
         for stat_name, stat_fn in _MICROSAT_PER_POPULATION_WITH_MOTIF_SIZE.items():
             for pop_name, value in stat_fn(
-                tree_sequences, population_names, motif_sizes
+                tree_sequences, population_names, motif_sizes, layouts=layouts
             ).items():
                 pop_index = population_names.index(pop_name) + 1
                 key = (
@@ -4121,7 +4144,7 @@ def compute_all_statistics_microsat(
                 results[key] = value
         for stat_name, stat_fn in _MICROSAT_PAIRWISE_WITH_MOTIF_SIZE.items():
             for stat_index, value in stat_fn(
-                tree_sequences, population_names, motif_sizes
+                tree_sequences, population_names, motif_sizes, layouts=layouts
             ).items():
                 key = (
                     f"{stat_name}_{group_number}_{stat_index}"
@@ -4132,7 +4155,10 @@ def compute_all_statistics_microsat(
 
         for stat_name, stat_fn in _MICROSAT_TRIPLET_STATS.items():
             for stat_index, value in stat_fn(
-                tree_sequences, population_names, seed + int(group_number) * 1000
+                tree_sequences,
+                population_names,
+                seed + int(group_number) * 1000,
+                layouts=layouts,
             ).items():  # pour éviter d'avoir la même graine pour différents groupes
                 key = (
                     f"{stat_name}_{group_number}_{stat_index}"
