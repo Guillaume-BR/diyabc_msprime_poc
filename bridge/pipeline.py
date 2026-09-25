@@ -439,30 +439,17 @@ def compute_summary_statistics(
         summary_stats = compute_all_statistics(genotypes_list, population_names)
         summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
     else:
-        total_loci_poolseq = context.loci_description.loci_counts_by_heritage["A"]
-        demography, values = build_random_demography_for_scenario_index(
-            header_text, scenario_index, seed
+        reads_per_locus, values = simulate_particle_reads(
+            context,
+            scenario_index,
+            seed=seed,
+            observed_reads_per_locus=observed_reads_per_locus,
         )
+        reads_list = list(reads_per_locus)
 
-        scenario = next(
-            s for s in parse_header_scenarios(header_text) if s.index == scenario_index
-        )
-        counts_by_samples = poolseq_counts_by_sample(context)
-        sample_sets = build_sample_sets_from_scenario(
-            scenario, values, counts_by_samples
-        )
-
-        reads_list = list(
-            simulate_poolseq_reads_with_mrc_filter(
-                demography,
-                context,
-                seed,
-                num_loci=total_loci_poolseq,
-                observed_reads_per_locus=observed_reads_per_locus,
-                sample_sets=sample_sets,
-                counts_by_samples=counts_by_samples,
-            )
-        )
+        # pool_sizes reste en tailles HAPLOÏDES : la correction de biais de
+        # lecture de compute_all_statistics_poolseq en a besoin, contrairement
+        # à counts_by_samples qui compte des individus.
         pool_sizes = {
             f"pop{index}": count
             for index, count in enumerate(context.count_samples.values(), start=1)
@@ -595,13 +582,15 @@ def compute_summary_statistics_from_values(
     header_text = context.header_text
     snp_path = context.snp_path
 
-    scenario = next(
-        s for s in parse_header_scenarios(header_text) if s.index == scenario_index
-    )
-    counts_by_samples = {
-        f"pop{i}": n for i, n in enumerate(context.count_samples.values(), 1)
-    }
-    sample_sets = build_sample_sets_from_scenario(scenario, values, counts_by_samples)
+    # Les effectifs par échantillon dépendent de la FAMILLE de données :
+    # sur un fichier IND, `count_samples` compte des individus ; sur un fichier
+    # POOL, il compte des copies de gènes haploïdes, qu'il faut diviser par 2
+    # (voir poolseq_counts_by_sample). Appliquer la formule IND à un fichier
+    # POOL simule DEUX FOIS trop de copies par échantillon, ce qui divise par
+    # deux le bruit d'échantillonnage des fréquences alléliques et abaisse
+    # systématiquement toutes les statistiques de différenciation -- sans
+    # qu'aucun garde ne le détecte, puisque l'ensemble reste cohérent en
+    # interne (seul le désaccord avec le fichier observé le trahit).
 
     if context.snp_file_type == "IND":
         genotypes_per_locus = simulate_particle_genotypes_from_values(
@@ -610,8 +599,6 @@ def compute_summary_statistics_from_values(
             values,
             num_loci=num_loci,
             seed=seed,
-            sample_sets=sample_sets,
-            counts_by_samples=counts_by_samples,
         )
         genotypes_list = list(genotypes_per_locus)
 
@@ -619,32 +606,132 @@ def compute_summary_statistics_from_values(
         summary_stats = compute_all_statistics(genotypes_list, population_names)
         summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
     else:
-        # l'argument num_loci est ignoré ici, côté PoolSeq on simule tous les loci déclarés dans header.txt
-        # alors qu'en Indseq num_loci sert à limiter le nombre de loci simulés
-
-        total_loci_poolseq = context.loci_description.loci_counts_by_heritage["A"]
-        demography = build_demography_for_scenario_index(
-            header_text, scenario_index, values
-        )
-
+        # `num_loci` est ignoré côté PoolSeq : on simule tous les loci du
+        # header, la couverture observée étant indexée par locus.
         reads_list = list(
-            simulate_poolseq_reads_with_mrc_filter(
-                demography,
+            simulate_particle_reads_from_values(
                 context,
-                seed,
-                num_loci=total_loci_poolseq,
+                scenario_index,
+                values,
+                seed=seed,
                 observed_reads_per_locus=observed_reads_per_locus,
-                sample_sets=sample_sets,
-                counts_by_samples=counts_by_samples,
             )
         )
-        pool_sizes = build_samples_argument(snp_path)
+        # Tailles HAPLOÏDES, cf. la branche jumelle de compute_summary_statistics.
+        pool_sizes = {
+            f"pop{index}": count
+            for index, count in enumerate(context.count_samples.values(), start=1)
+        }
         population_names = list(pool_sizes.keys())
         summary_stats = compute_all_statistics_poolseq(
             reads_list, population_names, pool_sizes
         )
         summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
     return summary_stats
+
+
+# ── PoolSeq : les jumeaux de simulate_particle_genotypes ──────────────────
+
+
+def simulate_particle_reads(
+    context: SnpReplayContext,
+    scenario_index: int,
+    *,
+    seed: int,
+    observed_reads_per_locus: list[dict[str, tuple[int, int]]] | None = None,
+) -> tuple[Iterator[dict[str, tuple[int, int]]], dict[str, float]]:
+    """Équivalent PoolSeq de `simulate_particle_genotypes` : tire et simule.
+
+    Tire les priors du scénario, construit la démographie et les SampleSet
+    (sériels : un par événement `sample`, avec son `time`), puis simule les
+    lectures de tous les loci déclarés.
+
+    `num_loci` n'est PAS un paramètre, contrairement au jumeau IndSeq : côté
+    PoolSeq on simule toujours tous les loci du header, la couverture observée
+    étant indexée par locus.
+
+    Args:
+        context: Le contexte SNP (doit être de type POOL).
+        scenario_index: L'index 1-based du scénario à utiliser.
+        seed: La graine de la simulation.
+        observed_reads_per_locus: Si `None`, calculé par
+            `simulate_poolseq_reads_with_mrc_filter` via
+            `prepare_poolseq_observed_reads`.
+
+    Returns:
+        Le tuple (itérateur de lectures par locus, valeurs tirées).
+    """
+    header_text = context.header_text
+
+    demography, values = build_random_demography_for_scenario_index(
+        header_text, scenario_index, seed
+    )
+    scenario = next(
+        s for s in parse_header_scenarios(header_text) if s.index == scenario_index
+    )
+    counts_by_samples = poolseq_counts_by_sample(context)
+    sample_sets = build_sample_sets_from_scenario(scenario, values, counts_by_samples)
+
+    reads = simulate_poolseq_reads_with_mrc_filter(
+        demography,
+        context,
+        seed,
+        num_loci=context.loci_description.loci_counts_by_heritage["A"],
+        observed_reads_per_locus=observed_reads_per_locus,
+        sample_sets=sample_sets,
+        counts_by_samples=counts_by_samples,
+    )
+    return reads, values
+
+
+def simulate_particle_reads_from_values(
+    context: SnpReplayContext,
+    scenario_index: int,
+    values: dict[str, float],
+    *,
+    seed: int,
+    observed_reads_per_locus: list[dict[str, tuple[int, int]]] | None = None,
+) -> Iterator[dict[str, tuple[int, int]]]:
+    """Variante de `simulate_particle_reads` qui rejoue des valeurs connues.
+
+    Construit ses propres `counts_by_samples` avec la formule PoolSeq
+    (`poolseq_counts_by_sample`, qui divise par 2 des tailles haploïdes).
+    C'est délibéré et ça vaut d'être respecté : tant que chaque famille de
+    données construit les siens, il est structurellement impossible
+    d'appliquer la formule d'une famille aux données d'une autre -- ce qui
+    est arrivé le 25/09 et a fait simuler deux fois trop de copies de gènes
+    pendant tout un rejeu, sans qu'aucun garde ne le détecte.
+
+    Args:
+        context: Le contexte SNP (doit être de type POOL).
+        scenario_index: L'index 1-based du scénario rejoué.
+        values: Les valeurs de paramètres historiques déjà connues.
+        seed: La graine du tirage par locus.
+        observed_reads_per_locus: Voir `simulate_particle_reads`.
+
+    Returns:
+        L'itérateur des lectures par locus.
+    """
+    header_text = context.header_text
+
+    demography = build_demography_for_scenario_index(
+        header_text, scenario_index, values
+    )
+    scenario = next(
+        s for s in parse_header_scenarios(header_text) if s.index == scenario_index
+    )
+    counts_by_samples = poolseq_counts_by_sample(context)
+    sample_sets = build_sample_sets_from_scenario(scenario, values, counts_by_samples)
+
+    return simulate_poolseq_reads_with_mrc_filter(
+        demography,
+        context,
+        seed,
+        num_loci=context.loci_description.loci_counts_by_heritage["A"],
+        observed_reads_per_locus=observed_reads_per_locus,
+        sample_sets=sample_sets,
+        counts_by_samples=counts_by_samples,
+    )
 
 
 # --------------------------------------------------------------
