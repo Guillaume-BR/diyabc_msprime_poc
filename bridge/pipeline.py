@@ -11,9 +11,9 @@ construction : il orchestre uniquement.
 Deux familles de points d'entrée, chacune de bout en bout dans sa propre
 section ci-dessous :
   - tirage ALÉATOIRE des paramètres (build_random_demography,
-    run_poc_for_directory, compute_summary_statistics) ;
+    simulate_particle_genotypes, compute_summary_statistics) ;
   - valeurs de paramètres DÉJÀ CONNUES / rejeu (build_demography_for_
-    scenario_index, run_poc_for_directory_with_values,
+    scenario_index, simulate_particle_genotypes_from_values,
     compute_summary_statistics_from_values) -- voir
     reftable_loop.replay_reftable_simulation.
 Les deux partagent les mêmes helpers (section "Fondations" ci-dessous).
@@ -34,6 +34,7 @@ from bridge.ancestry_simulation import (
     dna_mutation_simulation_per_locus_from_values,
     microsat_mutation_simulation_per_locus,
     microsat_mutation_simulation_per_locus_from_values,
+    poolseq_counts_by_sample,
     simulate_genotypes_for_locus_type,
     simulate_poolseq_reads_with_mrc_filter,
 )
@@ -307,7 +308,7 @@ def build_random_demography_for_scenario_index(
     return build_random_demography(scenario, header_text, seed)
 
 
-def run_poc_for_directory(
+def simulate_particle_genotypes(
     context: SnpReplayContext,
     scenario_index: int,
     *,
@@ -386,7 +387,7 @@ def compute_summary_statistics(
     Utilise nos formules Python validées (summary_statistics.py) --
     remplace la délégation au binaire C++ (subprocess + fichier .snp
     intermédiaire). Dispatche automatiquement entre le chemin IndSeq
-    (`run_poc_for_directory` + `compute_all_statistics`) et le chemin
+    (`simulate_particle_genotypes` + `compute_all_statistics`) et le chemin
     PoolSeq (`simulate_poolseq_reads_with_mrc_filter` +
     `compute_all_statistics_poolseq`) selon `detect_snp_file_type`.
 
@@ -426,7 +427,7 @@ def compute_summary_statistics(
     snp_path = context.snp_path
 
     if context.snp_file_type == "IND":
-        genotypes_per_locus, values = run_poc_for_directory(
+        genotypes_per_locus, values = simulate_particle_genotypes(
             context,
             scenario_index=scenario_index,
             num_loci=num_loci,
@@ -443,6 +444,14 @@ def compute_summary_statistics(
             header_text, scenario_index, seed
         )
 
+        scenario = next(
+            s for s in parse_header_scenarios(header_text) if s.index == scenario_index
+        )
+        counts_by_samples = poolseq_counts_by_sample(context)
+        sample_sets = build_sample_sets_from_scenario(
+            scenario, values, counts_by_samples
+        )
+
         reads_list = list(
             simulate_poolseq_reads_with_mrc_filter(
                 demography,
@@ -450,6 +459,8 @@ def compute_summary_statistics(
                 seed,
                 num_loci=total_loci_poolseq,
                 observed_reads_per_locus=observed_reads_per_locus,
+                sample_sets=sample_sets,
+                counts_by_samples=counts_by_samples,
             )
         )
         pool_sizes = {
@@ -501,7 +512,7 @@ def build_demography_for_scenario_index(
     return build_demography(scenario, values)
 
 
-def run_poc_for_directory_with_values(
+def simulate_particle_genotypes_from_values(
     context: SnpReplayContext,
     scenario_index: int,
     values: dict[str, float],
@@ -511,7 +522,7 @@ def run_poc_for_directory_with_values(
     sample_sets: list[msprime.SampleSet] | None = None,
     counts_by_samples: dict[str, int] | None = None,
 ):
-    """Variante de run_poc_for_directory qui prend des valeurs de paramètres déjà connues.
+    """Variante de simulate_particle_genotypes qui prend des valeurs de paramètres déjà connues.
 
     Au lieu d'en tirer de nouvelles -- même contrat par ailleurs
     (lecture du nom de fichier .snp sur la première ligne de header.txt,
@@ -526,7 +537,7 @@ def run_poc_for_directory_with_values(
 
     Returns:
         L'itérateur des génotypes simulés (même contrat que
-        run_poc_for_directory, sans le dict `values` en plus puisqu'il
+        simulate_particle_genotypes, sans le dict `values` en plus puisqu'il
         est déjà connu de l'appelant).
     """
 
@@ -593,7 +604,7 @@ def compute_summary_statistics_from_values(
     sample_sets = build_sample_sets_from_scenario(scenario, values, counts_by_samples)
 
     if context.snp_file_type == "IND":
-        genotypes_per_locus = run_poc_for_directory_with_values(
+        genotypes_per_locus = simulate_particle_genotypes_from_values(
             context,
             scenario_index,
             values,
@@ -623,6 +634,8 @@ def compute_summary_statistics_from_values(
                 seed,
                 num_loci=total_loci_poolseq,
                 observed_reads_per_locus=observed_reads_per_locus,
+                sample_sets=sample_sets,
+                counts_by_samples=counts_by_samples,
             )
         )
         pool_sizes = build_samples_argument(snp_path)

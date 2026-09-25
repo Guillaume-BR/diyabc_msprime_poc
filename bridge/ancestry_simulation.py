@@ -114,6 +114,45 @@ from bridge.prior_parser import get_parameter_used_by_model, parse_group_priors
 # réplicat) du tirage de mutation.
 
 
+# Helper de vérification
+
+
+def _check_layout_matches(
+    population_layout: list[tuple[str | None, np.ndarray]], ts: tskit.TreeSequence
+) -> None:
+    """Vérifie qu'un layout décrit exactement les noeuds échantillons d'une ts.
+
+    Indispensable parce qu'un layout incohérent ne lève jamais de lui-même :
+    ses consommateurs testent l'APPARTENANCE (`s in derived_samples`,
+    `derived_samples.intersection(sample_ids)`), jamais l'indexation, donc un
+    ID de noeud absent de la ts rend silencieusement 0. Les symptômes diffèrent
+    selon l'appelant -- génotypes de mauvaise longueur pour
+    `simulate_snp_genotypes`, fréquence dérivée diluée puis tirage binomial
+    dessus pour `simulate_poolseq_reads`, ce dernier indétectable en aval.
+    Cause typique : un layout calculé avec une ploïdie différente de celle de
+    la simulation.
+
+    Ne détecte QUE les désaccords de taille : deux dicts d'effectifs de même
+    total (ex. tailles haploïdes de pools contre nombres d'individus) passent
+    ce garde tout en produisant un découpage faux.
+
+    Args:
+        population_layout: Le layout à valider, tel que rendu par
+            `compute_population_layout` ou `compute_sample_layout`.
+        ts: La TreeSequence à laquelle il est censé s'appliquer.
+
+    Raises:
+        ValueError: Si le total des noeuds du layout diffère de
+            `ts.num_samples`.
+    """
+    total_samples = sum(len(sample_ids) for _, sample_ids in population_layout)
+    if total_samples != ts.num_samples:
+        raise ValueError(
+            f"Le layout décrit {total_samples} noeuds échantillons mais la "
+            f"TreeSequence en contient {ts.num_samples}."
+        )
+
+
 # ── Construction de l'argument samples (un builder par type de locus) ──────
 
 
@@ -667,15 +706,9 @@ def simulate_snp_genotypes(
                 else compute_population_layout(ts)
             )
 
-        total_in_layout = sum(len(sample_ids) for _, sample_ids in population_layout)
-        if total_in_layout != ts.num_samples:
-            raise ValueError(
-                f"Le layout décrit {total_in_layout} noeuds échantillons mais la "
-                f"TreeSequence en contient {ts.num_samples}. Un ID absent de la ts "
-                f"ne lève rien ici (test d'appartenance, pas indexation) : il rend "
-                f"silencieusement 0. Cause typique : layout calculé avec une ploïdie "
-                f"différente de celle de la simulation."
-            )
+        # Vérification que le layout fourni correspond bien à la TreeSequence
+        _check_layout_matches(population_layout, ts)
+
         genotypes_by_population = {
             pop_name: [1 if s in derived_samples else 0 for s in sample_ids]
             for pop_name, sample_ids in population_layout
@@ -1095,6 +1128,7 @@ def simulate_poolseq_reads(
     observed_reads_per_locus: list[dict[str, tuple[int, int]]],
     seed: int,
     population_layout: list[tuple[str | None, np.ndarray]] | None = None,
+    counts_by_samples: dict[str, int] | None = None,
 ) -> Iterator[dict[str, tuple[int, int]]]:
     """Simule les lectures PoolSeq de chaque locus.
 
@@ -1120,6 +1154,7 @@ def simulate_poolseq_reads(
             qui appelle cette fonction une fois PAR TENTATIVE et
             calcule donc son propre cache à travers les tentatives),
             utilisé tel quel sans jamais être recalculé.
+        counts_by_samples: Si fourni, permet de spécifier la taille des échantillons, utilisé pour le calcul du layout.
 
     Returns:
         Un itérateur de dicts {nom_population: (nreads_dérivé,
@@ -1145,7 +1180,14 @@ def simulate_poolseq_reads(
         # fait déjà ce set() immédiat, c'est le bon modèle à suivre.
         derived_samples = set(tree.samples(mutated_node))
         if population_layout is None:
-            population_layout = compute_population_layout(ts)
+            population_layout = (
+                compute_sample_layout(ts, counts_by_samples)
+                if counts_by_samples is not None
+                else compute_population_layout(ts)
+            )
+
+        # Vérification de la correspondance entre le layout et la TreeSequence
+        _check_layout_matches(population_layout, ts)
 
         reads_by_population = {}
         for pop_name, sample_ids in population_layout:
@@ -1199,6 +1241,8 @@ def with_mrc_filter(
     observed_reads_per_locus: list[dict[str, tuple[int, int]]],
     seed: int,
     ploidy: int = 2,
+    *,
+    counts_by_samples: dict[str, int] | None = None,
 ) -> Iterator[dict[str, tuple[int, int]]]:
     """Simule des loci SNP indépendants avec filtre MRC.
 
@@ -1240,6 +1284,7 @@ def with_mrc_filter(
             (nreads_dérivé, nreads_total)} observés, un par locus.
         seed: La graine de la simulation.
         ploidy: Transmis tel quel à `simulate_independent_loci`.
+        counts_by_samples: Si fourni, permet de spécifier la taille des échantillons, utilisé pour le calcul du layout.
 
     Returns:
         Un itérateur de `num_loci` dicts {nom_population:
@@ -1251,7 +1296,10 @@ def with_mrc_filter(
             demography, samples, num_loci=num_loci, seed=seed, ploidy=ploidy
         )
         yield from simulate_poolseq_reads(
-            tree_sequences, observed_reads_per_locus, seed=seed
+            tree_sequences,
+            observed_reads_per_locus,
+            seed=seed,
+            counts_by_samples=counts_by_samples,
         )  # liste de dictionnaires contenant le nombre de lectures dérivées et ancestrales par population pour chaque locus
         return
     # Calculée une seule fois, à la première tentative, et réutilisée pour
@@ -1282,14 +1330,24 @@ def with_mrc_filter(
             if ts is None:
                 tree_sequences_iter = None
                 continue
+
             if population_layout is None:
-                population_layout = compute_population_layout(ts)
+                population_layout = (
+                    compute_sample_layout(ts, counts_by_samples)
+                    if counts_by_samples is not None
+                    else compute_population_layout(ts)
+                )
+
+            # On vérifie que le nombre de noeuds echantillons du layout correspond à celuide la TreeSequence
+            _check_layout_matches(population_layout, ts)
+
             reads_by_population = next(
                 simulate_poolseq_reads(
                     [ts],
                     observed_reads_per_locus[locus_index : locus_index + 1],
                     seed=seed + attempt + _MRC_REJECTION_SEED_OFFSET,
                     population_layout=population_layout,
+                    counts_by_samples=counts_by_samples,
                 )
             )
             attempt += 1
@@ -1322,12 +1380,44 @@ def prepare_poolseq_observed_reads(
     return reindexed_reads
 
 
+def poolseq_counts_by_sample(context: SnpReplayContext) -> dict[str, int]:
+    """Nombre d'INDIVIDUS par échantillon d'un fichier PoolSeq, dans l'ordre.
+
+    `context.count_samples` donne la taille HAPLOÏDE du pool -- un nombre de
+    copies de gènes, pas d'individus (voir `_parse_pool_header_line`). D'où le
+    `// 2` : msprime reçoit un compte d'individus et le double lui-même avec
+    `ploidy=2`.
+
+    Extraite parce que la valeur est nécessaire à DEUX endroits d'un même
+    appel : `pipeline` en a besoin pour construire les SampleSet sériels
+    (`build_sample_sets_from_scenario` lit les effectifs, pas seulement leur
+    ordre), et `simulate_poolseq_reads_with_mrc_filter` s'en sert comme repli.
+    Deux calculs séparés pourraient diverger sans que rien ne le signale : les
+    deux dicts candidats (tailles haploïdes contre nombres d'individus) ont le
+    MÊME total, donc `_check_layout_matches` ne les distingue pas.
+
+    Args:
+        context: Le contexte SNP, dont `count_samples` porte les tailles
+            haploïdes par bloc du fichier, dans l'ordre d'apparition.
+
+    Returns:
+        Un dict {"pop1": n_individus, ...}, dans l'ordre des échantillons.
+    """
+    return {
+        f"pop{index}": count // 2
+        for index, count in enumerate(context.count_samples.values(), start=1)
+    }
+
+
 def simulate_poolseq_reads_with_mrc_filter(
     demography: msprime.Demography,
     context: SnpReplayContext,
     seed: int,
     num_loci: int,
     observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
+    *,
+    sample_sets: list[msprime.SampleSet] | None = None,
+    counts_by_samples: dict[str, int] | None = None,
 ) -> Iterator[dict[str, tuple[int, int]]]:
     """Point d'entrée unique de simulation de lectures pour un fichier PoolSeq.
 
@@ -1397,28 +1487,50 @@ def simulate_poolseq_reads_with_mrc_filter(
         demography: La démographie de base (PAS encore rescalée --
             comme pour `<A>` en IndSeq, aucun rescale n'est
             nécessaire ici).
-        snp_file_path: Chemin du fichier .snp (doit être POOLSEQ).
+        context: Le contexte SNP (doit être de type POOL). Fournit
+            `mrc_ratio`, `count_samples` (tailles HAPLOÏDES des pools) et
+            de quoi calculer les lectures observées.
         seed: La graine de la simulation.
         num_loci: Le nombre de loci à simuler.
         observed_reads_per_locus: Si `None` (défaut), calculé via
-            `prepare_poolseq_observed_reads(snp_file_path, num_loci)`.
-            Sinon, utilisé tel quel.
+            `prepare_poolseq_observed_reads(context)`. Sinon, utilisé tel
+            quel.
+        sample_sets: L'argument `samples=` de msprime, déjà construit par
+            l'appelant -- chemin sériel : un `msprime.SampleSet` par
+            événement `sample` du scénario, avec son `time`. Si `None`,
+            on retombe sur `poolseq_counts_by_sample(context)`, soit un
+            dict `{nom: nb_individus}` équivalent au comportement
+            historique.
+        counts_by_samples: Les effectifs, UN PAR ÉCHANTILLON et dans
+            l'ordre des événements `sample`, dont `simulate_poolseq_reads`
+            déduira le découpage via `compute_sample_layout`. À NE PAS
+            confondre avec `sample_sets` : celui-ci va à msprime, celui-là
+            sert à redécouper la TreeSequence, et l'un n'est jamais
+            déductible de l'autre. Si `None`, même repli que ci-dessus --
+            les deux coïncident dans le cas non sériel, et divergent dès
+            que `sample_sets` devient une liste de SampleSet.
 
     Returns:
         Un itérateur de `num_loci` dicts {nom_population:
         (nreads_dérivé, nreads_total)}, tous au-dessus du seuil MRC.
     """
     mrc = context.mrc_ratio
-    haploid_pool_sizes = {
-        f"pop{index}": count
-        for index, count in enumerate(context.count_samples.values(), start=1)
-    }
-    samples = {pop: count // 2 for pop, count in haploid_pool_sizes.items()}
+    individual_counts = poolseq_counts_by_sample(context)
+    samples = sample_sets if sample_sets is not None else individual_counts
+    if counts_by_samples is None:
+        counts_by_samples = individual_counts
     if observed_reads_per_locus is None:
         observed_reads_per_locus = prepare_poolseq_observed_reads(context)
 
     return with_mrc_filter(
-        demography, samples, num_loci, mrc, observed_reads_per_locus, seed, ploidy=2
+        demography,
+        samples,
+        num_loci,
+        mrc,
+        observed_reads_per_locus,
+        seed,
+        ploidy=2,
+        counts_by_samples=counts_by_samples,
     )
 
 
