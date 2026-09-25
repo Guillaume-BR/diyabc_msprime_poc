@@ -431,6 +431,75 @@ def test_with_maf_filter_no_filter_matches_direct_call(header_text):
     assert via_filter == direct
 
 
+def test_simulate_snp_genotypes_raises_on_layout_ploidy_mismatch():
+    """Un layout dont la taille ne correspond pas à la ts doit lever, pas mentir.
+
+    La compréhension de `simulate_snp_genotypes` fait un test d'APPARTENANCE
+    (`s in derived_samples`), jamais une indexation : un ID de noeud absent de
+    la TreeSequence ne lève rien, il rend silencieusement 0. Sans le garde, on
+    obtiendrait ici 20 génotypes (dont 10 faux zéros) pour une simulation qui
+    n'a que 10 noeuds -- et des statistiques calculées là-dessus.
+
+    Le cas reproduit la vraie erreur qui a motivé le garde : un layout calculé
+    sur une ts DIPLOÏDE, passé à une simulation HAPLOÏDE.
+    """
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    samples = {"pop1": 7, "pop2": 3}
+
+    diploid_ts = next(
+        simulate_independent_loci(demography, samples, num_loci=1, seed=1, ploidy=2)
+    )
+    diploid_layout = compute_population_layout(diploid_ts)
+    assert sum(len(ids) for _, ids in diploid_layout) == 20
+
+    haploid_tree_sequences = simulate_independent_loci(
+        demography, samples, num_loci=1, seed=1, ploidy=1
+    )
+
+    with pytest.raises(ValueError, match="noeuds échantillons"):
+        next(
+            simulate_snp_genotypes(
+                haploid_tree_sequences, seed=1, population_layout=diploid_layout
+            )
+        )
+
+
+def test_simulate_snp_genotypes_accepts_a_consistent_layout():
+    """Contrepartie du test précédent : un layout cohérent ne doit PAS lever.
+
+    Sans cette assertion, un garde trop strict (qui refuserait tout layout
+    fourni) passerait le test de levée sans qu'on s'en aperçoive.
+    """
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    samples = {"pop1": 7, "pop2": 3}
+
+    reference_ts = next(
+        simulate_independent_loci(demography, samples, num_loci=1, seed=1, ploidy=1)
+    )
+    layout = compute_population_layout(reference_ts)
+
+    genotypes = next(
+        simulate_snp_genotypes(
+            simulate_independent_loci(
+                demography, samples, num_loci=1, seed=1, ploidy=1
+            ),
+            seed=1,
+            population_layout=layout,
+        )
+    )
+
+    assert {name: len(values) for name, values in genotypes.items()} == {
+        "pop1": 7,
+        "pop2": 3,
+    }
+
+
 def test_with_maf_filter_with_same_layout_matches_null_maf():
     """Vérifie que l'argument si l'argument layout correspond à compute_population_layout(ts) ne change pas le résultat de with_maf_filter."""
     demography = msprime.Demography()

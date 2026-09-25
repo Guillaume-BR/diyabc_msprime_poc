@@ -667,6 +667,15 @@ def simulate_snp_genotypes(
                 else compute_population_layout(ts)
             )
 
+        total_in_layout = sum(len(sample_ids) for _, sample_ids in population_layout)
+        if total_in_layout != ts.num_samples:
+            raise ValueError(
+                f"Le layout décrit {total_in_layout} noeuds échantillons mais la "
+                f"TreeSequence en contient {ts.num_samples}. Un ID absent de la ts "
+                f"ne lève rien ici (test d'appartenance, pas indexation) : il rend "
+                f"silencieusement 0. Cause typique : layout calculé avec une ploïdie "
+                f"différente de celle de la simulation."
+            )
         genotypes_by_population = {
             pop_name: [1 if s in derived_samples else 0 for s in sample_ids]
             for pop_name, sample_ids in population_layout
