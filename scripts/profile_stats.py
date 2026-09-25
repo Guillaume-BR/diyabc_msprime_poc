@@ -5,7 +5,7 @@ Pour comparer les temps de calcul des statistiques résumées
 import time
 
 from bridge.ancestry_simulation import build_samples_argument
-from bridge.pipeline import run_poc_for_directory
+from bridge.pipeline import simulate_particle_genotypes
 from bridge.summary_statistics import (
     compute_AML,
     compute_F3_F4,
@@ -20,7 +20,7 @@ from bridge.summary_statistics import (
 )
 
 # Simuler une fois (5000 loci), hors profilage
-genotypes_per_locus, _ = run_poc_for_directory(
+genotypes_per_locus, _ = simulate_particle_genotypes(
     "reference/human", scenario_index=1, num_loci=5000, seed=1
 )
 genotypes_list = list(genotypes_per_locus)

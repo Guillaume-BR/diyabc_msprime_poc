@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from bridge.loci_parser import rewrite_loci_count
-from bridge.pipeline import run_poc_for_directory
+from bridge.pipeline import simulate_particle_genotypes
 from bridge.snp_writer import write_snp_file
 
 GENERAL_BINARY_PATH = os.environ["DIYABC_GENERAL_PATH"]
@@ -15,7 +15,7 @@ if WORK_DIR.exists():
 WORK_DIR.mkdir(parents=True)
 
 t0 = time.time()
-genotypes_per_locus, values = run_poc_for_directory(
+genotypes_per_locus, values = simulate_particle_genotypes(
     "reference/human", scenario_index=1, num_loci=5000, seed=1
 )
 genotypes_list = list(genotypes_per_locus)

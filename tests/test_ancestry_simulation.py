@@ -927,7 +927,9 @@ def test_simulate_poolseq_reads(header_text_te4):
         )
         return list(
             simulate_poolseq_reads(
-                tree_sequences, observed_reads_per_locus[:n], seed=12
+                tree_sequences,
+                observed_reads_per_locus[:n],
+                seed=12,
             )
         )
 

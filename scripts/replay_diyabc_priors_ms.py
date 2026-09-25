@@ -26,15 +26,15 @@ from bridge.reftable_loop import (
 )
 from bridge.scenario_parser import parse_header_scenarios
 
-REFERENCE_DIR = Path("reference/toy_example2_ms_dna_weak_sni")
-REAL_REFTABLE_PATH = REFERENCE_DIR / "first_records_of_the_reference_table_0.txt"
-OUTPUT_PATH = REFERENCE_DIR / "reftable_msprime_replay.txt"
+REFERENCE_DIR = Path("reference/toy_example1_ms")
+REAL_REFTABLE_PATH = REFERENCE_DIR / "first_records_of_the_reference_table_1.txt"
+OUTPUT_PATH = REFERENCE_DIR / "reftable_msprime_replay_1.txt"
 
 start_time = time()
 print("Début du lecture du headerRF.txt")
 header_text = (REFERENCE_DIR / "headerRF.txt").read_text()
 
-priors, _constraints = parse_priors(header_text)
+priors, _ = parse_priors(header_text)
 group_priors = parse_group_priors(header_text)
 group_priors_names = group_prior_column_names(header_text)
 

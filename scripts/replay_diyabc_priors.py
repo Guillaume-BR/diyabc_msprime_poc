@@ -22,19 +22,19 @@ from bridge.prior_parser import parse_priors
 from bridge.reftable_loop import replay_reftable_simulation, write_reftable_txt
 from bridge.scenario_parser import parse_header_scenarios
 
-REFERENCE_DIR = Path("reference/human")
-REAL_REFTABLE_PATH = REFERENCE_DIR / "first_records_of_the_reference_table_0.txt"
+REFERENCE_DIR = Path("reference/toy_example4_seriel")
+REAL_REFTABLE_PATH = REFERENCE_DIR / "first_records_of_the_reference_table_1.txt"
 # None = utilise les vrais comptes par type déclarés dans header.txt
 # (500 <A> / 50 <X> / 50 <M> / 50 <Y> pour ce dataset), pas un override.
 NUM_LOCI = None
 STATS_FILTER = "HEADER"
-OUTPUT_PATH = REFERENCE_DIR / "reftable_msprime_replay.txt"
+OUTPUT_PATH = REFERENCE_DIR / "reftable_msprime_replay_1.txt"
 
 start_time = time()
 print("Début du lecture du headerRF.txt")
 header_text = (REFERENCE_DIR / "headerRF.txt").read_text()
 
-priors, _constraints = parse_priors(header_text)
+priors, _ = parse_priors(header_text)
 # TOUS les scénarios candidats, pas un seul : le reftable réel mélange
 # les 3 scénarios de toy_example4 (chaque ligne garde le scenario_index
 # RÉELLEMENT tiré par DIYABC, lu par parse_real_reftable_params) -- ne

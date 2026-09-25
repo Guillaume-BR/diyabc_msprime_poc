@@ -630,7 +630,7 @@ def simulate_from_directory(
     Ex: reference/mon_test/, qui ne contient au départ qu'un header.txt
     (ou headerRF.txt, repli si absent -- voir pipeline.read_header_text)
     et le fichier .snp observé (nommé sur la première ligne du header,
-    pas un nom fixe -- voir pipeline.run_poc_for_directory).
+    pas un nom fixe -- voir pipeline.simulate_particle_genotypes).
 
     Tire les scénarios candidats pondérés par leur `weight` parmi TOUS
     ceux déclarés dans le header (voir parameter_sampling.draw_scenario),

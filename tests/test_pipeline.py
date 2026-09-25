@@ -17,7 +17,7 @@ from bridge.pipeline import (
     compute_summary_statistics_from_values,
     compute_summary_statistics_microsat,
     read_header_text,
-    run_poc_for_directory,
+    simulate_particle_genotypes,
 )
 
 
@@ -44,12 +44,12 @@ def test_pipeline_scenario1(header_text):
     assert "t1" in values
 
 
-def test_run_poc_for_directory(snp_context_human):
+def test_simulate_particle_genotypes(snp_context_human):
     """Vérifie le point d'entrée de haut niveau : à partir d'un simple
     chemin de dossier (comme le -p ./ de DIYABC), tout le pipeline doit
     fonctionner sans qu'on ait à lire manuellement header.txt ou le
     fichier .snp nous-mêmes."""
-    mutated, values = run_poc_for_directory(
+    mutated, values = simulate_particle_genotypes(
         snp_context_human,
         scenario_index=1,
         num_loci=15,
@@ -61,14 +61,14 @@ def test_run_poc_for_directory(snp_context_human):
     assert "N1" in values
 
 
-def test_run_poc_for_directory_multi_type(snp_context_te5):
-    """Vérifie que run_poc_for_directory boucle bien sur TOUS les types de
+def test_simulate_particle_genotypes_multi_type(snp_context_te5):
+    """Vérifie que simulate_particle_genotypes boucle bien sur TOUS les types de
     locus déclarés dans 'loci description', pas seulement <A> --
     toy_example5 (contrairement à human, <A>-only) déclare 4 types
     (A/X/Y/M, voir reference/toy_example5/headerRF.txt) : num_loci est un
     compte PAR TYPE (voir pipeline._simulate_genotypes_for_all_locus_types),
     donc on attend num_loci * 4 génotypes au total, pas juste num_loci."""
-    mutated, values = run_poc_for_directory(
+    mutated, values = simulate_particle_genotypes(
         snp_context_te5,
         scenario_index=1,
         num_loci=3,
