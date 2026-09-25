@@ -25,6 +25,8 @@ structurally and statistically equivalent to the real DIYABC's output.
 | DNA sequences | complete, 13 stats | `toy_example2_ms_dna` (`K2P` only) |
 | DNA sequences `<X>`/`<Y>` | implemented | synthetic fixture only — the real binary SIGSEGVs on this case |
 | Serial/temporal sampling (MicroSat) | complete | `toy_example1_ms` (1 population, 4 sampling times) |
+| Serial/temporal sampling (SNP IndSeq) | complete | `human_seriel` (1 population, 4 sampling times, 130 stats, 0/130 significant) |
+| Serial/temporal sampling (SNP PoolSeq) | complete | `toy_example4_seriel` (100 loci, `<MRC=5>`, 10/133 and 7/133 over two replays vs ~6.7 expected) |
 
 Validation means a *paired* comparison: the real DIYABC priors are replayed
 particle-by-particle through our pipeline (`replay_reftable_simulation*`,
@@ -35,6 +37,14 @@ their statistics are correlated and the KS understates the gap. Judge a
 residual flag by whether it **persists across two independent replays**, not by
 its p-value alone — a real effect keeps its order of magnitude, noise moves to
 other columns (see `notes/exploration.md`, 24/09, for a worked example).
+
+**A per-column KS is also structurally blind to a small systematic shift.** A
+uniform -1% offset across every column stays well inside each column's
+inter-particle variance and never shows up, while a **sign test on
+`rdiff_mean`** exposes it immediately. Run both: the KS for per-column
+divergences, the sign test for a global bias. Several datasets declared
+validated on the KS alone carry such a bias — see "Systematic negative bias"
+under Open work.
 
 `reference/` holds ground truth produced by the real DIYABC binary —
 **never modify these files.**
@@ -210,6 +220,17 @@ locus/particle.
   hand-crafting or editing a header, always regenerate this trailer line to
   match that scenario's own priors — never copy it from another scenario.**
   This has bitten the project three times.
+- **`DRAW UNTIL` exists if and only if `nconditions > 0`.** The
+  `historical parameters priors (N,C)` header gives `C` order constraints;
+  `readHeaderHistParam` (`header.cpp:274`) consumes the `DRAW UNTIL` line
+  **inside** `if (this->nconditions > 0)`. With `C = 0`, that `getline` never
+  runs, the stray line stays in the stream, and **every subsequent `getline`
+  shifts by one** — `readHeadersimLoci` then reads `DRAW UNTIL` where it
+  expects `loci description (N)` and fails with an unrelated-looking message.
+  Reference: `human` (4 constraints) and `toy_example1_ms_modified` (3) have
+  the line; `toy_example1_ms` (0) does not. Same trap family as the trailer
+  line: a line that looks decorative is in fact a **positional token** in a
+  sequential `getline` read, and the format tolerates no offset.
 - **Freshness check after editing a header**: `stat -c '%y %n'` on
   `headerRF.txt` vs `first_records_of_the_reference_table_0.txt` — the real
   reftable must always be *newer* than the header it was generated from.
@@ -257,8 +278,18 @@ under the date given.
   SNP, MicroSat and DNA. `mutmod` is written only when the header token is
   read; `comp_matQ` branches on `mutmod` alone. The only genuine second mode
   anywhere is the discrete generation-by-generation coalescent selected by
-  `evalcriterium` (`particuleC.cpp:1251-1275`) for very small `N` — a
-  coalescent-side switch, never triggered on any dataset here, not replicated.
+  `evalcriterium` (`particuleC.cpp:1251-1275`) — a coalescent-side switch, not
+  replicated. **Correction (25/09): it IS reachable.** The criterion is
+  `ra = nLineages / N`, and the continuous approximation is kept only when
+  `ra < 0.5` on segments longer than 100 generations (more permissive below:
+  `ra < 0.033*nGen + 1.7` for `nGen <= 100`). A serial dataset concentrating a
+  large sample in ONE population reaches it easily — `toy_example4_seriel` has
+  400 individuals (800 gene copies) with `Npresent <= 1000`, so the 200→500
+  segment is in discrete mode for **every** particle. The earlier "never
+  triggered" claim was true of the datasets then in the repo, where samples
+  were small relative to `N`. Whether this explains any observed discrepancy is
+  NOT established — the one experiment run on it was confounded (see
+  `notes/exploration.md`, 25/09).
   Don't reopen on the same rumor; if a precise source turns up, check it
   against those line numbers first.
 - **`LIK` pseudo-count `nal` too large (24/09)** — `_compute_LIK_for_one_locus`
@@ -468,15 +499,46 @@ Two bricks and a wiring:
   scenario it re-parses plus `counts_by_sample_for_locus` (`samples_default` for
   `<A>/<H>/<M>/<X>`, male counts for `<Y>`).
 
+**The SNP paths are wired too** (25/09), IndSeq and PoolSeq. PoolSeq follows
+the same shape with two specifics: `context.count_samples` gives the **haploid**
+pool size (gene copies, not individuals), hence `poolseq_counts_by_sample`
+and its `// 2` — a single definition used by both `pipeline` and
+`simulate_poolseq_reads_with_mrc_filter`, because the two candidate dicts have
+the SAME total and `_check_layout_matches` cannot tell them apart. And
+`pool_sizes`, consumed by `compute_all_statistics_poolseq` for the read-bias
+correction, stays in **haploid** units — the two scales coexist deliberately.
+Both MRC entry points (the `mrc <= 0` fast path and the rejection loop) forward
+the counts; `observed_reads_per_locus[locus_index : locus_index + 1]` pins the
+observed coverage to its locus, so a rejected attempt never consumes one.
+
+The SNP shape differs from MicroSat/DNA in one way worth
+knowing: the 130 SNP statistics take `genotypes_per_locus`, a list of
+`{name: [genotype]}` dicts — the layout is consumed **once**, inside
+`simulate_snp_genotypes`, to build those dicts. There is therefore **no
+`layouts=` threading through the stat functions** as on the MicroSat/DNA side;
+everything happens in `ancestry_simulation.py`. What travels down is
+`counts_by_samples` (an ordered `{name: individual count}` dict), not a
+precomputed layout: the layout depends on **ploidy**, which varies per heritage
+type (`<A>` 2, `<H>`/`<M>` 1), so a single layout built upstream would be wrong
+for every type but one. Each MAF loop derives its own from the counts, where
+the `TreeSequence` is born and the ploidy is known. Both MAF loops have a
+`maf == 0.0` fast path that must forward the counts too — `<MAF=hudson>`
+datasets take *only* that path.
+
+**Never derive `counts_by_samples` from `samples`.** They are different objects:
+`samples` goes to msprime (`dict[str, int]` *or* `list[SampleSet]`),
+`counts_by_samples` feeds `compute_sample_layout`. A `SampleSet` list carries no
+names, and an `<X>` locus describes **one** sample with **two** `SampleSet`s.
+
 **Deliberately not done, and it is silent**: `<X>`/`<Y>` loci override the
-sample sets inside the per-locus loop with
-`build_sex_stratified_samples_argument_ms_dna` /
-`build_male_only_samples_argument_ms_dna`, which are **not** serial-aware. On a
-serial dataset carrying such loci the serial `SampleSet`s would be ignored for
-them. `toy_example1_ms` has only `<A>` and `<M>`, so nothing triggers today —
-but no guard raises either. The SNP path is untouched for the same reason:
-`build_samples_argument` still returns a `{name: count}` dict and would raise
-`KeyError "Population with name 'pop2' not found"` on serial `.snp` data.
+sample sets inside the per-locus loop with the sex-stratified builders, which
+are **not** serial-aware — on both the MicroSat/DNA and SNP sides. On a serial
+dataset carrying such loci the serial `SampleSet`s would be ignored for them.
+No dataset triggers it today, and no guard raises. Related hazard, measured:
+a layout whose total length disagrees with `ts.num_samples` produces silently
+wrong genotypes rather than an error, because `simulate_snp_genotypes` does a
+membership test (`s in derived_samples`), never an index — a non-existent node
+id simply yields `0`.
 
 ### Replay (`_from_values`) chain
 
@@ -525,16 +587,25 @@ slips, kept because DIYABC's own output depends on them.
 
 ## Open work
 
-- **Serial sampling is not wired for SNP — next chantier.** `build_samples_
-  argument` still returns a `{name: count}` dict handed straight to msprime, so
-  serial `.snp` data raises `KeyError "Population with name 'pop2' not found"`.
-  The MicroSat path is the template: `build_sample_sets_from_scenario` +
-  `compute_sample_layout` + the optional `layout=`/`layouts=` parameters already
-  exist and are generic. No reference dataset exists yet; one is to be built so
-  the result can be validated by paired replay, not merely run.
 - **Serial sampling is not wired for `<X>`/`<Y>`, and nothing guards it.** The
-  per-locus dispatch overrides the serial `SampleSet`s silently. See
-  "Serial/temporal sampling" under Domain knowledge.
+  per-locus dispatch overrides the serial `SampleSet`s silently, on both the
+  SNP and MicroSat/DNA sides. See "Serial/temporal sampling" under Domain
+  knowledge.
+- **Systematic ~1% negative bias on several datasets, project-wide.** Visible
+  only through a **sign test on `rdiff_mean`**, never through the per-column
+  KS. Measured medians: `toy_example5` -2.65% (70 loci, validated since July),
+  `toy_example4_seriel` -1.06% / -0.79% over two replays (100 loci),
+  `toy_example1_ms` -0.87%, `toy_example3` -0.74%; and neutral on
+  `toy_example4` +0.22%, `toy_example4_MRC1` +0.00%, `human_seriel` +0.06%
+  (5000 loci). Reproducible per column (`r = 0.86` between replays — but note
+  both replays share the same real reftable, so a high `r` is expected as soon
+  as ANY real per-column difference exists; it proves the difference is not
+  sampling noise, not that it is large). **Not specific to serial sampling**:
+  `human_seriel` is serial and clean. Leading hypothesis, matching the
+  residual-bias verdict closed 17/07: the bias shrinks with loci count
+  (`toy_example3` -0.74% → -0.24% at 500 loci), but `toy_example5` barely moves
+  (-2.65% → -2.33% at 350), so it is not settled. Next experiment: rerun
+  `toy_example4_seriel` at 500-1000 loci, everything else unchanged.
 - **Rename `pop` → `samp` for everything that comes from the `.snp`/`.mss`**,
   and **only then**. Two distinct families of `f"pop{...}"` coexist, and only
   one is misnamed:
@@ -545,14 +616,16 @@ slips, kept because DIYABC's own output depends on them.
     `individual_sexes_from_locus_genotype`, `build_samples_argument`. Their keys
     come from file-block order, i.e. the **sample** index.
 
-  The rename is **blocked by the SNP serial chantier**, not merely deferred:
-  the second family's strings are passed straight to msprime as population
-  names (`sim_ancestry(samples={"pop1": 20})`), so renaming them today raises
-  `KeyError`. They can only be renamed once the SNP path builds `SampleSet`s
-  like the MicroSat one does. Scope, for planning: 329 `population_names`,
+  **Partly unblocked since 25/09.** The pipeline now builds `SampleSet`s on both
+  the SNP and MicroSat/DNA paths, so the msprime-facing use of
+  `build_samples_argument` survives only as the `sample_sets is None` fallback
+  for direct callers (tests, `scripts/`). Renaming its keys still breaks those,
+  so the fallback has to go — or be translated — first. Conversely the
+  `counts_by_samples` / layout / `population_names` side is now free of msprime:
+  those strings never reach `sim_ancestry`, so they can be renamed safely. That
+  is also the bulk of the work. Scope, for planning: 329 `population_names`,
   86 `_by_population`, 40 `population_layout`, 226 literal `"popN"` in tests —
-  do it in the same commit as the SNP wiring, never as a half-rename leaving
-  two vocabularies side by side.
+  one commit, never a half-rename leaving two vocabularies side by side.
 - **`DTA_2_2` mean shift** on the 50+50-loci DNA dataset: a small but real
   mean difference (real ≈0.018, sim ≈0.043) on a **G2** column, with a std
   ratio near 1 — so it does not fit the (now resolved) G3 variance story. Never

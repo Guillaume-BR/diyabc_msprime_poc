@@ -2864,3 +2864,224 @@ sur les deux scénarios.
   `parse_real_reftable_params_with_group_priors` lit les valeurs
   positionnellement et n'utilise ces noms que comme clés de son dict de sortie.
 
+## 2026-09-25 — Échantillonnage sériel côté SNP : implémenté et validé sur `human_seriel`
+
+Suite directe du chantier microsat du 23-24/09. Mode mentor, code écrit par
+l'utilisateur.
+
+### Le jeu de référence
+
+`reference/human_seriel/` : le `.snp` de `human` (4 blocs de 30 individus,
+ASW/YRI/CHB/GBR) réinterprété comme **4 échantillons d'une seule population**,
+avec le squelette de scénario de `toy_example1_ms` (`0/50/200/500 sample 1`,
+`tbn VarNe 1 Npast` en scénario 1, rien en scénario 2). 1000 particules,
+513/487 sur les deux scénarios.
+
+**Le vrai binaire refusait de tourner**, et pour une raison qui mérite d'être
+retenue : la section `historical parameters priors (3,0)` déclare **zéro**
+contrainte d'ordre, mais le header avait gardé la ligne `DRAW UNTIL` copiée de
+`human`. Or `readHeaderHistParam` (`header.cpp:274`) consomme cette ligne
+**à l'intérieur** de `if (this->nconditions > 0)`. Avec `C = 0`, le `getline`
+n'est jamais exécuté, la ligne reste dans le flux et **tous les `getline`
+suivants glissent d'un cran** — `readHeadersimLoci` lit alors `DRAW UNTIL` là
+où il attend `loci description (N)`. Même famille que la ligne trailer : une
+ligne d'apparence décorative qui est en réalité un jeton de position. Consigné
+dans les règles dures de CLAUDE.md.
+
+### Un chantier beaucoup plus court que le microsat, pour une raison structurelle
+
+Les 130 statistiques SNP reçoivent `genotypes_per_locus`, une liste de dicts
+`{nom: [génotype]}`. Le layout est donc consommé **une seule fois**, dans
+`simulate_snp_genotypes`, pour fabriquer ces dicts — il n'y a **rien à propager
+à travers les fonctions de stats**, contrairement aux 27 fonctions et 7 boucles
+de dispatch du côté microsat/ADN. Tout tient dans `ancestry_simulation.py`.
+
+Deuxième facilité : `samples` était **déjà** typé
+`dict[str, int] | list[msprime.SampleSet]` aux cinq niveaux de la chaîne
+(`simulate_independent_loci`, `simulate_shared_ancestry_loci`, les deux boucles
+MAF, le chemin MRC), et `simulate_snp_genotypes` acceptait déjà un
+`population_layout` optionnel. Il n'y avait donc que deux portes à ouvrir.
+
+### Le virage de conception, en cours de route
+
+La première version faisait descendre un **layout déjà calculé** depuis le
+pipeline. Deux objections l'ont fait abandonner avant le câblage :
+
+1. Le layout dépend de la **ploïdie**, qui varie par type d'héritage (`<A>` 2,
+   `<H>`/`<M>` 1). Un layout unique construit en amont serait donc faux pour
+   tous les types sauf un. Sur `human_seriel` (que du `<A>`) ça aurait marché
+   **par coïncidence** — exactement ce que ce chantier élimine.
+2. Le pipeline n'a aucune `TreeSequence` sous la main : les arbres naissent
+   dans les boucles MAF. Il ne *peut* pas construire le layout.
+
+D'où le principe qui a guidé la suite, et qui a resservi deux fois :
+**construire chaque objet là où ses entrées existent**. Le layout se calcule là
+où naît la `ts` ; les `SampleSet` se construisent là où naît `values`. C'est ce
+qui fait descendre `counts_by_samples` (un dict ordonné `{nom: nb_individus}`)
+plutôt qu'un layout.
+
+### Les bugs, tous de la même famille
+
+- **`counts_by_samples=samples`.** La confusion centrale : `samples` va à
+  msprime (`dict` *ou* `list[SampleSet]`), `counts_by_samples` alimente
+  `compute_sample_layout`. L'un n'est jamais déductible de l'autre — une liste
+  de `SampleSet` ne porte pas les noms, et un locus `<X>` décrit UN échantillon
+  avec DEUX `SampleSet`. Symptôme : `AttributeError: 'list' object has no
+  attribute 'values'` sur les jeux multi-types.
+- **Un bloc de `with_maf_filter` collé en tête de
+  `simulate_genotypes_for_locus_type`**, référençant `ts` et
+  `counts_by_samples` hors portée.
+- **`population_layout = layout`** survivant dans `with_maf_filter` après le
+  renommage du paramètre → `F821` / `NameError` sur le chemin lent.
+- **`build_sample_sets_from_scenario(scenario, values, ...)` appelée avant que
+  `values` existe** (`UnboundLocalError`, 12 tests). C'est la contrainte
+  annoncée dès le premier jour : un temps d'échantillonnage peut être un nom de
+  paramètre (`particuleC.cpp:599-605`), donc les `SampleSet` se construisent
+  **après** le tirage.
+- **Le bloc de construction placé dans `run_poc_for_directory_with_values`
+  (rejeu) au lieu de `run_poc_for_directory` (tirage).** Les 207 tests restaient
+  verts, parce qu'aucun n'exerce un jeu SNP sériel — même leçon que le
+  `reads_observed = None` de septembre.
+
+### Un danger mesuré, non corrigé
+
+Un layout dont la longueur totale ne correspond pas à `ts.num_samples` produit
+des génotypes **silencieusement faux**, jamais une exception :
+`simulate_snp_genotypes` fait un test d'appartenance (`s in derived_samples`),
+jamais une indexation, donc un ID de nœud inexistant rend simplement `0`.
+Découvert en calculant un layout sur une `ts` diploïde passée à une simulation
+haploïde. Un garde (`somme des longueurs != ts.num_samples -> ValueError`) a
+été proposé et non implémenté.
+
+### Validation
+
+Rejeu apparié contre la reftable réelle de `human_seriel` : **0 colonne sur 130
+sous p<0,05**. À relativiser dans le bon sens — on en attendrait ~6,5 par pur
+hasard à α=0,05 ; ce zéro reflète le caractère conservateur du KS sur un rejeu
+apparié (priors partagés, statistiques corrélées), pas une perfection
+surnaturelle. Il reste que rien ne diverge.
+
+### Reste
+
+- `<X>`/`<Y>` sériels non câblés, **sans garde**, des deux côtés.
+- PoolSeq sériel intouché (`with_mrc_filter` / `simulate_poolseq_reads`
+  appellent encore `compute_population_layout` directement).
+- Le renommage `pop` → `samp` est **partiellement** débloqué : le côté
+  layout/statistiques ne touche plus msprime et peut être renommé ; le repli
+  `build_samples_argument` des appelants directs (tests, `scripts/`) reste
+  msprime-facing.
+
+## 2026-09-25 (suite) — PoolSeq sériel : validé ; et un biais systématique d'environ 1 %, invisible au KS, découvert au passage
+
+### Le chantier lui-même : court, et sans surprise
+
+Décalque du SNP IndSeq, avec deux spécificités PoolSeq. `context.count_samples`
+donne la taille **haploïde** du pool (des copies de gènes, pas des individus),
+d'où `poolseq_counts_by_sample` et son `// 2`. Ce helper a été **extrait**
+plutôt que dupliqué, pour une raison précise : les deux dicts candidats
+(tailles haploïdes contre nombres d'individus) ont le **même total**, donc
+`_check_layout_matches` ne les distingue pas — une divergence entre les deux
+définitions serait silencieuse. Et `pool_sizes`, consommé par
+`compute_all_statistics_poolseq` pour la correction de biais de lecture, reste
+en unités **haploïdes** : les deux échelles coexistent volontairement.
+
+Jeu de référence construit pour l'occasion : `reference/toy_example4_seriel`,
+le `.snp` PoolSeq de `toy_example4` (4 pools de 200 haploïdes) réinterprété en
+4 échantillons temporels d'une population unique, 100 loci, `<MRC=5>`. Ce
+dernier point compte : contrairement à `human_seriel` (`<MAF=hudson>`, chemin
+rapide seulement), il exerce réellement la **boucle de rejet** MRC.
+
+Un garde de longueur (`_check_layout_matches`) a été posé et factorisé en trois
+appels au passage. Il protège d'un échec strictement silencieux : les
+consommateurs testent l'appartenance (`s in derived_samples`,
+`derived_samples.intersection(sample_ids)`), jamais l'indexation, donc un ID de
+noeud absent de la ts rend `0`. Côté SNP ça donne des génotypes de mauvaise
+longueur ; côté PoolSeq, `len(sample_ids)` étant le dénominateur de la
+fréquence dérivée, ça donne une fréquence **diluée** puis un tirage binomial
+dessus — indétectable en aval.
+
+### Le câblage, vérifié de bout en bout
+
+Avant toute interprétation statistique :
+
+```
+SampleSet : 4 × 100 individus, pop1, temps 0 / 50 / 200 / 500
+ts        : 800 noeuds, 400 individus
+layout    : 4 groupes de 200 noeuds, aux temps [0] [50] [200] [500]
+            (compute_population_layout, lui, rend 1 groupe de 800)
+paramètres historiques rejoués : diff = 0, p = 1.0
+```
+
+### Le résultat, et le bon critère
+
+Deux rejeux appariés, prior d'origine (`Npresent UN[10,1000]`) :
+
+```
+rejeu 0   KS 10/133   signes  99/128  p = 3,8e-10   rdiff médian −1,06 %
+rejeu 1   KS  7/133   signes  84/128  p = 5,2e-04   rdiff médian −0,79 %
+```
+
+**Par le critère du projet, ça valide** : 10 et 7 colonnes significatives pour
+~6,7 attendues à α=0,05. Le chantier est déclaré complet sur la même base que
+toutes les autres familles.
+
+### Le vrai apport de la session : le KS est aveugle à un décalage global
+
+Le test des signes sur les `rdiff` est significatif dans les **deux** rejeux,
+même sens, même amplitude — là où le KS colonne par colonne ne voit rien. Un
+décalage uniforme de −1 % reste très à l'intérieur de la variance
+inter-particules de chaque colonne et ne sort jamais.
+
+Passé au crible de ce test, plusieurs jeux **déjà déclarés validés** le portent :
+
+```
+toy_example5           70 loci   −2,65 %   (validé depuis juillet)
+toy_example5_500loci  350 loci   −2,33 %
+toy_example4_seriel   100 loci   −0,9 %
+toy_example1_ms        50 loci   −0,87 %   (sériel microsat, validé le 24/09)
+toy_example3          100 loci   −0,74 %
+toy_example3_500loci  500 loci   −0,24 %
+toy_example4          100 loci   +0,22 %
+toy_example4_MRC1     100 loci   +0,00 %
+human_seriel         5000 loci   +0,06 %
+```
+
+**Pas spécifique au sériel** : `human_seriel` est sériel et propre. La piste la
+plus cohérente est celle du biais résiduel clos le 17/07 — il décroît avec le
+nombre de loci — mais ce n'est pas établi : `toy_example3` divise le sien par
+trois en passant à 500 loci, `toy_example5` ne bouge presque pas. Expérience à
+variable unique pour trancher : rejouer `toy_example4_seriel` à 500-1000 loci,
+tout le reste inchangé.
+
+### Trois erreurs de méthode de ma part, consignées parce qu'elles sont instructives
+
+**Contrôles mal choisis.** J'ai d'abord conclu « biais propre au sériel » en ne
+comparant qu'aux deux PoolSeq non sériels — qui se trouvent être précisément
+les deux jeux neutres du dépôt. Élargir à tous les `comparaison_summary.csv`
+disponibles a immédiatement falsifié la conclusion.
+
+**Expérience confondue.** Pour tester si le coalescent discret de DIYABC
+(`evalcriterium`) expliquait l'écart, j'ai proposé d'augmenter `Npresent`. Ça
+changeait **deux** choses à la fois : supprimer le déclenchement du mode
+discret, **et** effondrer le vrai FST vers zéro — ce qui rend un petit décalage
+absolu dominant en relatif. Résultat ininterprétable (93/133 significatives),
+et une régénération de reftable perdue.
+
+**Corrélation surinterprétée.** J'ai présenté `r = 0,86` entre deux rejeux
+comme une preuve forte d'effet reproductible. Or les deux rejeux partagent la
+**même** reftable DIYABC : le dénominateur de `rdiff` est identique, et avec
+1000 particules les moyennes sont bien estimées. Une forte corrélation est donc
+attendue dès qu'il existe une différence par colonne, si petite soit-elle. Elle
+prouve que l'écart n'est pas du bruit d'échantillonnage, pas qu'il est grand.
+
+### Correction factuelle sur `evalcriterium`
+
+CLAUDE.md affirmait que le coalescent discret n'était « jamais déclenché sur
+aucun jeu de ce projet ». C'est faux depuis ce jeu. Le critère est
+`ra = nLineages / N`, l'approximation continue n'étant conservée que si
+`ra < 0,5` sur les segments de plus de 100 générations. `toy_example4_seriel`
+concentre 400 individus (800 copies) dans UNE population avec `Npresent ≤ 1000`
+: le segment 200→500 est en mode discret pour **toutes** les particules. Son
+rôle éventuel dans l'écart observé n'est **pas** établi — la seule expérience
+menée dessus était confondue.
+
