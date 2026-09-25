@@ -1,8 +1,6 @@
 """
 Simulation de l'ancestralité (coalescence) pour des loci SNP indépendants
-(pas de recombinaison interne, pas de liaison génétique entre loci) --
-cas du dataset human, dont les 51250 loci sont déclarés <A> (autosomal,
-diploïde classique).
+(pas de recombinaison interne, pas de liaison génétique entre loci).
 
 Chaque locus est un réplicat indépendant : msprime.sim_ancestry avec
 num_replicates dérive correctement une graine distincte par réplicat à
@@ -613,6 +611,7 @@ def simulate_snp_genotypes(
     tree_sequences: Iterator[tskit.TreeSequence],
     seed: int,
     population_layout: list[tuple[str | None, np.ndarray]] | None = None,
+    counts_by_samples: dict[str, int] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
     """Tire une mutation par locus (Hudson) et retourne les génotypes par population.
 
@@ -662,7 +661,11 @@ def simulate_snp_genotypes(
         derived_samples = set(tree.samples(mutated_node))
 
         if population_layout is None:
-            population_layout = compute_population_layout(ts)
+            population_layout = (
+                compute_sample_layout(ts, counts_by_samples)
+                if counts_by_samples is not None
+                else compute_population_layout(ts)
+            )
 
         genotypes_by_population = {
             pop_name: [1 if s in derived_samples else 0 for s in sample_ids]
@@ -700,6 +703,8 @@ def with_maf_filter(
     maf: float,
     seed: int,
     ploidy: int = 2,
+    *,
+    counts_by_samples: dict[str, int] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
     """Simule des loci SNP indépendants avec filtre MAF.
 
@@ -745,6 +750,7 @@ def with_maf_filter(
         ploidy: Transmis tel quel à `simulate_independent_loci` (même
             contrat -- 2 pour <A>, 1 pour <H>/<X> avec une
             `demography` déjà rescalée, voir sa docstring).
+        counts_by_samples: Si fourni, permet de spécifier la taille des échantillons, utilisé pour le calcul du layout.
 
     Returns:
         Un itérateur de `num_loci` dicts {nom_population:
@@ -754,7 +760,12 @@ def with_maf_filter(
         tree_sequences = simulate_independent_loci(
             demography, samples, num_loci=num_loci, seed=seed, ploidy=ploidy
         )
-        yield from simulate_snp_genotypes(tree_sequences, seed=seed)
+        yield from simulate_snp_genotypes(
+            tree_sequences,
+            seed=seed,
+            population_layout=None,
+            counts_by_samples=counts_by_samples,
+        )
         return
 
     # batch_size dérive num_loci -- voir _MAF_BATCH_SIZE pour la
@@ -766,6 +777,9 @@ def with_maf_filter(
     # taille du lot.
     batch_size = max(_MAF_BATCH_SIZE, num_loci // 4)
     accepted_loci = 0
+    # Calculé à la première ts et mis en cache : la structure
+    # échantillons/noeuds ne dépend que de demography/samples, jamais de
+    # la topologie -- voir compute_population_layout.
     population_layout = None
     batch_index = 0
     while accepted_loci < num_loci:
@@ -779,7 +793,11 @@ def with_maf_filter(
         )
         for attempt_in_batch, ts in enumerate(tree_sequences):
             if population_layout is None:
-                population_layout = compute_population_layout(ts)
+                population_layout = (
+                    compute_sample_layout(ts, counts_by_samples)
+                    if counts_by_samples is not None
+                    else compute_population_layout(ts)
+                )
             genotypes_by_population = next(
                 simulate_snp_genotypes(
                     [ts],
@@ -806,6 +824,8 @@ def with_maf_filter_shared_ancestry(
     maf: float,
     seed: int,
     ploidy: int = 1,
+    *,
+    counts_by_samples: dict[str, int] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
     """Variante de with_maf_filter pour <Y>/<M> (généalogie partagée).
 
@@ -836,8 +856,8 @@ def with_maf_filter_shared_ancestry(
             avec la même graine pour les deux, comportement identique
             à un appel direct de ces deux fonctions.
         seed: La graine de la simulation.
-        ploidy: Transmis tel quel à simulate_independent_loci/
-            simulate_shared_ancestry_loci.
+        ploidy: Transmis tel quel à simulate_independent_loci/simulate_shared_ancestry_loci.
+        counts_by_samples: Si fourni, permet de spécifier la taille des échantillons, utilisé pour le calcul du layout.
 
     Returns:
         Un itérateur de `num_loci` dicts {nom_population:
@@ -847,7 +867,12 @@ def with_maf_filter_shared_ancestry(
         tree_sequences = simulate_shared_ancestry_loci(
             demography, samples, num_loci, seed, ploidy=ploidy
         )
-        yield from simulate_snp_genotypes(tree_sequences, seed=seed)
+        yield from simulate_snp_genotypes(
+            tree_sequences,
+            seed=seed,
+            population_layout=None,
+            counts_by_samples=counts_by_samples,
+        )
         return
 
     shared_tree = next(
@@ -858,7 +883,11 @@ def with_maf_filter_shared_ancestry(
     # Calculée une seule fois : même généalogie PARTAGÉE à chaque
     # tentative, donc même structure population/échantillons -- voir
     # population_layout.
-    population_layout = compute_population_layout(shared_tree)
+    population_layout = population_layout = (
+        compute_sample_layout(shared_tree, counts_by_samples)
+        if counts_by_samples is not None
+        else compute_population_layout(shared_tree)
+    )
 
     attempt = 0
     accepted_loci = 0
@@ -889,6 +918,9 @@ def simulate_genotypes_for_locus_type(
     locus_type: str,
     num_loci: int,
     seed: int,
+    *,
+    sample_sets: list[msprime.SampleSet] | None = None,
+    counts_by_samples: dict[str, int] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
     """Point d'entrée unique de simulation de génotypes SNP, par type de locus.
 
@@ -946,6 +978,21 @@ def simulate_genotypes_for_locus_type(
         locus_type: "A", "H", "X", "Y" ou "M".
         num_loci: Le nombre de loci à simuler.
         seed: La graine de la simulation.
+        sample_sets: L'argument `samples=` de msprime, déjà construit par
+            l'appelant (chemin sériel : un SampleSet par événement
+            `sample`, avec son `time`). Si None, reconstruit depuis le
+            `.snp` via build_samples_argument. N'est transmis que pour
+            "A"/"H"/"M" : "X"/"Y" ont leur propre dispatch par sexe, qui
+            n'est pas sérielle.
+        counts_by_samples: Les effectifs observés, UN PAR ÉCHANTILLON et
+            dans l'ordre des événements `sample`, dont les boucles MAF
+            déduiront le découpage via compute_sample_layout. À NE PAS
+            confondre avec `sample_sets` : celui-ci va à msprime, celui-là
+            sert à redécouper la TreeSequence, et l'un n'est jamais
+            déductible de l'autre (une liste de SampleSet ne porte pas les
+            noms, et un locus <X> décrit UN échantillon avec DEUX
+            SampleSet). Si None, les boucles MAF retombent sur
+            compute_population_layout, comportement historique.
 
     Returns:
         Un itérateur de `num_loci` dicts {nom_population:
@@ -967,23 +1014,55 @@ def simulate_genotypes_for_locus_type(
             rescaled_demography, samples, num_loci, maf_ratio, seed, ploidy=1
         )
     elif locus_type == "M":
-        samples = build_samples_argument(snp_file_path)
+        samples = (
+            sample_sets
+            if sample_sets is not None
+            else build_samples_argument(snp_file_path)
+        )
         rescaled_demography = rescale_demography(
             demography, coalescence_coefficient(locus_type, sex_ratio) / 2
         )
         return with_maf_filter_shared_ancestry(
-            rescaled_demography, samples, num_loci, maf_ratio, seed, ploidy=1
+            rescaled_demography,
+            samples,
+            num_loci,
+            maf_ratio,
+            seed,
+            ploidy=1,
+            counts_by_samples=counts_by_samples,
         )
     elif locus_type == "A":
-        samples = build_samples_argument(snp_file_path)
-        return with_maf_filter(demography, samples, num_loci, maf_ratio, seed, ploidy=2)
+        samples = (
+            sample_sets
+            if sample_sets is not None
+            else build_samples_argument(snp_file_path)
+        )
+        return with_maf_filter(
+            demography,
+            samples,
+            num_loci,
+            maf_ratio,
+            seed,
+            ploidy=2,
+            counts_by_samples=counts_by_samples,
+        )
     elif locus_type == "H":
-        samples = build_samples_argument(snp_file_path)
+        samples = (
+            sample_sets
+            if sample_sets is not None
+            else build_samples_argument(snp_file_path)
+        )
         rescaled_demography = rescale_demography(
             demography, coalescence_coefficient(locus_type, sex_ratio) / 2
         )
         return with_maf_filter(
-            rescaled_demography, samples, num_loci, maf_ratio, seed, ploidy=1
+            rescaled_demography,
+            samples,
+            num_loci,
+            maf_ratio,
+            seed,
+            ploidy=1,
+            counts_by_samples=counts_by_samples,
         )
     elif locus_type == "X":
         samples = build_sex_stratified_samples_argument(snp_file_path)

@@ -101,6 +101,8 @@ def _simulate_genotypes_for_all_locus_types(
     *,
     num_loci: int | None = None,
     seed: int,
+    sample_sets: list[msprime.SampleSet] | None = None,
+    counts_by_samples: dict[str, int] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
     """Simule les génotypes de TOUS les types de locus déclarés dans header_text.
 
@@ -152,7 +154,13 @@ def _simulate_genotypes_for_all_locus_types(
         loci_count = num_loci if num_loci is not None else declared_count
         liste_iterateurs_par_type.append(
             simulate_genotypes_for_locus_type(
-                demography, context, locus_type, loci_count, seed_for_type
+                demography,
+                context,
+                locus_type,
+                loci_count,
+                seed_for_type,
+                sample_sets=sample_sets,
+                counts_by_samples=counts_by_samples,
             )
         )
     return itertools.chain(*liste_iterateurs_par_type)
@@ -305,6 +313,8 @@ def run_poc_for_directory(
     *,
     num_loci: int | None = None,
     seed: int,
+    sample_sets: list[msprime.SampleSet] | None = None,
+    counts_by_samples: dict[str, int] | None = None,
 ):
     """Point d'entrée de haut niveau : équivalent du `-p ./` de DIYABC.
 
@@ -334,8 +344,27 @@ def run_poc_for_directory(
         header_text, scenario_index, seed
     )
 
+    if counts_by_samples is None:
+        counts_by_samples = {
+            f"pop{i}": n for i, n in enumerate(context.count_samples.values(), 1)
+        }
+    if sample_sets is None:
+        scenario = next(
+            s
+            for s in parse_header_scenarios(context.header_text)
+            if s.index == scenario_index
+        )
+        sample_sets = build_sample_sets_from_scenario(
+            scenario, values, counts_by_samples
+        )
+
     mutated = _simulate_genotypes_for_all_locus_types(
-        demography, context, num_loci=num_loci, seed=seed
+        demography,
+        context,
+        num_loci=num_loci,
+        seed=seed,
+        sample_sets=sample_sets,
+        counts_by_samples=counts_by_samples,
     )
 
     return mutated, values
@@ -479,6 +508,8 @@ def run_poc_for_directory_with_values(
     *,
     num_loci: int | None = None,
     seed: int,
+    sample_sets: list[msprime.SampleSet] | None = None,
+    counts_by_samples: dict[str, int] | None = None,
 ):
     """Variante de run_poc_for_directory qui prend des valeurs de paramètres déjà connues.
 
@@ -506,7 +537,12 @@ def run_poc_for_directory_with_values(
     )
 
     return _simulate_genotypes_for_all_locus_types(
-        demography, context, num_loci=num_loci, seed=seed
+        demography,
+        context,
+        num_loci=num_loci,
+        seed=seed,
+        sample_sets=sample_sets,
+        counts_by_samples=counts_by_samples,
     )
 
 
@@ -548,9 +584,23 @@ def compute_summary_statistics_from_values(
     header_text = context.header_text
     snp_path = context.snp_path
 
+    scenario = next(
+        s for s in parse_header_scenarios(header_text) if s.index == scenario_index
+    )
+    counts_by_samples = {
+        f"pop{i}": n for i, n in enumerate(context.count_samples.values(), 1)
+    }
+    sample_sets = build_sample_sets_from_scenario(scenario, values, counts_by_samples)
+
     if context.snp_file_type == "IND":
         genotypes_per_locus = run_poc_for_directory_with_values(
-            context, scenario_index, values, num_loci=num_loci, seed=seed
+            context,
+            scenario_index,
+            values,
+            num_loci=num_loci,
+            seed=seed,
+            sample_sets=sample_sets,
+            counts_by_samples=counts_by_samples,
         )
         genotypes_list = list(genotypes_per_locus)
 

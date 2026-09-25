@@ -402,6 +402,7 @@ def test_compute_sample_layout_matches_population_layout_on_non_serial_data(
     )
 
 
+# tests relatifs aux filtres MAF
 def test_with_maf_filter_no_filter_matches_direct_call(header_text):
     """maf=0.0 doit produire EXACTEMENT le même résultat qu'un appel
     direct à simulate_independent_loci + simulate_snp_genotypes (même
@@ -428,6 +429,153 @@ def test_with_maf_filter_no_filter_matches_direct_call(header_text):
     )
 
     assert via_filter == direct
+
+
+def test_with_maf_filter_with_same_layout_matches_null_maf():
+    """Vérifie que l'argument si l'argument layout correspond à compute_population_layout(ts) ne change pas le résultat de with_maf_filter."""
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    sample_sets = [
+        msprime.SampleSet(7, "pop1"),
+        msprime.SampleSet(3, "pop2"),
+    ]
+
+    result_with_layout = with_maf_filter(
+        demography,
+        sample_sets,
+        num_loci=10,
+        maf=0.0,
+        seed=123,
+        ploidy=2,
+        counts_by_samples={"pop1": 7, "pop2": 3},
+    )
+    result_without_layout = with_maf_filter(
+        demography, sample_sets, num_loci=10, maf=0.0, seed=123, ploidy=2
+    )
+
+    assert list(result_with_layout) == list(result_without_layout)
+
+
+def test_with_maf_filter_with_same_layout_matches_nonnull_maf():
+    """Vérifie que l'argument layout ne change pas le résultat de with_maf_filter si le MAF est nul, même si le layout est différent de compute_population_layout(ts)."""
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    sample_sets = [
+        msprime.SampleSet(7, "pop1"),
+        msprime.SampleSet(3, "pop2"),
+    ]
+
+    result_with_layout = with_maf_filter(
+        demography,
+        sample_sets,
+        num_loci=10,
+        maf=0.05,
+        seed=123,
+        ploidy=2,
+        counts_by_samples={"pop1": 7, "pop2": 3},
+    )
+    result_without_layout = with_maf_filter(
+        demography, sample_sets, num_loci=10, maf=0.05, seed=123, ploidy=2
+    )
+
+    assert list(result_with_layout) == list(result_without_layout)
+
+
+def test_with_maf_filter_with_different_layout_null_maf():
+    """Vérifie que l'argument layout ne change pas le résultat de with_maf_filter si le MAF est nul, même si le layout est différent de compute_population_layout(ts)."""
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    sample_sets = [
+        msprime.SampleSet(7, "pop1"),
+        msprime.SampleSet(3, "pop2"),
+    ]
+
+    ts = msprime.sim_ancestry(
+        samples=sample_sets,
+        demography=demography,
+        sequence_length=1,
+        random_seed=3,
+    )
+
+    layout = compute_population_layout(ts)
+    split_layout = []
+    for pop_name, node_ids in layout:
+        half = len(node_ids) // 2
+        split_layout.append((f"{pop_name}_a", node_ids[:half]))
+        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+
+    with_split = with_maf_filter(
+        demography,
+        sample_sets,
+        num_loci=10,
+        maf=0.0,
+        seed=123,
+        ploidy=2,
+        counts_by_samples={"pop1_a": 4, "pop1_b": 3, "pop2_a": 2, "pop2_b": 1},
+    )
+
+    without_layout = with_maf_filter(
+        demography, sample_sets, num_loci=10, maf=0.0, seed=123, ploidy=2
+    )
+
+    for split, plain in zip(with_split, without_layout, strict=True):
+        assert list(split) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]  # discrimine
+        assert split["pop1_a"] + split["pop1_b"] == plain["pop1"]  # recollement
+        assert split["pop2_a"] + split["pop2_b"] == plain["pop2"]
+
+
+def test_with_maf_filter_with_different_layout_nonnull_maf():
+    """Vérifie que l'argument layout ne change pas le résultat de with_maf_filter si le MAF est non nul, même si le layout est différent de compute_population_layout(ts)."""
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    sample_sets = [
+        msprime.SampleSet(7, "pop1"),
+        msprime.SampleSet(3, "pop2"),
+    ]
+
+    ts = msprime.sim_ancestry(
+        samples=sample_sets,
+        demography=demography,
+        sequence_length=1,
+        random_seed=3,
+    )
+
+    layout = compute_population_layout(ts)
+    split_layout = []
+    for pop_name, node_ids in layout:
+        half = len(node_ids) // 2
+        split_layout.append((f"{pop_name}_a", node_ids[:half]))
+        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+
+    with_split = with_maf_filter(
+        demography,
+        sample_sets,
+        num_loci=10,
+        maf=0.05,
+        seed=123,
+        ploidy=2,
+        counts_by_samples={"pop1_a": 4, "pop1_b": 3, "pop2_a": 2, "pop2_b": 1},
+    )
+
+    without_layout = with_maf_filter(
+        demography, sample_sets, num_loci=10, maf=0.05, seed=123, ploidy=2
+    )
+
+    for split, plain in zip(with_split, without_layout, strict=True):
+        assert list(split) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]  # discrimine
+        assert split["pop1_a"] + split["pop1_b"] == plain["pop1"]  # recollement
+        assert split["pop2_a"] + split["pop2_b"] == plain["pop2"]
+
+
+# test relatifs à with_maf_filter_shared_ancestry
 
 
 def test_with_maf_filter_shared_ancestry_no_filter_matches_direct_call(
@@ -491,6 +639,157 @@ def test_with_maf_filter_shared_ancestry_rejects_low_maf_loci(header_text_te5):
     assert len(loci) == num_loci
     for locus_genotypes in loci:
         assert observed_maf(locus_genotypes) >= maf
+
+
+def test_with_maf_filter_shared_ancestry_with_same_layout_matches_null_maf():
+    """Vérifie que l'argument si l'argument layout correspond à compute_population_layout(ts) ne change pas le résultat de with_maf_filter."""
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    sample_sets = [
+        msprime.SampleSet(7, "pop1"),
+        msprime.SampleSet(3, "pop2"),
+    ]
+
+    result_with_layout = with_maf_filter_shared_ancestry(
+        demography,
+        sample_sets,
+        num_loci=10,
+        maf=0.0,
+        seed=123,
+        ploidy=1,
+        counts_by_samples={"pop1": 7, "pop2": 3},
+    )
+    result_without_layout = with_maf_filter_shared_ancestry(
+        demography, sample_sets, num_loci=10, maf=0.0, seed=123, ploidy=1
+    )
+
+    assert list(result_with_layout) == list(result_without_layout)
+
+
+def test_with_maf_filter_shared_ancestry_with_same_layout_matches_nonnull_maf():
+    """Vérifie que l'argument layout ne change pas le résultat de with_maf_filter si le MAF est nul, même si le layout est différent de compute_population_layout(ts)."""
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    sample_sets = [
+        msprime.SampleSet(7, "pop1"),
+        msprime.SampleSet(3, "pop2"),
+    ]
+
+    result_with_layout = with_maf_filter_shared_ancestry(
+        demography,
+        sample_sets,
+        num_loci=10,
+        maf=0.05,
+        seed=123,
+        ploidy=1,
+        counts_by_samples={"pop1": 7, "pop2": 3},
+    )
+    result_without_layout = with_maf_filter_shared_ancestry(
+        demography, sample_sets, num_loci=10, maf=0.05, seed=123, ploidy=1
+    )
+
+    assert list(result_with_layout) == list(result_without_layout)
+
+
+def test_with_maf_filter_shared_ancestry_with_different_layout_null_maf():
+    """Vérifie que l'argument layout ne change pas le résultat de with_maf_filter_shared_ancestry si le MAF est nul, même si le layout est différent de compute_population_layout(ts)."""
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    sample_sets = [
+        msprime.SampleSet(7, "pop1"),
+        msprime.SampleSet(3, "pop2"),
+    ]
+
+    ts = msprime.sim_ancestry(
+        samples=sample_sets,
+        demography=demography,
+        sequence_length=1,
+        random_seed=3,
+        ploidy=1,
+    )
+
+    layout = compute_population_layout(ts)
+    split_layout = []
+    for pop_name, node_ids in layout:
+        half = len(node_ids) // 2
+        split_layout.append((f"{pop_name}_a", node_ids[:half]))
+        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+
+    with_split = with_maf_filter_shared_ancestry(
+        demography,
+        sample_sets,
+        num_loci=10,
+        maf=0.0,
+        seed=123,
+        ploidy=1,
+        counts_by_samples={"pop1_a": 4, "pop1_b": 3, "pop2_a": 2, "pop2_b": 1},
+    )
+
+    without_layout = with_maf_filter_shared_ancestry(
+        demography, sample_sets, num_loci=10, maf=0.0, seed=123, ploidy=1
+    )
+
+    for split, plain in zip(with_split, without_layout, strict=True):
+        assert list(split) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]  # discrimine
+        assert split["pop1_a"] + split["pop1_b"] == plain["pop1"]  # recollement
+        assert split["pop2_a"] + split["pop2_b"] == plain["pop2"]
+
+
+def test_with_maf_filter_shared_ancestry_with_different_layout_nonnull_maf():
+    """Vérifie que l'argument layout ne change pas le résultat de with_maf_filter_shared_ancestry si le MAF est non nul, même si le layout est différent de compute_population_layout(ts)."""
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    sample_sets = [
+        msprime.SampleSet(7, "pop1"),
+        msprime.SampleSet(3, "pop2"),
+    ]
+
+    ts = msprime.sim_ancestry(
+        samples=sample_sets,
+        demography=demography,
+        sequence_length=1,
+        random_seed=3,
+        ploidy=1,
+    )
+
+    layout = compute_population_layout(ts)
+    split_layout = []
+    for pop_name, node_ids in layout:
+        half = len(node_ids) // 2
+        split_layout.append((f"{pop_name}_a", node_ids[:half]))
+        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+
+    with_split = with_maf_filter_shared_ancestry(
+        demography,
+        sample_sets,
+        num_loci=10,
+        maf=0.05,
+        seed=123,
+        ploidy=1,
+        counts_by_samples={"pop1_a": 4, "pop1_b": 3, "pop2_a": 2, "pop2_b": 1},
+    )
+
+    without_layout = with_maf_filter_shared_ancestry(
+        demography, sample_sets, num_loci=10, maf=0.05, seed=123, ploidy=1
+    )
+
+    for split, plain in zip(with_split, without_layout, strict=True):
+        assert list(split) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]  # discrimine
+        assert split["pop1_a"] + split["pop1_b"] == plain["pop1"]  # recollement
+        assert split["pop2_a"] + split["pop2_b"] == plain["pop2"]
+
+
+# ------------------------------------------------------
+# Tests sur les fonctions relatives aux reads Pool-seq
+# ------------------------------------------------------
 
 
 def test_reindex_reads_by_msprime_name():
