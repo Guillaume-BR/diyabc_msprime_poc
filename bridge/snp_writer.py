@@ -77,7 +77,7 @@ def write_snp_file(
 
     sample_names = list(genotypes_per_locus[0].keys())
 
-    # Construit, pour chaque population, la matrice diploïde
+    # Construit, pour chaque échantillon, la matrice diploïde
     # [individu][locus] -- nécessaire car le fichier organise les données
     # par individu (toutes ses lignes de loci sur une seule ligne).
     diploid_matrix_per_sample: dict[str, list[list[int]]] = {}
