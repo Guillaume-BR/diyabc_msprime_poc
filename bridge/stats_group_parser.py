@@ -1,6 +1,5 @@
-"""
-Parseur de la section 'group summary statistics' de header.txt : la
-liste des statistiques que DIYABC calcule réellement pour ce dataset.
+"""Parseur de la section 'group summary statistics' de header.txt : la liste
+des statistiques que DIYABC calcule réellement pour ce dataset.
 
 Sert à filtrer summary_statistics.compute_all_statistics (qui calcule
 TOUTES les statistiques implémentées) pour ne garder que celles
@@ -33,7 +32,6 @@ convention que summary_statistics.py.
     ...
 -> noms de colonnes "STAT_group_index" (ex: "ML1p_1_1", "ML2p_1_1.2"), même
 convention que summary_statistics.py.
-
 """
 
 import re
@@ -60,7 +58,6 @@ def _split_stats_blocks(header_text: str) -> list[str]:
         ValueError: Si la section 'group summary statistics' ou aucun
             bloc 'group Gx (N)' n'est trouvé.
     """
-
     lines = header_text.splitlines()
     # repère la ligne d'index où démarre la section "group summary statistics (N)".
     section_start_index = next(

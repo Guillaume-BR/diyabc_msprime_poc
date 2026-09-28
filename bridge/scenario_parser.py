@@ -1,11 +1,13 @@
 """Parseur de header.txt vers les dataclasses de header_dataclasses.py.
 
-Aucune valeur numérique n'est calculée ici (voir header_dataclasses.py pour
-la justification) -- ce module ne fait que de la transcription texte -> objets.
+Aucune valeur numérique n'est calculée ici (voir header_dataclasses.py
+pour la justification) -- ce module ne fait que de la transcription
+texte -> objets.
 
 Vocabulaire géré : sample, merge, varNe, split (admixture) -- couvre les
-6 scénarios du dataset human. Voir SplitEvent (header_dataclasses.py) pour la
-sémantique exacte de split, vérifiée contre history.cpp/particuleC.cpp.
+6 scénarios du dataset human. Voir SplitEvent (header_dataclasses.py)
+pour la sémantique exacte de split, vérifiée contre
+history.cpp/particuleC.cpp.
 """
 
 import re

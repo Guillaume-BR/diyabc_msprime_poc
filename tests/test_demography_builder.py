@@ -1,6 +1,6 @@
 """Vérifie demography_builder : traduction d'un Scenario + valeurs de
-paramètres tirées en msprime.Demography (merges, admixture, extraction
-des noms de paramètres référencés)."""
+paramètres tirées en msprime.Demography (merges, admixture, extraction des noms
+de paramètres référencés)."""
 
 import msprime
 import pytest
@@ -16,9 +16,8 @@ from bridge.scenario_parser import parse_header_scenarios
 
 
 def test_build_demography_scenario2_admixture(header_text):
-    """Vérifie que build_demography traduit un SplitEvent en événement
-    msprime Admixture avec les bonnes populations et proportions
-    (rate, 1-rate)."""
+    """Vérifie que build_demography traduit un SplitEvent en événement msprime
+    Admixture avec les bonnes populations et proportions (rate, 1-rate)."""
     scenarios = parse_header_scenarios(header_text)
     scenario2 = next(s for s in scenarios if s.index == 2)
 
@@ -56,10 +55,10 @@ def test_build_demography_scenario2_admixture(header_text):
 
 
 def test_get_parameter_names_used_by_scenario2(header_text):
-    """Vérifie que le taux d'admixture 'ra' est bien inclus dans les
-    paramètres référencés par un scénario qui contient un SplitEvent --
-    sinon il serait exclu à tort des colonnes du reftable.bin pour ce
-    scénario (même bug que celui déjà corrigé pour t11..t44)."""
+    """Vérifie que le taux d'admixture 'ra' est bien inclus dans les paramètres
+    référencés par un scénario qui contient un SplitEvent -- sinon il serait
+    exclu à tort des colonnes du reftable.bin pour ce scénario (même bug que
+    celui déjà corrigé pour t11..t44)."""
     scenarios = parse_header_scenarios(header_text)
     scenario2 = next(s for s in scenarios if s.index == 2)
 
@@ -101,10 +100,10 @@ def test_evaluate_expression():
 
 
 def test_build_demography_scenario1(header_text):
-    """Vérifie que build_demography produit la bonne structure
-    d'événements pour le scénario 1 de human, avec des valeurs de
-    paramètres fixées à la main (pas de tirage aléatoire ici, pour
-    isoler le test de la logique de construction de la démographie)."""
+    """Vérifie que build_demography produit la bonne structure d'événements
+    pour le scénario 1 de human, avec des valeurs de paramètres fixées à la
+    main (pas de tirage aléatoire ici, pour isoler le test de la logique de
+    construction de la démographie)."""
     scenarios = parse_header_scenarios(header_text)
     scenario1 = next(s for s in scenarios if s.index == 1)
 
@@ -166,9 +165,9 @@ def test_extract_referenced_names():
 
 
 def test_get_parameter_names_used_by_scenario1(header_text):
-    """Vérifie que le scénario 1 référence bien exactement les 16
-    paramètres attendus (21 priors déclarés au total dans header.txt,
-    moins ra/t11/t22/t33/t44 qui appartiennent aux scénarios 2-6)."""
+    """Vérifie que le scénario 1 référence bien exactement les 16 paramètres
+    attendus (21 priors déclarés au total dans header.txt, moins
+    ra/t11/t22/t33/t44 qui appartiennent aux scénarios 2-6)."""
     scenarios = parse_header_scenarios(header_text)
     scenario1 = next(s for s in scenarios if s.index == 1)
 
@@ -197,7 +196,8 @@ def test_get_parameter_names_used_by_scenario1(header_text):
 
 
 def test_rescale_demography(header_text):
-    """Vérifie que la mise à l'échelle de la démographie fonctionne correctement."""
+    """Vérifie que la mise à l'échelle de la démographie fonctionne
+    correctement."""
     scenarios = parse_header_scenarios(header_text)
     scenario1 = next(s for s in scenarios if s.index == 1)
 

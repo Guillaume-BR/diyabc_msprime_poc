@@ -159,7 +159,8 @@ def _check_layout_matches(
 def build_samples_argument(
     snp_file_path: str,
 ) -> dict[str, int]:
-    """Construit l'argument `samples` de msprime.sim_ancestry pour un locus <A>.
+    """Construit l'argument `samples` de msprime.sim_ancestry pour un locus
+    <A>.
 
     Le nom de population msprime ("pop1", "pop2"...) correspond à
     l'indice utilisé dans header.txt, mappé sur le nombre réel
@@ -287,8 +288,8 @@ def _sample_sets_from_sexes(
 def _male_counts_from_sexes(
     sexes_per_sample: dict[str, list[str]],
 ) -> dict[str, int]:
-    """Construit le dict {nom_echantillon: nombre_d_individus_mâles} à partir des
-    sexes par population.
+    """Construit le dict {nom_echantillon: nombre_d_individus_mâles} à partir
+    des sexes par population.
 
     Args:
         sexes_per_sample: dict {nom_echantillon: [liste de sexes]}.
@@ -308,7 +309,8 @@ def _male_counts_from_sexes(
 def build_sex_stratified_samples_argument(
     snp_file_path: str,
 ) -> list[msprime.SampleSet]:
-    """Construit l'argument `samples` de msprime.sim_ancestry pour un locus <X>.
+    """Construit l'argument `samples` de msprime.sim_ancestry pour un locus
+    <X>.
 
     Contrairement à build_samples_argument (un compte par échantillon,
     ploidy uniforme), <X> a besoin d'une ploidy DIFFÉRENTE par individu
@@ -352,7 +354,6 @@ def build_sex_stratified_samples_argument(
             faux (individual_sexes_per_sample laisse ce choix à
             l'appelant, c'est ici qu'il se prend).
     """
-
     sexes_per_sample = individual_sexes_per_sample(snp_file_path)
     index_to_name = sample_index_to_name(snp_file_path)
     name_to_index = {name: index for index, name in index_to_name.items()}
@@ -365,7 +366,8 @@ def build_sex_stratified_samples_argument(
 
 
 def build_male_only_samples_argument(snp_file_path: str) -> dict[str, int]:
-    """Construit l'argument `samples` de msprime.sim_ancestry pour un locus <Y>.
+    """Construit l'argument `samples` de msprime.sim_ancestry pour un locus
+    <Y>.
 
     Le nom de population msprime ("pop1", "pop2"...) correspond à
     l'indice utilisé dans header.txt, mappé sur le nombre réel
@@ -396,7 +398,6 @@ def build_male_only_samples_argument(snp_file_path: str) -> dict[str, int]:
     Raises:
         ValueError: Si un individu a le sexe "9" (inconnu).
     """
-
     sexes_per_sample = individual_sexes_per_sample(snp_file_path)
     index_to_name = sample_index_to_name(snp_file_path)
     name_to_index = {name: index for index, name in index_to_name.items()}
@@ -409,8 +410,7 @@ def build_male_only_samples_argument(snp_file_path: str) -> dict[str, int]:
 
 
 def counts_by_sample_for_locus(context, locus) -> dict[str, int]:
-    """
-    Retourne le dict {nom_echantillon: nombre_d_individus} à passer à
+    """Retourne le dict {nom_echantillon: nombre_d_individus} à passer à
     msprime.sim_ancestry pour le locus donné, selon son type d'héritage.
 
     Args:
@@ -421,7 +421,6 @@ def counts_by_sample_for_locus(context, locus) -> dict[str, int]:
     Returns:
         Un dict {nom_echantillon: nombre_d_individus}.
     """
-
     if locus.heritage in ("A", "H", "M", "X"):
         return context.samples_default
     if locus.heritage == "Y":
@@ -538,7 +537,6 @@ def simulate_shared_ancestry_loci(
         Un itérateur de num_loci TreeSequence, toutes identiques (le
         même objet Python répété).
     """
-
     shared_genealogy = next(
         simulate_independent_loci(
             demography, samples, num_loci=1, seed=seed, ploidy=ploidy
@@ -592,7 +590,8 @@ def _draw_single_mutation_edge_child(ts: tskit.TreeSequence, rng: random.Random)
 def compute_population_layout(
     ts: tskit.TreeSequence,
 ) -> list[tuple[str | None, np.ndarray]]:
-    """Calcule le layout (nom de population, IDs des noeuds échantillons) d'une TreeSequence.
+    """Calcule le layout (nom de population, IDs des noeuds échantillons) d'une
+    TreeSequence.
 
     Factorisé pour pouvoir être calculé UNE SEULE FOIS et réutilisé sur
     plusieurs loci/tentatives qui partagent la même `demography`/
@@ -1173,7 +1172,6 @@ def simulate_poolseq_reads(
         Un itérateur de dicts {nom_population: (nreads_dérivé,
         nreads_total)} simulés, un par locus.
     """
-
     rng = random.Random(seed)
     binom_rng = np.random.default_rng(
         seed + _BINOMIAL_SEED_OFFSET
@@ -1219,7 +1217,8 @@ def _reindex_reads_by_msprime_name(
     observed_reads_per_locus: list[dict[str, tuple[int, int]]],
     snp_file_path: str,
 ) -> list[dict[str, tuple[int, int]]]:
-    """Reindexe les lectures observées pour utiliser les noms de population msprime.
+    """Reindexe les lectures observées pour utiliser les noms de population
+    msprime.
 
     Args:
         observed_reads_per_locus: Une liste de dicts {nom_population
@@ -1556,7 +1555,8 @@ def simulate_poolseq_reads_with_mrc_filter(
 def build_transition_matrix(
     name_model: str, kappas: tuple[float, float], frequences_by_locus: dict[str, float]
 ) -> np.ndarray:
-    """Calcule la matrice de transition (matQ) pour un modèle donné et un locus.
+    """Calcule la matrice de transition (matQ) pour un modèle donné et un
+    locus.
 
     Args:
         name_model: "JK", "K2P", "HKY" ou "TN".
@@ -1643,7 +1643,8 @@ def build_transition_matrix(
 def build_rate_map(
     mutsit: list[float], mus_rate: float, dnalength: int
 ) -> msprime.RateMap:
-    """Construit le profil de taux de mutation par site d'un locus (msprime.RateMap).
+    """Construit le profil de taux de mutation par site d'un locus
+    (msprime.RateMap).
 
     `mus_rate` est un taux moyen PAR SITE (donc le taux total attendu
     sur tout le locus est `mus_rate * dnalength`) ; `mutsit` répartit
@@ -1714,7 +1715,8 @@ def build_sex_stratified_samples_argument_ms_dna(
     list_loci: list[LociDescriptionDetailed],
     locus_name: str,
 ) -> list[msprime.SampleSet]:
-    """Construit l'argument `samples` pour simulate_independent_loci, stratifié par sexe.
+    """Construit l'argument `samples` pour simulate_independent_loci, stratifié
+    par sexe.
 
     Pour les loci de type "X", on doit échantillonner les individus en fonction de leur sexe.
     Cette fonction lit le fichier .snp et construit la liste des SampleSet correspondants.
@@ -1748,8 +1750,8 @@ def build_male_only_samples_argument_ms_dna(
     list_loci: list[LociDescriptionDetailed],
     locus_name: str,
 ) -> dict[str, int]:
-    """
-    Construit l'argument `samples` pour simulate_independent_loci, pour les individus mâles uniquement.
+    """Construit l'argument `samples` pour simulate_independent_loci, pour les
+    individus mâles uniquement.
 
     PAS sériel-conscient : les clés msprime ("pop1", "pop2"...) sont
     redérivées depuis la POSITION du bloc observé, pas depuis la
@@ -1780,7 +1782,8 @@ def build_male_only_samples_argument_ms_dna(
 def build_group_local_param_per_locus(
     header_text: str, seed: int
 ) -> dict[str, tuple[float, float, float]]:
-    """Tire k1/k2/mus_rate par locus (hiérarchie à deux niveaux, groupe puis locus).
+    """Tire k1/k2/mus_rate par locus (hiérarchie à deux niveaux, groupe puis
+    locus).
 
     Pour chaque groupe `[S]` de header.txt : `draw_group_parameter_values`
     donne la valeur moyenne par groupe (premier niveau), puis
@@ -1946,7 +1949,8 @@ def build_matrix_per_locus(
 
 
 def build_rate_map_per_locus(header_text: str, seed: int) -> dict[str, msprime.RateMap]:
-    """Construit le profil de taux de mutation (msprime.RateMap) de chaque locus [S].
+    """Construit le profil de taux de mutation (msprime.RateMap) de chaque
+    locus [S].
 
     Args:
         header_text: Texte complet de header.txt.
@@ -2025,7 +2029,8 @@ def simulate_dna_mutations(
 def ms_dna_ancestry_parameters_for_heritage(
     heritage: str, demography: msprime.Demography, sex_ratio: float
 ) -> tuple[msprime.Demography, int]:
-    """Détermine la démographie (rescalée ou non) et la ploïdie pour un locus ADN.
+    """Détermine la démographie (rescalée ou non) et la ploïdie pour un locus
+    ADN.
 
     Reproduit le même dispatch que `simulate_genotypes_for_locus_type`
     côté SNP : "A" utilise la démographie <A> telle quelle en
@@ -2168,7 +2173,8 @@ def dna_mutation_simulation_per_locus(
 def _group_prior_values_from_columns(
     group_priors_values: dict[str, float], group_priors: dict
 ) -> dict[str, dict[str, float]]:
-    """Reconstruit le dict nested {groupe: {prior: valeur}} depuis les colonnes du reftable réel.
+    """Reconstruit le dict nested {groupe: {prior: valeur}} depuis les colonnes
+    du reftable réel.
 
     Reshape les colonnes plates du vrai reftable DIYABC (ex:
     "µseq_2", "k1seq_2") dans la forme nested que
@@ -2466,7 +2472,8 @@ def dna_mutation_simulation_per_locus_from_values(
     *,
     sample_sets: list[msprime.SampleSet] | None = None,
 ) -> dict[str, tskit.TreeSequence]:
-    """Variante replay de dna_mutation_simulation_per_locus (rejeu apparié DIYABC/msprime).
+    """Variante replay de dna_mutation_simulation_per_locus (rejeu apparié
+    DIYABC/msprime).
 
     Voir build_matrix_per_locus_from_values pour le principe général :
     appelle build_rate_map_per_locus_from_values/
@@ -2621,7 +2628,8 @@ def _distribution_from_position(
 def _place_gsm_row_on_dense_grid(
     local_distribution: np.ndarray, position: int, kmin: int, kmax: int, motif_size: int
 ) -> np.ndarray:
-    """Étale une ligne GSM locale (espacée de `motif_size`) sur la grille dense (espacée de 1 pb).
+    """Étale une ligne GSM locale (espacée de `motif_size`) sur la grille dense
+    (espacée de 1 pb).
 
     Précondition non vérifiée : `local_distribution` doit avoir été produite
     par `_distribution_from_position` avec exactement le même `position`/
@@ -2652,7 +2660,8 @@ def _place_gsm_row_on_dense_grid(
 
 
 def _sni_row_on_dense_grid(position: int, kmin: int, kmax: int) -> np.ndarray:
-    """Construit la ligne SNI (±1 pb, indépendante de `motif_size`) pour `position`, directement sur la grille dense.
+    """Construit la ligne SNI (±1 pb, indépendante de `motif_size`) pour
+    `position`, directement sur la grille dense.
 
     Contrairement à la ligne GSM, aucune grille locale intermédiaire n'est
     nécessaire : le pas SNI (±1) tombe déjà sur la grille dense. Aux bords
@@ -2688,7 +2697,8 @@ def _sni_row_on_dense_grid(position: int, kmin: int, kmax: int) -> np.ndarray:
 def _mix_sni_gsm_rows(
     sni_row: np.ndarray, gsm_row: np.ndarray, sni_rate: float, mut_rate: float
 ) -> np.ndarray:
-    """Mélange les lignes SNI et GSM pour créer une ligne de transition combinée.
+    """Mélange les lignes SNI et GSM pour créer une ligne de transition
+    combinée.
 
     Args:
         sni_row: Ligne SNI (np.ndarray).
@@ -2782,7 +2792,6 @@ def build_microsat_transition_matrix(
     Returns:
         Modèle de mutation (alleles, root_distribution, transition_matrix) du locus microsatellite.
     """
-
     root = kmin + (kmax - kmin) // 2
 
     # nombre de pas de chaque côté de root pour atteindre kmin et kmax
@@ -2807,7 +2816,8 @@ def build_microsat_transition_matrix(
 def build_microsat_local_param_per_locus(
     header_text, seed
 ) -> dict[str, tuple[float, float, float]]:
-    """Construit les paramètres locaux (mut_rate, Pgeom, sni_rate) de chaque locus [M].
+    """Construit les paramètres locaux (mut_rate, Pgeom, sni_rate) de chaque
+    locus [M].
 
     Args:
         header_text: Texte complet de header.txt.
@@ -2921,7 +2931,6 @@ def microsat_mutation_simulation_per_locus(
     Returns:
         Un dict {nom_locus: arbre_généalogique} pour chaque locus microsatellite [M].
     """
-
     mss_file_path = context.mss_path
     list_loci = context.list_loci
     samples_default = (
@@ -2992,7 +3001,8 @@ def microsat_mutation_simulation_per_locus(
 def _group_prior_values_microsat_from_columns(
     group_priors_values: dict[str, float], group_priors: dict
 ) -> dict[str, dict[str, float]]:
-    """Reconstruit le dict nested {groupe: {prior: valeur}} depuis les colonnes du reftable réel pour les microsats.
+    """Reconstruit le dict nested {groupe: {prior: valeur}} depuis les colonnes
+    du reftable réel pour les microsats.
 
         Reshape les colonnes plates du vrai reftable DIYABC (ex:
         "mut_rate", "Pgeom") dans la forme nested que

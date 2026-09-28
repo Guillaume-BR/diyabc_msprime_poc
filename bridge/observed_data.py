@@ -61,7 +61,6 @@ def _find_header_index(lines: list[str]) -> int:
         ValueError: Si l'en-tête n'est trouvé dans aucune des deux
             premières lignes.
     """
-
     header_index = next(
         (
             i
@@ -328,8 +327,8 @@ def parse_mrc_ratio(snp_file_path: str | Path) -> float:
 
 
 def sample_index_to_name(snp_file_path: str | Path) -> dict[int, str]:
-    """Construit le mapping entre l'indice de l'évènement Sample de header.txt et
-    le nom de l'échantillon correspondant.
+    """Construit le mapping entre l'indice de l'évènement Sample de header.txt
+    et le nom de l'échantillon correspondant.
 
     header.txt est 1-indexed (pop1, pop2, ...) ; le nom de l'échantillon est celui
     qui apparaît dans le fichier .snp (ex: "ASW", "YRI"...). Voir la

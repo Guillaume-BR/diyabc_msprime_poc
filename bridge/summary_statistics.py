@@ -192,7 +192,8 @@ def _prepare_matrices_poolseq(
 def _forward_fill(
     values: np.ndarray, valid: np.ndarray, fill: float = 0.0
 ) -> np.ndarray:
-    """Propage la dernière valeur valide vue aux positions non valides (forward-fill vectorisé).
+    """Propage la dernière valeur valide vue aux positions non valides
+    (forward-fill vectorisé).
 
     Reproduit le comportement de la variable C++ non ré-initialisée
     x_prev dans cal_snfstd et cal_snnei. Implémentation : searchsorted
@@ -804,7 +805,8 @@ def compute_FST3_FST4_poolseq(
     pool_sizes: dict[str, int],
     _mats=None,
 ) -> dict[str, float]:
-    """Variante PoolSeq de compute_FST3_FST4_FSTG : FST3/FST4 sur triplets/quadruplets (COMB).
+    """Variante PoolSeq de compute_FST3_FST4_FSTG : FST3/FST4 sur
+    triplets/quadruplets (COMB).
 
     Args:
         reads_per_locus: Liste de dicts {nom_echantillon: (nreads_dérivé,
@@ -1311,7 +1313,8 @@ def compute_NHA(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule le nombre moyen d'haplotypes distincts par échantillon sur un groupe de loci.
+    """Calcule le nombre moyen d'haplotypes distincts par échantillon sur un
+    groupe de loci.
 
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
@@ -1360,7 +1363,6 @@ def _pairwise_hamming_distances(matrix: np.ndarray) -> np.ndarray:
     Raises:
         ValueError: Si matrix.shape[1] == 0 (échantillon sans échantillon).
     """
-
     if matrix.shape[1] == 0:
         raise ValueError("La matrice de génotypes est vide.")
 
@@ -1496,8 +1498,8 @@ def compute_VPD(
 
 def _tajima_constants(n_samples: int) -> tuple[float, float, float]:
     """Calcule les constantes a1, e1, e2 pour le D de Tajima (cal_dta1pl,
-    lignes 1566-1575) à partir du nombre d'échantillons (n_samples) --
-    ne dépend que de n_samples, jamais des données elles-mêmes.
+    lignes 1566-1575) à partir du nombre d'échantillons (n_samples) -- ne
+    dépend que de n_samples, jamais des données elles-mêmes.
 
     Args:
         n_samples: Nombre d'échantillons (>= 2).
@@ -1621,7 +1623,8 @@ def compute_DTA(
 def _private_segregating_sites_per_locus(
     genotype_matrices: dict[str, np.ndarray], target_sample: str
 ) -> int:
-    """Compte les sites ségrégeants "privés" de `target_sample` sur UN locus (cal_pss1p).
+    """Compte les sites ségrégeants "privés" de `target_sample` sur UN locus
+    (cal_pss1p).
 
     Un site ségrégeant privé est ségrégeant dans `target_sample` mais
     NULLE PART ailleurs, parmi TOUTES les échantillons de
@@ -1666,8 +1669,8 @@ def compute_PSS(
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule PSS_i (cal_pss1p) : pour chaque échantillon, la moyenne du
-    nombre de sites ségrégeants privés (_private_segregating_sites_per_
-    locus) sur tous les loci du groupe passé en argument.
+    nombre de sites ségrégeants privés (_private_segregating_sites_per_ locus)
+    sur tous les loci du groupe passé en argument.
 
     `sample_names` fixe explicitement les clés du dict retourné --
     chaque échantillon attendu a toujours une valeur (0.0 par défaut),
@@ -1995,7 +1998,8 @@ def compute_NS2(
 def _mean_pairwise_differences_within_per_locus(
     genotype_matrices: dict[str, np.ndarray], samp_a: str, samp_b: str
 ) -> float:
-    """Calcule MP2 "within" pour un locus : ratio poolé des sommes, PAS la moyenne des deux MPD.
+    """Calcule MP2 "within" pour un locus : ratio poolé des sommes, PAS la
+    moyenne des deux MPD.
 
     Additionne les distances de Hamming intra-échantillon de samp_a ET
     samp_b (jamais entre les deux), puis divise par le nombre total de
@@ -2085,7 +2089,8 @@ def compute_MP2(
 def _pairwise_hamming_distances_between(
     matrix_a: np.ndarray, matrix_b: np.ndarray
 ) -> np.ndarray:
-    """Calcule les distances de Hamming par paire entre deux matrices de génotypes.
+    """Calcule les distances de Hamming par paire entre deux matrices de
+    génotypes.
 
     Contrairement à _pairwise_hamming_distances (matrice unique, une
     triangulaire à extraire), ici TOUTE paire (p dans matrix_a, q dans
@@ -2118,7 +2123,8 @@ def _pairwise_hamming_distances_between(
 def _mean_pairwise_differences_between_per_locus(
     genotype_matrices: dict[str, np.ndarray], samp_a: str, samp_b: str
 ) -> float:
-    """Calcule la moyenne des différences par paire (MPB) entre deux échantillons pour un locus.
+    """Calcule la moyenne des différences par paire (MPB) entre deux
+    échantillons pour un locus.
 
     Args:
         genotype_matrices: Dict {nom_echantillon: matrice}, au moins
@@ -2404,7 +2410,8 @@ def total_genes_copies_per_population(
 def _compute_HET_for_one_population(
     total_count: int, _lengths_counts: list[tuple[int, int]]
 ) -> float:
-    """Calcule HET pour un échantillon donné à partir du nombre total d'allèles et des comptes par longueur.
+    """Calcule HET pour un échantillon donné à partir du nombre total d'allèles
+    et des comptes par longueur.
 
     Args:
         total_count: Nombre total d'allèles distincts pour l'échantillon.
@@ -2498,7 +2505,8 @@ def _compute_VAR_constants(
 def _compute_VAR_for_one_population(
     raw_sizes: float, raw_square_sizes: float, total_count: int, motif_size: int
 ) -> float:
-    """Calcule VAR pour un échantillon donné à partir des sommes brutes et du nombre total d'allèles.
+    """Calcule VAR pour un échantillon donné à partir des sommes brutes et du
+    nombre total d'allèles.
 
     Args:
         raw_sizes: Somme des tailles brutes (en pb) pour l'échantillon.
@@ -2655,7 +2663,8 @@ def compute_MGW(
 def _compute_N2P_for_one_pair(
     samp_a: list[tuple[int, int]], samp_b: list[tuple[int, int]]
 ) -> float:
-    """Calcule N2P_ij pour une paire d'échantillons à partir des listes de tuples (longueur, nb_sequence).
+    """Calcule N2P_ij pour une paire d'échantillons à partir des listes de
+    tuples (longueur, nb_sequence).
 
     Args:
         samp_a: Liste de tuples (longueur, nb_sequence) pour la première échantillon.
@@ -2783,7 +2792,8 @@ def _pool_allele_counts_for_two_populations(
 def _compute_H2P_for_one_pair(
     length_by_sample: dict[str, list[tuple[int, int]]], samp_a: str, samp_b: str
 ) -> float:
-    """Calcule H2P_ij pour une paire d'échantillons à partir des listes de tuples (longueur, nb_sequence).
+    """Calcule H2P_ij pour une paire d'échantillons à partir des listes de
+    tuples (longueur, nb_sequence).
 
     Args:
         length_by_sample: Dict {nom_echantillon: [(longueur, nb_sequence), ...]}.
@@ -2814,8 +2824,8 @@ def compute_H2P(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """
-    Calcule la diversité génétique H2P pour toutes les paires d'échantillons.
+    """Calcule la diversité génétique H2P pour toutes les paires
+    d'échantillons.
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
@@ -2825,7 +2835,6 @@ def compute_H2P(
     Returns:
         Dict {i.j: H2P} pour chaque paire d'échantillons.
     """
-
     pairs = [
         (i, j)
         for i in range(len(sample_names))
@@ -2883,8 +2892,8 @@ def _compute_V2P_constants(
     raw_square_sizes: dict[str, int],
     total_counts: dict[str, int],
 ) -> tuple[float, float, int]:
-    """
-    Calcule les constantes nécessaires pour V2P pour une paire d'échantillons.
+    """Calcule les constantes nécessaires pour V2P pour une paire
+    d'échantillons.
 
     Args:
         population1: Nom du premier échantillon.
@@ -2896,7 +2905,6 @@ def _compute_V2P_constants(
     Returns:
         Tuple (raw_size_sum, raw_square_size_sum, total_count_sum) pour la paire
     """
-
     raw_size_sum = raw_sizes.get(population1, 0.0) + raw_sizes.get(population2, 0.0)
     raw_square_size_sum = raw_square_sizes.get(population1, 0) + raw_square_sizes.get(
         population2, 0
@@ -2914,8 +2922,7 @@ def compute_V2P(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """
-    Calcule la variance de la taille des allèles entre deux échantillons.
+    """Calcule la variance de la taille des allèles entre deux échantillons.
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
@@ -2926,7 +2933,6 @@ def compute_V2P(
     Returns:
         Dict {"i.j": V2P} pour chaque paire d'échantillons.
     """
-
     pairs = [
         (i, j)
         for i in range(len(sample_names))
@@ -2974,7 +2980,8 @@ def compute_V2P(
 def _compute_identical_pair_for_one_pair(
     length_by_sample: dict[str, list[tuple[int, int]]], samp_a: str, samp_b: str
 ) -> tuple[int, int]:
-    """Calcule le nombre de paires d'allèles identiques et le nombre total de paires possibles pour une paire d'échantillons.
+    """Calcule le nombre de paires d'allèles identiques et le nombre total de
+    paires possibles pour une paire d'échantillons.
 
     Args:
         length_by_sample: Dict {nom_echantillon: [(longueur, nb_sequence), ...]}.
@@ -3006,8 +3013,8 @@ def compute_DAS(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """
-    Calcule la distance d'allèle partagée (DAS) entre toutes les paires d'échantillons.
+    """Calcule la distance d'allèle partagée (DAS) entre toutes les paires
+    d'échantillons.
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
@@ -3017,7 +3024,6 @@ def compute_DAS(
     Returns:
         Dict {i.j: DAS} pour chaque paire d'échantillons.
     """
-
     pairs = [
         (i, j)
         for i in range(len(sample_names))
@@ -3057,7 +3063,8 @@ def _compute_DM2_for_one_locus(
     total_counts: dict[str, int],
     previous_moy: tuple[float, float] | None,
 ) -> tuple[float, tuple[float, float] | None, bool]:
-    """Calcule la contribution de DM2 à UN locus, pour une paire d'échantillons.
+    """Calcule la contribution de DM2 à UN locus, pour une paire
+    d'échantillons.
 
     Reproduit fidèlement un bug de cal_dmu2p (sumstat.cpp) : dans le
     C++, le buffer moy[] est alloué UNE SEULE FOIS avant la boucle sur
@@ -3136,8 +3143,9 @@ def compute_DM2(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule DM2_i_j : (delta mu)^2 de Goldstein et al. (1995), pour
-    chaque paire d'échantillons, sur tous les loci du groupe passé en
+    """Calcule DM2_i_j : (delta mu)^2 de Goldstein et al.
+
+    (1995), pour chaque paire d'échantillons, sur tous les loci du groupe passé en
     argument.
 
     Reproduit fidèlement le bug d'accumulation de cal_dmu2p -- voir le
@@ -3206,9 +3214,10 @@ def _length_by_sample_and_individuals(
     layout: list[tuple[str, np.ndarray]] | None = None,
 ) -> dict[str, list[tuple[int, int]]]:
     """Calcule la longueur des séquences pour chaque individupar échantillon.
-    La ploidie de l'individu est détectée par le nombre de noeud dans l'arbre via tree_sequence.individuals().
-    On retournera à chaque fois un tuple (longueur_1,longueur_2) pour chaque individu et
-    longueur_1 sera répétée si l'individu est haploïde.
+    La ploidie de l'individu est détectée par le nombre de noeud dans l'arbre
+    via tree_sequence.individuals(). On retournera à chaque fois un tuple
+    (longueur_1,longueur_2) pour chaque individu et longueur_1 sera répétée si
+    l'individu est haploïde.
 
     Args:
         tree_sequence: Un objet TreeSequence de tskit.
@@ -3247,7 +3256,8 @@ def _length_by_sample_and_individuals(
 def _compute_ni_nA_AA_for_one_population(
     pairs: list[tuple[int, int]], al: int
 ) -> tuple[int, int, int]:
-    """Calcule ni, nA et AA pour un échantillon donné à partir des paires d'allèles.
+    """Calcule ni, nA et AA pour un échantillon donné à partir des paires
+    d'allèles.
 
     Args:
         pairs: Liste de tuples (longueur_1, longueur_2) pour chaque individu.
@@ -3268,7 +3278,8 @@ def _compute_ni_nA_AA_for_one_population(
 def _compute_FST_constants_for_two_populations_combined(
     pairs_1: list[tuple[int, int]], pairs_2: list[tuple[int, int]], al: int
 ) -> tuple[int, int, int]:
-    """Calcule les constantes nécessaires pour FST pour une paire d'échantillons combinés.
+    """Calcule les constantes nécessaires pour FST pour une paire
+    d'échantillons combinés.
 
     Args:
         pairs_1: Liste de tuples (longueur_1, longueur_2) pour la première échantillon.
@@ -3304,7 +3315,8 @@ def _compute_FST_constants_for_two_populations_combined(
 def _compute_FST_constants_on_all_alleles_for_two_populations(
     length_by_sample: dict[str, list[tuple[int, int]]], samp_a: str, samp_b: str
 ) -> tuple[float, float, float]:
-    """Calcule les constantes nécessaires pour FST pour une paire d'échantillons sur tous les allèles.
+    """Calcule les constantes nécessaires pour FST pour une paire
+    d'échantillons sur tous les allèles.
 
     Args:
         length_by_sample: Dict {nom_echantillon: [(longueur_1, longueur_2), ...]}.
@@ -3314,7 +3326,6 @@ def _compute_FST_constants_on_all_alleles_for_two_populations(
     Returns:
         Un tuple (s2G_total, s2I_total, s2P_total) pour la paire d'échantillons.
     """
-
     pairs_1 = length_by_sample.get(samp_a, [])
     pairs_2 = length_by_sample.get(samp_b, [])
 
@@ -3567,7 +3578,6 @@ def compute_LIK(
     Returns:
         Dict {"i.j": LIK}, une entrée par paire ORDONNÉE d'échantillons.
     """
-
     pairs = [
         (i, j)
         for i in range(len(sample_names))
@@ -3610,9 +3620,10 @@ def _prepare_loci_for_admixture(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> list[tuple[dict[int, float], dict[int, float], list[tuple[int, ...]]]]:
-    """
-    Prépare les loci pour le calcul de la log-vraisemblance d'admixture.
-    Pour chaque locus, on calcule les fréquences des allèles dans les échantillons parentaux et on récupère les génotypes des individus de l'échantillon focal.
+    """Prépare les loci pour le calcul de la log-vraisemblance d'admixture.
+    Pour chaque locus, on calcule les fréquences des allèles dans les
+    échantillons parentaux et on récupère les génotypes des individus de
+    l'échantillon focal.
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
@@ -3670,9 +3681,9 @@ def _log_likelihood_admixture(
     ],
     a: float,
 ) -> float:
-    """
-    Un seul float, la log-vraisemblance totale (somme sur tous les loci du groupe, somme sur tous les individus de focal) :
-    équivalent de li[rep] du C++ pour UN a donné, pas encore le couple (li0, delta).
+    """Un seul float, la log-vraisemblance totale (somme sur tous les loci du
+    groupe, somme sur tous les individus de focal) : équivalent de li[rep] du
+    C++ pour UN a donné, pas encore le couple (li0, delta).
 
     Args:
         prepared_loci: Liste de tuples contenant les données préparées pour chaque locus.
@@ -3746,7 +3757,8 @@ def _compute_AML_one_triplet(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> float:
-    """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour chaque triplet d'échantillons.
+    """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour
+    chaque triplet d'échantillons.
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
@@ -3759,7 +3771,6 @@ def _compute_AML_one_triplet(
     Returns:
         La statistique AML pour le triplet donné.
     """
-
     prepared_loci = _prepare_loci_for_admixture(
         tree_sequences, focal, parent1, parent2, layouts=layouts
     )
@@ -3801,7 +3812,8 @@ def compute_AML_microsat(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour chaque triplet d'échantillons.
+    """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour
+    chaque triplet d'échantillons.
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
@@ -3951,14 +3963,14 @@ def compute_all_statistics_dna(
     seed: int = 0,
     layouts_by_locus: dict[str, list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule les 13 statistiques résumées ADN pour chaque `group Gx`
-    séquence (`[S]`) du header, et retourne un dict {nom_colonne: valeur}
-    utilisant les VRAIS noms de colonnes DIYABC (`STAT_<groupe>_<pop-ou-
-    paire>`, ex. `NSS_2_1`, `NH2_3_1.2`) -- vérifié caractère pour
-    caractère contre la sortie réelle de `diyabc` sur
-    `toy_example2_ms_dna` (`STAT_<groupe>_<suffixe>` quand il y a
-    plusieurs groupes, `STAT_<suffixe>` seul sinon -- même convention
-    que `stats_group_parser.parse_requested_statistic_names`).
+    """Calcule les 13 statistiques résumées ADN pour chaque `group Gx` séquence
+    (`[S]`) du header, et retourne un dict {nom_colonne: valeur} utilisant les
+    VRAIS noms de colonnes DIYABC (`STAT_<groupe>_<pop-ou- paire>`, ex.
+    `NSS_2_1`, `NH2_3_1.2`) -- vérifié caractère pour caractère contre la
+    sortie réelle de `diyabc` sur `toy_example2_ms_dna`
+    (`STAT_<groupe>_<suffixe>` quand il y a plusieurs groupes, `STAT_<suffixe>`
+    seul sinon -- même convention que
+    `stats_group_parser.parse_requested_statistic_names`).
 
     Args:
         header_text: contenu de header.txt/headerRF.txt (pour
@@ -4059,10 +4071,10 @@ def compute_all_statistics_microsat(
     """Calcule les statistiques résumées microsat pour chaque `group Gx`
     microsat (`[M]`) du header, et retourne un dict {nom_colonne: valeur}
     utilisant les VRAIS noms de colonnes DIYABC -- vérifié caractère pour
-    caractère contre la sortie réelle de `diyabc` sur
-    `toy_example2_ms_dna` (`STAT_<groupe>_<suffixe>` quand il y a
-    plusieurs groupes, `STAT_<suffixe>` seul sinon -- même convention
-    que `stats_group_parser.parse_requested_statistic_names`).
+    caractère contre la sortie réelle de `diyabc` sur `toy_example2_ms_dna`
+    (`STAT_<groupe>_<suffixe>` quand il y a plusieurs groupes, `STAT_<suffixe>`
+    seul sinon -- même convention que
+    `stats_group_parser.parse_requested_statistic_names`).
 
     Args:
         header_text: contenu de header.txt/headerRF.txt (pour
@@ -4077,7 +4089,6 @@ def compute_all_statistics_microsat(
     Returns:
         Un dict {nom_colonne_diyabc: valeur}.
     """
-
     loci_by_group: dict[str, list[str]] = {}
     motif_sizes_by_locus: dict[str, int] = {}
     list_loci = parse_loci_description(header_text)

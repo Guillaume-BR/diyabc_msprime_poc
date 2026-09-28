@@ -1,13 +1,13 @@
 """Vérifie snp_writer : écriture du fichier .snp au format DIYABC (chemin
-subprocess déprécié, gardé pour la validation croisée avec le binaire
-réel, voir CLAUDE.md)."""
+subprocess déprécié, gardé pour la validation croisée avec le binaire réel,
+voir CLAUDE.md)."""
 
 from bridge.snp_writer import write_snp_file
 
 
 def test_write_snp_file_small_case(tmp_path):
-    """Vérifie l'écriture du fichier .snp sur un cas minimal : 2 loci,
-    2 populations, 2 lignées (1 individu) chacune."""
+    """Vérifie l'écriture du fichier .snp sur un cas minimal : 2 loci, 2
+    populations, 2 lignées (1 individu) chacune."""
     genotypes_per_locus = [
         {
             "pop1": [0, 1],

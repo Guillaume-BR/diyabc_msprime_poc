@@ -96,8 +96,8 @@ def header_text_te4() -> str:
 
 @pytest.fixture
 def header_text_te3_scenario1() -> str:
-    """toy_example3, scénario 1 isolé (split+admixture, 8 priors) --
-    seul dataset de ce projet avec un vrai filtre MAF actif (<MAF=0.05>,
+    """toy_example3, scénario 1 isolé (split+admixture, 8 priors) -- seul
+    dataset de ce projet avec un vrai filtre MAF actif (<MAF=0.05>,
     contrairement à human/toy_example5 qui sont <MAF=hudson>)."""
     return (OBSERVED_SNP_FILE_TE3_SCENARIO1.parent / "headerRF.txt").read_text()
 

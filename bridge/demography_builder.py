@@ -1,6 +1,6 @@
-"""
-Construit une msprime.Demography à partir d'un Scenario (header_dataclasses.py)
-et d'un dict de valeurs numériques tirées (parameter_sampling.py).
+"""Construit une msprime.Demography à partir d'un Scenario
+(header_dataclasses.py) et d'un dict de valeurs numériques tirées
+(parameter_sampling.py).
 
 evaluate_expression() est l'équivalent Python de ParticleC::getvalue()
 (particuleC.cpp) : transforme une expression texte ("t2-d3", "t1", "0")
@@ -28,7 +28,8 @@ _EXPR_RE = re.compile(r"^(\w+)([+-])(\w+)$")
 
 
 def evaluate_expression(expr: str, values: dict[str, float]) -> float:
-    """Évalue une expression de temps ou de taille de header.txt de manière récursive.
+    """Évalue une expression de temps ou de taille de header.txt de manière
+    récursive.
 
     Un nombre littéral ("0"), un nom de paramètre tiré ("t1"), ou une
     somme/différence de deux noms ("t2-d3", "t2+d3"). Équivalent de
@@ -194,7 +195,8 @@ def rescale_demography(
 
 
 def extract_referenced_names(expr: str) -> set[str]:
-    """Extrait les noms de paramètres référencés par une expression de header.txt.
+    """Extrait les noms de paramètres référencés par une expression de
+    header.txt.
 
     SANS l'évaluer numériquement -- "t2-d3" -> {"t2","d3"}, "t1" ->
     {"t1"}, "0" -> set() (un nombre littéral ne référence aucun

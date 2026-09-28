@@ -1,6 +1,6 @@
-"""Vérifie stats_group_parser : extraction des noms de statistiques
-demandées dans la section 'group summary statistics' de header.txt,
-vocabulaire ancien (obsolète) et moderne."""
+"""Vérifie stats_group_parser : extraction des noms de statistiques demandées
+dans la section 'group summary statistics' de header.txt, vocabulaire ancien
+(obsolète) et moderne."""
 
 import pytest
 
@@ -11,11 +11,10 @@ from bridge.stats_group_parser import (
 
 
 def test_split_stats_blocks(header_text_te2):
-    """Vérifie que split_stats_blocks() découpe correctement la section
-    'group summary statistics' en blocs de lignes, un bloc par groupe
-    de statistiques (ex: "group G1 (N)"), et que le dernier bloc est
-    bien limité à la fin de la section (avant la ligne vide ou le
-    début d'une autre section)."""
+    """Vérifie que split_stats_blocks() découpe correctement la section 'group
+    summary statistics' en blocs de lignes, un bloc par groupe de statistiques
+    (ex: "group G1 (N)"), et que le dernier bloc est bien limité à la fin de la
+    section (avant la ligne vide ou le début d'une autre section)."""
     blocks = _split_stats_blocks(header_text_te2)
 
     assert len(blocks) == 3
@@ -28,9 +27,9 @@ def test_split_stats_blocks(header_text_te2):
 def test_parse_requested_statistic_names_human_old_vocabulary(header_text):
     """Le parseur est purement syntaxique -- il fonctionne aussi sur le
     vocabulaire ANCIEN (obsolète) de human/header.txt (HP0/HM1/HV1/HMO/
-    FP0.../AP0...), même si ces noms ne correspondent à aucune
-    statistique calculée par summary_statistics.py (incohérence connue
-    de ce header.txt, voir notes/exploration.md)."""
+    FP0.../AP0...), même si ces noms ne correspondent à aucune statistique
+    calculée par summary_statistics.py (incohérence connue de ce header.txt,
+    voir notes/exploration.md)."""
     names = parse_requested_statistic_names(header_text)
 
     assert len(names) == 112
@@ -39,8 +38,9 @@ def test_parse_requested_statistic_names_human_old_vocabulary(header_text):
 
 
 def test_parse_requested_statistic_names_modern_vocabulary(header_text_te2):
-    """Format condensé moderne (ex: toy_example5_modif ou toy_example2) : noms de
-    colonnes 'STAT_index' ou 'STAT_group_index' selon le nombre de groupes, même convention que summary_statistics.py."""
+    """Format condensé moderne (ex: toy_example5_modif ou toy_example2) : noms
+    de colonnes 'STAT_index' ou 'STAT_group_index' selon le nombre de groupes,
+    même convention que summary_statistics.py."""
     header_text = (
         "group summary statistics (9)\n"
         "group G1 (9)\n"

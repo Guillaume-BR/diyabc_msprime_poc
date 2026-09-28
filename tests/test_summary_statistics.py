@@ -1,9 +1,8 @@
-"""
-Tests des statistiques résumées SNP PoolSeq (bridge/summary_statistics.py).
+"""Tests des statistiques résumées SNP PoolSeq (bridge/summary_statistics.py).
 
 _prepare_matrices_poolseq : forme/valeurs des matrices (npop, nloci).
-compute_all_statistics_poolseq : les 130 stats sont bien présentes, avec au
-moins une valeur vérifiée à la main (HWm_1/HWv_1) pour attraper une
+compute_all_statistics_poolseq : les 130 stats sont bien présentes, avec
+au moins une valeur vérifiée à la main (HWm_1/HWv_1) pour attraper une
 régression de formule, pas juste un problème de branchement.
 """
 
@@ -86,8 +85,8 @@ def test_prepare_matrices_poolseq():
 
 
 def test_compute_all_statistics_poolseq():
-    """Vérifie que compute_all_statistics_poolseq renvoie bien un dictionnaire de statistiques
-    pour les fichiers POOLSEQ toy_example4 et toy_example5."""
+    """Vérifie que compute_all_statistics_poolseq renvoie bien un dictionnaire
+    de statistiques pour les fichiers POOLSEQ toy_example4 et toy_example5."""
     # Préparer des données fictives pour le test
     reads_per_locus = [
         {"POP1": (0, 93), "POP2": (0, 100), "POP3": (1, 116), "POP4": (0, 139)},
@@ -116,12 +115,12 @@ def test_compute_all_statistics_poolseq():
 
 
 def test_genotype_matrix_by_population(dna_context_te2):
-    """Vérifie _genotype_matrix_by_population sur un locus <A> (diploïde)
-    et un locus <M> (haploïde) du même dataset : la forme retournée doit
-    respecter le nombre de sites/samples réels de la TreeSequence, sans
-    perte ni doublon de sample entre populations, et le nombre de samples
-    par population doit refléter la ploïdie du locus (rapport 2:1 entre
-    <A> et <M> -- couvre le bug de ploïdie corrigé le 2026-08-24 dans
+    """Vérifie _genotype_matrix_by_population sur un locus <A> (diploïde) et un
+    locus <M> (haploïde) du même dataset : la forme retournée doit respecter le
+    nombre de sites/samples réels de la TreeSequence, sans perte ni doublon de
+    sample entre populations, et le nombre de samples par population doit
+    refléter la ploïdie du locus (rapport 2:1 entre <A> et <M> -- couvre le bug
+    de ploïdie corrigé le 2026-08-24 dans
     dna_ancestry_parameters_for_heritage)."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
@@ -184,13 +183,15 @@ def test_genotype_matrix_by_population_with_same_layout(dna_context_te2):
 
 
 def _mutated_two_population_ts(seed=3):
-    """TreeSequence mutée minimale : deux populations de 10 individus diploïdes.
+    """TreeSequence mutée minimale : deux populations de 10 individus
+    diploïdes.
 
-    Bien moins coûteuse qu'un `dna_mutation_simulation_per_locus` complet
-    (qui simule les 10 loci du header) quand le test n'a besoin que d'UNE
-    TreeSequence. La population ancestrale est indispensable : sans elle,
-    les lignées des deux populations ne peuvent jamais coalescer et
-    msprime lève `Infinite waiting time until next simulation event`.
+    Bien moins coûteuse qu'un `dna_mutation_simulation_per_locus`
+    complet (qui simule les 10 loci du header) quand le test n'a besoin
+    que d'UNE TreeSequence. La population ancestrale est indispensable :
+    sans elle, les lignées des deux populations ne peuvent jamais
+    coalescer et msprime lève `Infinite waiting time until next
+    simulation event`.
     """
     demography = msprime.Demography()
     for name in ("pop1", "pop2", "anc"):
@@ -211,12 +212,12 @@ def _mutated_two_population_ts(seed=3):
 def test_genotype_matrix_by_population_with_different_layout():
     """Un layout qui change le REGROUPEMENT, pas seulement l'ordre des clés.
 
-    Chaque population est coupée en deux : la sortie doit contenir quatre
-    groupes de taille moitié, ce que le découpage par population ne peut
-    structurellement pas produire. Une helper qui ignorerait son paramètre
-    `layout` échouerait dès le nombre de clés -- contrairement à un layout
-    simplement réordonné, qui laisse l'association nom -> noeuds intacte et
-    ne discrimine donc presque rien.
+    Chaque population est coupée en deux : la sortie doit contenir
+    quatre groupes de taille moitié, ce que le découpage par population
+    ne peut structurellement pas produire. Une helper qui ignorerait son
+    paramètre `layout` échouerait dès le nombre de clés -- contrairement
+    à un layout simplement réordonné, qui laisse l'association nom ->
+    noeuds intacte et ne discrimine donc presque rien.
 
     C'est la forme exacte du cas sériel, où plusieurs échantillons
     partagent une seule population msprime.
@@ -255,10 +256,10 @@ def test_genotype_matrix_by_population_with_different_layout():
 
 
 def test_mean_segregating_sites_per_group(dna_context_te2):
-    """Vérifie compute_NSS séparément sur G2 (<A>) et
-    G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes mélangés,
-    puisque chaque `group Gx` du header calcule son propre NSS_i à partir
-    de ses seuls loci."""
+    """Vérifie compute_NSS séparément sur G2 (<A>) et G3 (<M>) de
+    toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque chaque
+    `group Gx` du header calcule son propre NSS_i à partir de ses seuls
+    loci."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -294,10 +295,9 @@ def test_mean_segregating_sites_per_group_empty_defaults_to_zero():
 
 
 def test_mean_distinct_haplotypes_per_group(dna_context_te2):
-    """Vérifie compute_NHA séparément sur G2 (<A>) et
-    G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes mélangés,
-    puisque chaque `group Gx` du header calcule son propre NH_i à partir
-    de ses seuls loci."""
+    """Vérifie compute_NHA séparément sur G2 (<A>) et G3 (<M>) de
+    toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque chaque
+    `group Gx` du header calcule son propre NH_i à partir de ses seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -333,10 +333,10 @@ def test_mean_distinct_haplotypes_per_group_empty_defaults_to_zero():
 
 
 def test_mean_pairwise_differences_per_group(dna_context_te2):
-    """Vérifie compute_MPD séparément sur G2 (<A>) et
-    G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes mélangés,
-    puisque chaque `group Gx` du header calcule son propre VPD_i à partir
-    de ses seuls loci."""
+    """Vérifie compute_MPD séparément sur G2 (<A>) et G3 (<M>) de
+    toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque chaque
+    `group Gx` du header calcule son propre VPD_i à partir de ses seuls
+    loci."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -378,10 +378,10 @@ def test_mean_pairwise_differences_per_group_empty_defaults_to_zero():
 
 
 def test_variance_pairwise_differences_per_group(dna_context_te2):
-    """Vérifie compute_VPD séparément sur G2 (<A>) et
-    G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes mélangés,
-    puisque chaque `group Gx` du header calcule son propre VPD_i à partir
-    de ses seuls loci."""
+    """Vérifie compute_VPD séparément sur G2 (<A>) et G3 (<M>) de
+    toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque chaque
+    `group Gx` du header calcule son propre VPD_i à partir de ses seuls
+    loci."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -423,10 +423,10 @@ def test_variance_pairwise_differences_per_group_empty_defaults_to_zero():
 
 
 def test_mean_tajima_d_per_group(dna_context_te2):
-    """Vérifie compute_DTA séparément sur G2 (<A>) et G3 (<M>)
-    de toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque
-    chaque `group Gx` du header calcule son propre DTA_i à partir de ses
-    seuls loci."""
+    """Vérifie compute_DTA séparément sur G2 (<A>) et G3 (<M>) de
+    toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque chaque
+    `group Gx` du header calcule son propre DTA_i à partir de ses seuls
+    loci."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -468,10 +468,10 @@ def test_mean_tajima_d_per_group_empty_defaults_to_zero():
 
 
 def test_mean_private_segregating_sites_per_group(dna_context_te2):
-    """Vérifie compute_PSS séparément sur G2
-    (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
-    mélangés, puisque chaque `group Gx` du header calcule son propre
-    PSS_i à partir de ses seuls loci."""
+    """Vérifie compute_PSS séparément sur G2 (<A>) et G3 (<M>) de
+    toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque chaque
+    `group Gx` du header calcule son propre PSS_i à partir de ses seuls
+    loci."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -496,9 +496,9 @@ def test_mean_private_segregating_sites_per_group(dna_context_te2):
 
 
 def test_mean_private_segregating_sites_per_group_empty_defaults_to_zero():
-    """Une liste de loci vide ne doit pas faire disparaître de population
-    du résultat ni lever d'exception -- chaque population attendue garde
-    une valeur (0.0)."""
+    """Une liste de loci vide ne doit pas faire disparaître de population du
+    résultat ni lever d'exception -- chaque population attendue garde une
+    valeur (0.0)."""
     population_names = ["pop1", "pop2"]
     assert compute_PSS([], population_names) == {
         "pop1": 0.0,
@@ -507,10 +507,10 @@ def test_mean_private_segregating_sites_per_group_empty_defaults_to_zero():
 
 
 def test_mean_minor_allele_count_per_group(dna_context_te2):
-    """Vérifie compute_MNS séparément sur G2 (<A>)
-    et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
-    mélangés, puisque chaque `group Gx` du header calcule son propre
-    MNS_i à partir de ses seuls loci."""
+    """Vérifie compute_MNS séparément sur G2 (<A>) et G3 (<M>) de
+    toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque chaque
+    `group Gx` du header calcule son propre MNS_i à partir de ses seuls
+    loci."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -541,9 +541,9 @@ def test_mean_minor_allele_count_per_group(dna_context_te2):
 
 
 def test_mean_minor_allele_count_per_group_empty_defaults_to_zero():
-    """Une liste de loci vide ne doit pas faire disparaître de population
-    du résultat ni lever d'exception -- chaque population attendue garde
-    une valeur (0.0)."""
+    """Une liste de loci vide ne doit pas faire disparaître de population du
+    résultat ni lever d'exception -- chaque population attendue garde une
+    valeur (0.0)."""
     population_names = ["pop1", "pop2"]
     assert compute_MNS([], population_names) == {
         "pop1": 0.0,
@@ -552,10 +552,10 @@ def test_mean_minor_allele_count_per_group_empty_defaults_to_zero():
 
 
 def test_variance_minor_allele_count_per_group(dna_context_te2):
-    """Vérifie compute_VNS séparément sur G2
-    (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
-    mélangés, puisque chaque `group Gx` du header calcule son propre
-    VNS_i à partir de ses seuls loci."""
+    """Vérifie compute_VNS séparément sur G2 (<A>) et G3 (<M>) de
+    toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque chaque
+    `group Gx` du header calcule son propre VNS_i à partir de ses seuls
+    loci."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -586,9 +586,9 @@ def test_variance_minor_allele_count_per_group(dna_context_te2):
 
 
 def test_variance_minor_allele_count_per_group_empty_defaults_to_zero():
-    """Une liste de loci vide ne doit pas faire disparaître de population
-    du résultat ni lever d'exception -- chaque population attendue garde
-    une valeur (0.0)."""
+    """Une liste de loci vide ne doit pas faire disparaître de population du
+    résultat ni lever d'exception -- chaque population attendue garde une
+    valeur (0.0)."""
     population_names = ["pop1", "pop2"]
     assert compute_VNS([], population_names) == {
         "pop1": 0.0,
@@ -597,10 +597,9 @@ def test_variance_minor_allele_count_per_group_empty_defaults_to_zero():
 
 
 def test_mean_distinct_haplotypes_per_group_pairwize(dna_context_te2):
-    """Vérifie compute_NH2 séparément sur G2
-    (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
-    mélangés, puisque chaque `group Gx` du header calcule son propre
-    NH_i à partir de ses seuls loci."""
+    """Vérifie compute_NH2 séparément sur G2 (<A>) et G3 (<M>) de
+    toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque chaque
+    `group Gx` du header calcule son propre NH_i à partir de ses seuls loci."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -625,9 +624,9 @@ def test_mean_distinct_haplotypes_per_group_pairwize(dna_context_te2):
 
 
 def test_mean_distinct_haplotypes_per_group_pairwize_empty_defaults_to_zero():
-    """Une liste de loci vide ne doit pas faire disparaître de population
-    du résultat ni lever d'exception -- chaque population attendue garde
-    une valeur (0.0)."""
+    """Une liste de loci vide ne doit pas faire disparaître de population du
+    résultat ni lever d'exception -- chaque population attendue garde une
+    valeur (0.0)."""
     population_names = ["pop1", "pop2"]
     assert compute_NH2([], population_names) == {
         "1.2": 0.0,
@@ -635,10 +634,10 @@ def test_mean_distinct_haplotypes_per_group_pairwize_empty_defaults_to_zero():
 
 
 def test_mean_segregating_sites_per_group_pairwize(dna_context_te2):
-    """Vérifie compute_NS2 séparément sur G2
-    (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
-    mélangés, puisque chaque `group Gx` du header calcule son propre
-    NSS_i à partir de ses seuls loci."""
+    """Vérifie compute_NS2 séparément sur G2 (<A>) et G3 (<M>) de
+    toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque chaque
+    `group Gx` du header calcule son propre NSS_i à partir de ses seuls
+    loci."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -663,9 +662,9 @@ def test_mean_segregating_sites_per_group_pairwize(dna_context_te2):
 
 
 def test_mean_segregating_sites_per_group_pairwize_empty_defaults_to_zero():
-    """Une liste de loci vide ne doit pas faire disparaître de population
-    du résultat ni lever d'exception -- chaque population attendue garde
-    une valeur (0.0)."""
+    """Une liste de loci vide ne doit pas faire disparaître de population du
+    résultat ni lever d'exception -- chaque population attendue garde une
+    valeur (0.0)."""
     population_names = ["pop1", "pop2"]
     assert compute_NS2([], population_names) == {
         "1.2": 0.0,
@@ -673,10 +672,10 @@ def test_mean_segregating_sites_per_group_pairwize_empty_defaults_to_zero():
 
 
 def test_mean_pairwise_differences_per_group_pairwize(dna_context_te2):
-    """Vérifie compute_MP2 séparément sur G2
-    (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
-    mélangés, puisque chaque `group Gx` du header calcule son propre
-    VPD_i à partir de ses seuls loci."""
+    """Vérifie compute_MP2 séparément sur G2 (<A>) et G3 (<M>) de
+    toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque chaque
+    `group Gx` du header calcule son propre VPD_i à partir de ses seuls
+    loci."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -701,9 +700,9 @@ def test_mean_pairwise_differences_per_group_pairwize(dna_context_te2):
 
 
 def test_mean_pairwise_differences_per_group_pairwize_empty_defaults_to_zero():
-    """Une liste de loci vide ne doit pas faire disparaître de population
-    du résultat ni lever d'exception -- chaque population attendue garde
-    une valeur (0.0)."""
+    """Une liste de loci vide ne doit pas faire disparaître de population du
+    résultat ni lever d'exception -- chaque population attendue garde une
+    valeur (0.0)."""
     population_names = ["pop1", "pop2"]
     assert compute_MP2([], population_names) == {
         "1.2": 0.0,
@@ -711,10 +710,10 @@ def test_mean_pairwise_differences_per_group_pairwize_empty_defaults_to_zero():
 
 
 def test_mean_pairwise_differences_between_per_group_pairwize(dna_context_te2):
-    """Vérifie compute_MPB séparément sur G2
-    (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
-    mélangés, puisque chaque `group Gx` du header calcule son propre
-    VPD_i à partir de ses seuls loci."""
+    """Vérifie compute_MPB séparément sur G2 (<A>) et G3 (<M>) de
+    toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque chaque
+    `group Gx` du header calcule son propre VPD_i à partir de ses seuls
+    loci."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -739,9 +738,9 @@ def test_mean_pairwise_differences_between_per_group_pairwize(dna_context_te2):
 
 
 def test_mean_pairwise_differences_between_per_group_pairwize_empty_defaults_to_zero():
-    """Une liste de loci vide ne doit pas faire disparaître de population
-    du résultat ni lever d'exception -- chaque population attendue garde
-    une valeur (0.0)."""
+    """Une liste de loci vide ne doit pas faire disparaître de population du
+    résultat ni lever d'exception -- chaque population attendue garde une
+    valeur (0.0)."""
     population_names = ["pop1", "pop2"]
     assert compute_MPB([], population_names) == {
         "1.2": 0.0,
@@ -749,10 +748,10 @@ def test_mean_pairwise_differences_between_per_group_pairwize_empty_defaults_to_
 
 
 def test_mean_hst_per_group_pairwize(dna_context_te2):
-    """Vérifie compute_HST séparément sur G2
-    (<A>) et G3 (<M>) de toy_example2_ms_dna -- jamais les deux groupes
-    mélangés, puisque chaque `group Gx` du header calcule son propre
-    HST_i à partir de ses seuls loci."""
+    """Vérifie compute_HST séparément sur G2 (<A>) et G3 (<M>) de
+    toy_example2_ms_dna -- jamais les deux groupes mélangés, puisque chaque
+    `group Gx` du header calcule son propre HST_i à partir de ses seuls
+    loci."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -819,8 +818,8 @@ def test_compute_all_statistics_dna(dna_context_te2):
 def _mutated_microsat_ts(seed=3):
     """TreeSequence mutée minimale pour les helpers MICROSAT.
 
-    `sequence_length=1` : un locus microsat est UN site à grand alphabet,
-    jamais plusieurs sites indépendants.
+    `sequence_length=1` : un locus microsat est UN site à grand
+    alphabet, jamais plusieurs sites indépendants.
     """
     demography = msprime.Demography()
     for name in ("pop1", "pop2", "anc"):
@@ -850,7 +849,8 @@ def test_length_by_sample(microsat_context_te2_xy):
     population -- couvre les deux populations pour éviter de repasser
     silencieusement au bug de découpage corrigé pendant l'écriture de
     cette fonction (indexation par sample_ids plutôt que par un
-    intervalle [first_index, last_index] supposé contigu)."""
+    intervalle [first_index, last_index] supposé contigu).
+    """
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
@@ -972,7 +972,8 @@ def test_compute_NAL(microsat_context_te2_xy):
 
 
 def test_total_genes_copies_per_population(microsat_context_te2_xy):
-    """Vérifie _total_genes_copies_per_population sur toy_example2_ms_dna_xy."""
+    """Vérifie _total_genes_copies_per_population sur
+    toy_example2_ms_dna_xy."""
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
@@ -1066,7 +1067,8 @@ def test_compute_VAR_constants(microsat_context_te2_xy):
 
 
 def test_compute_VAR_for_one_population(microsat_context_te2_xy):
-    """Vérifie compute_VAR sur toy_example2_ms_dna_xy pour une seule population."""
+    """Vérifie compute_VAR sur toy_example2_ms_dna_xy pour une seule
+    population."""
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
@@ -1118,7 +1120,8 @@ def test_compute_MGW_by_locus(microsat_context_te2_xy):
 
     Locus_M_A_1_ : pop1 a des allèles présents à 203/197/193 (min=193,
     pas 197 -- 189/199/201 sont à compte 0), pop2 à 203/193/199/189
-    (min=189, max=203)."""
+    (min=189, max=203).
+    """
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
@@ -1161,7 +1164,8 @@ def test_compute_MGW(microsat_context_te2_xy):
 
 
 def test_compute_N2P_for_one_pair():
-    """Vérifie que la fonction _compute_N2P_for_one_pair fonctionne correctement."""
+    """Vérifie que la fonction _compute_N2P_for_one_pair fonctionne
+    correctement."""
     alleles_pop1 = [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)]
     alleles_pop2 = [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)]
 
@@ -1171,7 +1175,8 @@ def test_compute_N2P_for_one_pair():
 
 
 def test_compute_N2P_for_one_locus():
-    """Vérifie que la fonction _compute_N2P_for_one_locus fonctionne correctement."""
+    """Vérifie que la fonction _compute_N2P_for_one_locus fonctionne
+    correctement."""
     length_by_population = {
         "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
         "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
@@ -1206,7 +1211,8 @@ def test_compute_N2P(microsat_context_te2_xy):
 
 
 def test_pool_allele_counts_for_two_populations():
-    """Vérifie que la fonction _pool_allele_counts_for_two_populations fonctionne correctement."""
+    """Vérifie que la fonction _pool_allele_counts_for_two_populations
+    fonctionne correctement."""
     alleles_pop1 = [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)]
     alleles_pop2 = [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)]
 
@@ -1224,7 +1230,8 @@ def test_pool_allele_counts_for_two_populations():
 
 
 def test_compute_H2P_for_one_pair():
-    """Vérifie que la fonction _compute_H2P_for_one_pair fonctionne correctement."""
+    """Vérifie que la fonction _compute_H2P_for_one_pair fonctionne
+    correctement."""
     _length_by_sample = {
         "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
         "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
@@ -1337,7 +1344,8 @@ def test_compute_V2P(microsat_context_te2_xy):
 
 
 def test_compute_identical_pair_for_one_pair():
-    """Vérifie que la fonction _compute_identical_pair_for_one_pair fonctionne correctement."""
+    """Vérifie que la fonction _compute_identical_pair_for_one_pair fonctionne
+    correctement."""
     _length_by_sample = {
         "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
         "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
@@ -1374,7 +1382,8 @@ def test_compute_DAS(microsat_context_te2_xy):
 
 
 def test_compute_DM2_for_one_locus():
-    """Vérifie que la fonction _compute_DM2_for_one_locus fonctionne correctement."""
+    """Vérifie que la fonction _compute_DM2_for_one_locus fonctionne
+    correctement."""
     # test sur un locus où les deux populations sont présentes
     length_by_population = {
         "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
@@ -1452,14 +1461,16 @@ def test_compute_DM2(microsat_context_te2_xy):
 
 # test relatifs à la stat FST
 def test_length_by_sample_and_individuals(microsat_context_te2_xy):
-    """Vérifie _length_by_sample_and_individuals sur un locus microsat (Locus_M_A_1_).
+    """Vérifie _length_by_sample_and_individuals sur un locus microsat
+    (Locus_M_A_1_).
 
     Convertit les codes de génotype en tailles réelles (pb) via
     variant.alleles, puis compte les copies de gène par taille et par
     population -- couvre les deux populations pour éviter de repasser
     silencieusement au bug de découpage corrigé pendant l'écriture de
     cette fonction (indexation par sample_ids plutôt que par un
-    intervalle [first_index, last_index] supposé contigu)."""
+    intervalle [first_index, last_index] supposé contigu).
+    """
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
@@ -1540,7 +1551,8 @@ def test_length_by_pop_and_individuals_with_different_layout():
 
 
 def test_compute_ni_nA_AA_for_one_population():
-    """Vérifie que la fonction _compute_ni_nA_AA_for_one_population fonctionne correctement."""
+    """Vérifie que la fonction _compute_ni_nA_AA_for_one_population fonctionne
+    correctement."""
     alleles_per_individual = [
         np.int64([203, 203]),
         np.int64([203, 203]),
@@ -1577,10 +1589,9 @@ def test_compute_FST_constants_for_two_populations_combined():
 
 
 def test_compute_FST_constants_on_all_alleles_for_two_populations():
-    """
-    Vérifie que la fonction _compute_constants_on_all_alleles_for_two_populations
-    fonctionne correctement.
-    """
+    """Vérifie que la fonction
+    _compute_constants_on_all_alleles_for_two_populations fonctionne
+    correctement."""
     _length_by_sample = {
         "pop1": [(203, 203), (203, 203), (203, 193), (203, 203)],
         "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
@@ -1741,10 +1752,8 @@ def test_genotypes_by_pop_and_individuals_with_different_layout():
 
 
 def test_compute_num_den_lik_for_one_individual():
-    """
-    Vérifie que la fonction _compute_num_den_lik_for_one_individual fonctionne
-    correctement.
-    """
+    """Vérifie que la fonction _compute_num_den_lik_for_one_individual
+    fonctionne correctement."""
     count = {203: 1, 200: 1, 197: 1}
     total_count = 3
     b = 1

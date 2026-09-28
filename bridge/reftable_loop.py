@@ -1,13 +1,12 @@
-"""
-Boucle d'itération produisant les nrec "particules" (lignes) d'un futur
-reftable.bin : pour chaque particule, un tirage de scénario et de
-paramètres distinct, et une simulation msprime complète (calcul des
-statistiques résumées via compute_summary_statistics, 100% Python --
-plus de subprocess ni de fichier intermédiaire sur disque).
+"""Boucle d'itération produisant les nrec "particules" (lignes) d'un futur
+reftable.bin : pour chaque particule, un tirage de scénario et de paramètres
+distinct, et une simulation msprime complète (calcul des statistiques résumées
+via compute_summary_statistics, 100% Python -- plus de subprocess ni de fichier
+intermédiaire sur disque).
 
 Parallélisé via ProcessPoolExecutor : chaque particule est indépendante
-des autres (son propre tirage, sa propre simulation), donc embarrassingly
-parallel.
+des autres (son propre tirage, sa propre simulation), donc
+embarrassingly parallel.
 """
 
 import os
@@ -627,7 +626,8 @@ def rewrite_real_reftable_txt(
     priors: list,
     scenarios: list[Scenario],
 ) -> None:
-    """Réécrit un reftable RÉEL de DIYABC en un texte à colonnes de largeur FIXE.
+    """Réécrit un reftable RÉEL de DIYABC en un texte à colonnes de largeur
+    FIXE.
 
     Ex: first_records_of_the_reference_table_0.txt. Remplace les cases
     vides de DIYABC (paramètre non utilisé par le scénario de la ligne,
@@ -900,7 +900,8 @@ def replay_reftable_simulation(
     stats_filter: str = "ALL",
     max_workers: int | None = None,
 ) -> list[ParticleResult]:
-    """Rejoue, particule par particule, les tirages de paramètres RÉELLEMENT effectués par DIYABC.
+    """Rejoue, particule par particule, les tirages de paramètres RÉELLEMENT
+    effectués par DIYABC.
 
     Lit un reftable existant (ex:
     first_records_of_the_reference_table_0.txt) -- au lieu d'en tirer de
@@ -1132,7 +1133,8 @@ def run_reftable_simulation_dna(
 
 
 def group_prior_column_names(header_text: str) -> list[str]:
-    """Liste ordonnée des noms de colonnes "priors de groupe" d'un vrai reftable DIYABC.
+    """Liste ordonnée des noms de colonnes "priors de groupe" d'un vrai
+    reftable DIYABC.
 
     Ex: `µseq_2`, `k1seq_2`, juste après les paramètres historiques et
     avant les colonnes de statistiques sur chaque ligne -- vérifiée
@@ -1189,7 +1191,8 @@ def group_prior_column_names(header_text: str) -> list[str]:
 def parse_real_reftable_params_with_group_priors(
     path: str | Path, priors: list, scenarios: list[Scenario], group_priors_names: list
 ) -> list[tuple[int, dict[str, float], dict[str, float]]]:
-    """Variante de parse_real_reftable_params qui lit AUSSI les priors de groupe.
+    """Variante de parse_real_reftable_params qui lit AUSSI les priors de
+    groupe.
 
     Colonnes `µseq_2`, `k1seq_2`... d'un vrai reftable DIYABC -- une
     fonction séparée plutôt qu'une extension en place, pour ne rien
@@ -1314,7 +1317,8 @@ def replay_reftable_simulation_dna(
     stats_filter: str = "ALL",
     max_workers: int | None = None,
 ) -> list[ParticleResult]:
-    """Rejoue, particule par particule, les tirages RÉELS de DIYABC (équivalent ADN de replay_reftable_simulation).
+    """Rejoue, particule par particule, les tirages RÉELS de DIYABC (équivalent
+    ADN de replay_reftable_simulation).
 
     Lit un reftable réel existant (scénario, paramètres historiques ET
     priors de groupe RÉELLEMENT tirés par DIYABC) et rejoue chaque
@@ -1592,7 +1596,8 @@ def replay_reftable_simulation_microsat(
     stats_filter: str = "ALL",
     max_workers: int | None = None,
 ) -> list[ParticleResult]:
-    """Rejoue, particule par particule, les tirages RÉELS de DIYABC (équivalent microsat de replay_reftable_simulation).
+    """Rejoue, particule par particule, les tirages RÉELS de DIYABC (équivalent
+    microsat de replay_reftable_simulation).
 
     Lit un reftable réel existant (scénario, paramètres historiques ET
     priors de groupe RÉELLEMENT tirés par DIYABC) et rejoue chaque

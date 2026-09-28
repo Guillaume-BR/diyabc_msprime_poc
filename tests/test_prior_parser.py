@@ -1,5 +1,5 @@
-"""Vérifie prior_parser : extraction des priors et contraintes d'ordre
-depuis header.txt, et la règle de filtrage des priors quasi-constants."""
+"""Vérifie prior_parser : extraction des priors et contraintes d'ordre depuis
+header.txt, et la règle de filtrage des priors quasi-constants."""
 
 import pytest
 
@@ -91,9 +91,8 @@ def test_is_constant_prior():
 
 
 def test_get_parameter_used_by_model(header_text_te2):
-    """Vérifie que la fonction get_parameter_used_by_model retourne bien
-    le bon tuple de booléen pour le nom de modèle donné.
-    """
+    """Vérifie que la fonction get_parameter_used_by_model retourne bien le bon
+    tuple de booléen pour le nom de modèle donné."""
     group_priors = parse_group_priors(header_text_te2)
     last_prior = group_priors["G3"][-1]
     assert get_parameter_used_by_model(last_prior) == (True, False)

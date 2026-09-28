@@ -1,6 +1,6 @@
-"""Vérifie reftable_loop : boucle multi-particules, tirage pondéré de
-scénario par particule, écriture reftable.bin (binaire DIYABC) et
-reftable.txt (lisible, pour diff direct avec un vrai run DIYABC)."""
+"""Vérifie reftable_loop : boucle multi-particules, tirage pondéré de scénario
+par particule, écriture reftable.bin (binaire DIYABC) et reftable.txt (lisible,
+pour diff direct avec un vrai run DIYABC)."""
 
 import shutil
 import struct
@@ -33,12 +33,11 @@ from bridge.scenario_parser import is_serial_scenario, parse_header_scenarios
 
 
 def test_simulate_from_directory(tmp_path, snp_context_human):
-    """Vérifie le point d'entrée pour un sous-dossier de test sous
-    reference/ : à partir d'un dossier ne contenant qu'un header.txt et
-    le .snp observé, doit tirer les scénarios pondérés et écrire
-    reftable_msprime.txt DANS CE MÊME DOSSIER (jamais 'reftable.txt',
-    pour ne pas être confondu avec le first_records_of_the_reference_
-    table_0.txt d'un vrai run DIYABC)."""
+    """Vérifie le point d'entrée pour un sous-dossier de test sous reference/ :
+    à partir d'un dossier ne contenant qu'un header.txt et le .snp observé,
+    doit tirer les scénarios pondérés et écrire reftable_msprime.txt DANS CE
+    MÊME DOSSIER (jamais 'reftable.txt', pour ne pas être confondu avec le
+    first_records_of_the_reference_ table_0.txt d'un vrai run DIYABC)."""
     shutil.copy(REFERENCE_DIR / "human" / "header.txt", tmp_path / "header.txt")
     (tmp_path / OBSERVED_SNP_FILE_HUMAN.name).symlink_to(OBSERVED_SNP_FILE_HUMAN)
 
@@ -60,9 +59,12 @@ def test_simulate_from_directory(tmp_path, snp_context_human):
 def test_run_reftable_simulation_scenario1(header_text):
     """Vérifie que run_reftable_simulation produit bien nrec particules
     distinctes (tirages de paramètres différents), chacune avec ses 130
-    statistiques résumées calculées. Un seul scénario candidat ([scenario1])
+    statistiques résumées calculées.
+
+    Un seul scénario candidat ([scenario1])
     force toutes les particules dessus, isolant ce test du tirage pondéré
-    (voir test_run_reftable_simulation_draws_multiple_scenarios pour ça)."""
+    (voir test_run_reftable_simulation_draws_multiple_scenarios pour ça).
+    """
     scenarios = parse_header_scenarios(header_text)
     scenario1 = next(s for s in scenarios if s.index == 1)
 
@@ -227,10 +229,10 @@ def test_write_reftable_bin_multi_scenario(tmp_path, header_text):
 def test_write_reftable_txt_header_lowercase_and_real_value_for_unused_params(
     tmp_path, header_text
 ):
-    """Vérifie que l'en-tête utilise 'scenario' en minuscule (pas
-    'Scenario'), et que les paramètres non pertinents au scénario tiré
-    d'une ligne contiennent quand même leur valeur RÉELLEMENT TIRÉE --
-    JAMAIS une case vide.
+    """Vérifie que l'en-tête utilise 'scenario' en minuscule (pas 'Scenario'),
+    et que les paramètres non pertinents au scénario tiré d'une ligne
+    contiennent quand même leur valeur RÉELLEMENT TIRÉE -- JAMAIS une case
+    vide.
 
     Une case vide ne produit aucun token pour un parseur par espaces
     (ex: pandas read_csv(sep=r'\\s+'), ou un simple line.split()), ce
@@ -244,7 +246,8 @@ def test_write_reftable_txt_header_lowercase_and_real_value_for_unused_params(
     Les particules sont toutes tirées sur le scénario 1 (candidat
     unique), mais write_reftable_txt reçoit les 6 scénarios de header.txt
     comme `scenarios` -- exerce l'union des colonnes (21 params, dont
-    'ra' et t11..t44 propres aux scénarios 2-6)."""
+    'ra' et t11..t44 propres aux scénarios 2-6).
+    """
     priors, _ = parse_priors(header_text)
     all_scenarios = parse_header_scenarios(header_text)
     scenario1 = next(s for s in all_scenarios if s.index == 1)
@@ -286,9 +289,8 @@ def test_write_reftable_txt_header_lowercase_and_real_value_for_unused_params(
 
 
 def test_kept_param_names_by_scenario(header_text_te1):
-    """Vérifie que _kept_param_names_by_scenario retourne bien le même
-    nombre de noms de paramètres à garder par scénarios
-    """
+    """Vérifie que _kept_param_names_by_scenario retourne bien le même nombre
+    de noms de paramètres à garder par scénarios."""
     priors = parse_priors(header_text_te1)[0]
     scenarios = parse_header_scenarios(header_text_te1)
     result = _kept_param_names_by_scenario(priors, scenarios)
@@ -297,10 +299,9 @@ def test_kept_param_names_by_scenario(header_text_te1):
 
 
 def test_historical_columns_order(microsat_context_te1_modified):
-    """Vérifie que _historical_columns_order retourne bien l'ordre des
-    colonnes historiques tel qu'il est dans l'en-tête du reftable.txt
-    (et non pas l'ordre de déclaration dans le header.txt).
-    """
+    """Vérifie que _historical_columns_order retourne bien l'ordre des colonnes
+    historiques tel qu'il est dans l'en-tête du reftable.txt (et non pas
+    l'ordre de déclaration dans le header.txt)."""
     header_line = "scenario N1 N2 N3 N4 ra t32 t21 t421 t41 mumic_1 pmic_1 snimic_1"
     header_text_te1 = microsat_context_te1_modified.header_text
     priors = parse_priors(header_text_te1)[0]
@@ -401,10 +402,12 @@ def test_parse_real_reftable_params_with_group_priors(header_text_te2):
 def test_run_reftable_simulation_dna_scenario1(header_text_te2):
     """Vérifie que run_reftable_simulation produit bien nrec particules
     distinctes (tirages de paramètres différents), chacune avec ses 42
-    statistiques résumées calculées. Un seul scénario candidat ([scenario1])
-    force toutes les particules dessus, isolant ce test du tirage pondéré
-    (voir test_run_reftable_simulation_draws_multiple_scenarios pour ça)."""
+    statistiques résumées calculées.
 
+    Un seul scénario candidat ([scenario1])
+    force toutes les particules dessus, isolant ce test du tirage pondéré
+    (voir test_run_reftable_simulation_draws_multiple_scenarios pour ça).
+    """
     scenarios = parse_header_scenarios(header_text_te2)
     scenario1 = next(s for s in scenarios if s.index == 1)
 
@@ -462,10 +465,13 @@ def test_run_reftable_simulation_dna_draws_multiple_scenarios(header_text_te2):
 
 def test_is_serial_scenario_distingue_seriel_et_non_seriel():
     """human_seriel échantillonne 4 fois la population 1, toy_example5 une
-    seule fois chacune de ses 3 populations. Le critère porte sur les
-    événements `sample` seuls : toy_example2_ms_dna déclare 5 populations
-    pour 2 échantillons et n'est pourtant PAS sériel -- c'est précisément
-    le cas qu'une comparaison à `npop` classerait à tort."""
+    seule fois chacune de ses 3 populations.
+
+    Le critère porte sur les événements `sample` seuls :
+    toy_example2_ms_dna déclare 5 populations pour 2 échantillons et
+    n'est pourtant PAS sériel -- c'est précisément le cas qu'une
+    comparaison à `npop` classerait à tort.
+    """
     seriel = parse_header_scenarios(
         (REFERENCE_DIR / "human_seriel" / "headerRF.txt").read_text()
     )
@@ -489,10 +495,13 @@ def test_raise_if_serial_with_sex_linked_loci_laisse_passer_les_datasets_valides
     dataset,
 ):
     """Aucun dataset de reference/ ne doit être refusé : les jeux sériels
-    (human_seriel, toy_example4_seriel, toy_example1_ms) sont <A>/<M>, et
-    les jeux portant des <X>/<Y> (toy_example5) ne sont pas sériels. La
-    garde ne doit donc jamais se déclencher sur l'existant -- c'est ce qui
-    rend son ajout prouvablement neutre sur tout ce qui est validé."""
+    (human_seriel, toy_example4_seriel, toy_example1_ms) sont <A>/<M>, et les
+    jeux portant des <X>/<Y> (toy_example5) ne sont pas sériels.
+
+    La garde ne doit donc jamais se déclencher sur l'existant -- c'est
+    ce qui rend son ajout prouvablement neutre sur tout ce qui est
+    validé.
+    """
     header_text = (REFERENCE_DIR / dataset / "headerRF.txt").read_text()
 
     raise_if_serial_with_sex_linked_loci(header_text)
@@ -500,10 +509,9 @@ def test_raise_if_serial_with_sex_linked_loci_laisse_passer_les_datasets_valides
 
 def test_raise_if_serial_with_sex_linked_loci_leve_sur_la_combinaison():
     """Sur toy_example5 (qui porte des <X> et des <Y>) rendu sériel en
-    dupliquant un événement `sample` -- le compteur de lignes du bloc
-    `scenario N [w] (nlines)` doit être incrémenté en même temps, sinon
-    split_scenario_blocks tronque le bloc et l'événement ajouté est
-    ignoré."""
+    dupliquant un événement `sample` -- le compteur de lignes du bloc `scenario
+    N [w] (nlines)` doit être incrémenté en même temps, sinon
+    split_scenario_blocks tronque le bloc et l'événement ajouté est ignoré."""
     header_text = (REFERENCE_DIR / "toy_example5" / "headerRF.txt").read_text()
     serial_header = header_text.replace(
         "scenario 1 [0.33333] (6)", "scenario 1 [0.33333] (7)"
@@ -515,9 +523,11 @@ def test_raise_if_serial_with_sex_linked_loci_leve_sur_la_combinaison():
 
 
 def test_raise_if_serial_with_sex_linked_loci_ignore_le_seriel_sans_xy():
-    """Contrôle symétrique : la même mutation appliquée à un header sans
-    locus lié au sexe (toy_example4_seriel, <A> seul) ne lève pas. La
-    garde refuse une COMBINAISON, pas le sériel en soi."""
+    """Contrôle symétrique : la même mutation appliquée à un header sans locus
+    lié au sexe (toy_example4_seriel, <A> seul) ne lève pas.
+
+    La garde refuse une COMBINAISON, pas le sériel en soi.
+    """
     header_text = (REFERENCE_DIR / "human_seriel" / "headerRF.txt").read_text()
 
     raise_if_serial_with_sex_linked_loci(header_text)

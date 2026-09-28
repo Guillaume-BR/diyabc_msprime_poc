@@ -5,8 +5,8 @@ from bridge.loci_parser import parse_loci_description
 
 
 def test_parse_loci_description(header_text):
-    """Vérifie le parsing de la section 'loci description' de human,
-    format condensé à un seul type d'héritage."""
+    """Vérifie le parsing de la section 'loci description' de human, format
+    condensé à un seul type d'héritage."""
     description = parse_loci_description(header_text)
 
     assert description.loci_counts_by_heritage == {"A": 5000}

@@ -1,6 +1,6 @@
-"""Vérifie pipeline : orchestration de bout en bout (header.txt ->
-Demography, point d'entrée -p ./, calcul des statistiques résumées avec
-filtrage ALL/HEADER)."""
+"""Vérifie pipeline : orchestration de bout en bout (header.txt -> Demography,
+point d'entrée -p ./, calcul des statistiques résumées avec filtrage
+ALL/HEADER)."""
 
 import msprime
 import pytest
@@ -22,10 +22,9 @@ from bridge.pipeline import (
 
 
 def test_pipeline_scenario1(header_text):
-    """Vérifie que le pipeline complet (header.txt -> Demography) fonctionne
-    de bout en bout sur le scénario 1, et que la démographie produite a la
+    """Vérifie que le pipeline complet (header.txt -> Demography) fonctionne de
+    bout en bout sur le scénario 1, et que la démographie produite a la
     structure attendue (4 populations, 3 fusions)."""
-
     demography, values = build_random_demography_for_scenario_index(
         header_text, scenario_index=1, seed=42
     )
@@ -45,10 +44,10 @@ def test_pipeline_scenario1(header_text):
 
 
 def test_simulate_particle_genotypes(snp_context_human):
-    """Vérifie le point d'entrée de haut niveau : à partir d'un simple
-    chemin de dossier (comme le -p ./ de DIYABC), tout le pipeline doit
-    fonctionner sans qu'on ait à lire manuellement header.txt ou le
-    fichier .snp nous-mêmes."""
+    """Vérifie le point d'entrée de haut niveau : à partir d'un simple chemin
+    de dossier (comme le -p ./ de DIYABC), tout le pipeline doit fonctionner
+    sans qu'on ait à lire manuellement header.txt ou le fichier .snp nous-
+    mêmes."""
     mutated, values = simulate_particle_genotypes(
         snp_context_human,
         scenario_index=1,
@@ -62,12 +61,15 @@ def test_simulate_particle_genotypes(snp_context_human):
 
 
 def test_simulate_particle_genotypes_multi_type(snp_context_te5):
-    """Vérifie que simulate_particle_genotypes boucle bien sur TOUS les types de
-    locus déclarés dans 'loci description', pas seulement <A> --
-    toy_example5 (contrairement à human, <A>-only) déclare 4 types
-    (A/X/Y/M, voir reference/toy_example5/headerRF.txt) : num_loci est un
-    compte PAR TYPE (voir pipeline._simulate_genotypes_for_all_locus_types),
-    donc on attend num_loci * 4 génotypes au total, pas juste num_loci."""
+    """Vérifie que simulate_particle_genotypes boucle bien sur TOUS les types
+    de locus déclarés dans 'loci description', pas seulement <A> --
+    toy_example5 (contrairement à human, <A>-only) déclare 4 types (A/X/Y/M,
+    voir reference/toy_example5/headerRF.txt) : num_loci est un.
+
+    compte PAR TYPE (voir
+    pipeline._simulate_genotypes_for_all_locus_types), donc on attend
+    num_loci * 4 génotypes au total, pas juste num_loci.
+    """
     mutated, values = simulate_particle_genotypes(
         snp_context_te5,
         scenario_index=1,
@@ -82,9 +84,9 @@ def test_simulate_particle_genotypes_multi_type(snp_context_te5):
 
 def test_compute_summary_statistics_multi_type(snp_context_te5):
     """Vérifie que compute_summary_statistics (donc compute_all_statistics)
-    fonctionne aussi sur un dataset multi-type <A>/<X>/<Y>/<M>, pas
-    seulement <A> -- 51 statistiques attendues (vs 130 pour human) car
-    toy_example5 n'a que 3 populations, pas 4 (moins de paires/triplets)."""
+    fonctionne aussi sur un dataset multi-type <A>/<X>/<Y>/<M>, pas seulement
+    <A> -- 51 statistiques attendues (vs 130 pour human) car toy_example5 n'a
+    que 3 populations, pas 4 (moins de paires/triplets)."""
     summary_stats, values = compute_summary_statistics(
         context=snp_context_te5,
         scenario_index=1,
@@ -98,15 +100,16 @@ def test_compute_summary_statistics_multi_type(snp_context_te5):
 
 
 def test_compute_summary_statistics_poolseq_varies_with_seed(snp_context_te4):
-    """Vérifie que compute_summary_statistics simule bien pour PoolSeq
-    (branche else de la fonction) au lieu de recopier telles quelles les
-    statistiques de l'observé -- régression du bug du 2026-07-23 où
-    l'appel à simulate_poolseq_reads_with_mrc_filter avait été supprimé
-    par erreur en câblant observed_reads_per_locus, ce qui aurait rendu
-    toutes les particules PoolSeq d'un reftable identiques entre elles.
-    Deux graines différentes doivent donc tirer des paramètres différents
-    ET produire des statistiques différentes."""
+    """Vérifie que compute_summary_statistics simule bien pour PoolSeq (branche
+    else de la fonction) au lieu de recopier telles quelles les statistiques de
+    l'observé -- régression du bug du 2026-07-23 où l'appel à
+    simulate_poolseq_reads_with_mrc_filter avait été supprimé par erreur en
+    câblant observed_reads_per_locus, ce qui aurait rendu toutes les particules
+    PoolSeq d'un reftable identiques entre elles.
 
+    Deux graines différentes doivent donc tirer des paramètres
+    différents ET produire des statistiques différentes.
+    """
     stats_seed_1, values_1 = compute_summary_statistics(
         context=snp_context_te4,
         scenario_index=1,
@@ -128,9 +131,7 @@ def test_compute_summary_statistics_from_values_poolseq_varies_with_values(
     """Même régression que test_compute_summary_statistics_poolseq_varies_
     with_seed, mais côté compute_summary_statistics_from_values (l'autre
     fonction touchée par le bug du 2026-07-23) : deux jeux de paramètres
-    différents (même seed) doivent produire des statistiques
-    différentes."""
-
+    différents (même seed) doivent produire des statistiques différentes."""
     _, values_1 = build_random_demography_for_scenario_index(
         snp_context_te4.header_text, scenario_index=1, seed=1
     )
@@ -156,9 +157,9 @@ def test_compute_summary_statistics_from_values_poolseq_varies_with_values(
 
 
 def test_read_header_text_prefers_header_txt(tmp_path):
-    """Si les deux fichiers sont présents, header.txt doit être lu en
-    priorité (config initiale fournie par l'utilisateur), pas
-    headerRF.txt (variante produite par un run DIYABC réel)."""
+    """Si les deux fichiers sont présents, header.txt doit être lu en priorité
+    (config initiale fournie par l'utilisateur), pas headerRF.txt (variante
+    produite par un run DIYABC réel)."""
     (tmp_path / "header.txt").write_text("contenu header.txt")
     (tmp_path / "headerRF.txt").write_text("contenu headerRF.txt")
 
@@ -166,8 +167,8 @@ def test_read_header_text_prefers_header_txt(tmp_path):
 
 
 def test_read_header_text_falls_back_to_headerRF(tmp_path):
-    """Si seul headerRF.txt est présent (ex: reference/Exemple5/), il
-    doit être lu en repli."""
+    """Si seul headerRF.txt est présent (ex: reference/Exemple5/), il doit être
+    lu en repli."""
     (tmp_path / "headerRF.txt").write_text("contenu headerRF.txt")
 
     assert read_header_text(tmp_path) == "contenu headerRF.txt"
@@ -179,9 +180,9 @@ def test_read_header_text_falls_back_to_headerRF(tmp_path):
     "ce test nécessite le binaire 'general' compilé de DIYABC.",
 )
 def test_compute_summary_statistics_scenario1(tmp_path, snp_context_human):
-    """Vérifie que compute_summary_statistics produit bien les 112
-    statistiques résumées attendues (filtre ALL), en déléguant le calcul
-    au vrai binaire C++ sur des données simulées par notre pipeline."""
+    """Vérifie que compute_summary_statistics produit bien les 112 statistiques
+    résumées attendues (filtre ALL), en déléguant le calcul au vrai binaire C++
+    sur des données simulées par notre pipeline."""
     summary_statistics, values = compute_summary_statistics(
         context=snp_context_human,
         scenario_index=1,
@@ -223,11 +224,10 @@ def _replace_group_summary_statistics_section(
 
 
 def test_compute_summary_statistics_stats_filter_header(tmp_path, snp_context_human):
-    """stats_filter='HEADER' ne garde, dans l'ordre de déclaration, que
-    les statistiques listées dans 'group summary statistics' --
-    remplace la section obsolète de human/header.txt par un petit
-    sous-ensemble au vocabulaire moderne, pour vérifier le filtrage
-    sans dépendre d'un dataset externe."""
+    """stats_filter='HEADER' ne garde, dans l'ordre de déclaration, que les
+    statistiques listées dans 'group summary statistics' -- remplace la section
+    obsolète de human/header.txt par un petit sous-ensemble au vocabulaire
+    moderne, pour vérifier le filtrage sans dépendre d'un dataset externe."""
     modified_header_text = _replace_group_summary_statistics_section(
         snp_context_human.header_text,
         ["group summary statistics (4)", "group G1 (4)", "ML1p 1 2", "HWm 1 2"],
@@ -263,9 +263,9 @@ def test_compute_summary_statistics_stats_filter_header(tmp_path, snp_context_hu
 def test_compute_summary_statistics_stats_filter_header_raises_on_unknown_names(
     snp_context_human,
 ):
-    """stats_filter='HEADER' sur le vrai human/header.txt (vocabulaire
-    obsolète HP0/HM1/...) doit lever une ValueError explicite plutôt que
-    de produire silencieusement un reftable vide ou incomplet."""
+    """stats_filter='HEADER' sur le vrai human/header.txt (vocabulaire obsolète
+    HP0/HM1/...) doit lever une ValueError explicite plutôt que de produire
+    silencieusement un reftable vide ou incomplet."""
     with pytest.raises(ValueError, match="non calculées"):
         compute_summary_statistics(
             context=snp_context_human,

@@ -1,5 +1,4 @@
-"""
-Point d'entrée de haut niveau du pont DIYABC -> msprime.
+"""Point d'entrée de haut niveau du pont DIYABC -> msprime.
 
 Compose les briques indépendantes déjà testées (scenario_parser,
 prior_parser, parameter_sampling, demography_builder) pour aller du texte
@@ -105,7 +104,8 @@ def _simulate_genotypes_for_all_locus_types(
     sample_sets: list[msprime.SampleSet] | None = None,
     counts_per_sample: dict[str, int] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
-    """Simule les génotypes de TOUS les types de locus déclarés dans header_text.
+    """Simule les génotypes de TOUS les types de locus déclarés dans
+    header_text.
 
     Boucle sur `parse_loci_description(header_text).loci_counts_by_heritage`
     (dict[str, int], ex: {"A": 5000} pour human, {"A": 70, "X": 10,
@@ -145,7 +145,6 @@ def _simulate_genotypes_for_all_locus_types(
         pour la justification : ne pas matérialiser 51250 TreeSequence
         en mémoire simultanément).
     """
-
     loci_counts_by_heritage = context.loci_description.loci_counts_by_heritage
 
     liste_iterateurs_par_type = []
@@ -170,7 +169,8 @@ def _simulate_genotypes_for_all_locus_types(
 def _sample_names(
     genotypes_list: list[dict[str, list[int]]], snp_path: Path
 ) -> list[str]:
-    """Noms de population ("pop1", "pop2"...), dans le même ordre que build_samples_argument.
+    """Noms de population ("pop1", "pop2"...), dans le même ordre que
+    build_samples_argument.
 
     Dérivés GRATUITEMENT des clés du premier locus déjà simulé
     (simulate_snp_genotypes construit ce dict avec exactement les mêmes
@@ -200,7 +200,8 @@ def _filter_statistics(
     header_text: str,
     stats_filter: str,
 ) -> dict[str, float]:
-    """Applique stats_filter ('ALL' ou 'HEADER') à un dict de statistiques déjà calculé.
+    """Applique stats_filter ('ALL' ou 'HEADER') à un dict de statistiques déjà
+    calculé.
 
     Factorisé entre compute_summary_statistics et
     compute_summary_statistics_from_values (même logique de filtrage,
@@ -279,7 +280,8 @@ def build_random_demography_for_scenario_index(
     scenario_index: int,
     seed: int,
 ) -> tuple[msprime.Demography, dict[str, float]]:
-    """Variante de build_random_demography qui sélectionne le scénario par son index.
+    """Variante de build_random_demography qui sélectionne le scénario par son
+    index.
 
     1-indexed, comme dans header.txt, plutôt que de demander un objet
     Scenario déjà parsé. Utile pour les tests et l'utilisation
@@ -470,7 +472,8 @@ def build_demography_for_scenario_index(
     scenario_index: int,
     values: dict[str, float],
 ) -> msprime.Demography:
-    """Variante de build_random_demography_for_scenario_index qui NE TIRE AUCUNE valeur.
+    """Variante de build_random_demography_for_scenario_index qui NE TIRE
+    AUCUNE valeur.
 
     Construit la Demography directement à partir de valeurs de
     paramètres déjà connues (ex: reprises telles quelles d'un reftable
@@ -509,7 +512,8 @@ def simulate_particle_genotypes_from_values(
     sample_sets: list[msprime.SampleSet] | None = None,
     counts_per_sample: dict[str, int] | None = None,
 ):
-    """Variante de simulate_particle_genotypes qui prend des valeurs de paramètres déjà connues.
+    """Variante de simulate_particle_genotypes qui prend des valeurs de
+    paramètres déjà connues.
 
     Au lieu d'en tirer de nouvelles -- même contrat par ailleurs
     (lecture du nom de fichier .snp sur la première ligne de header.txt,
@@ -527,7 +531,6 @@ def simulate_particle_genotypes_from_values(
         simulate_particle_genotypes, sans le dict `values` en plus puisqu'il
         est déjà connu de l'appelant).
     """
-
     header_text = context.header_text
 
     demography = build_demography_for_scenario_index(
@@ -554,7 +557,8 @@ def compute_summary_statistics_from_values(
     stats_filter: str = "ALL",
     observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
 ) -> dict[str, float]:
-    """Variante de compute_summary_statistics qui NE TIRE AUCUNE valeur de prior.
+    """Variante de compute_summary_statistics qui NE TIRE AUCUNE valeur de
+    prior.
 
     Reprend telles quelles des valeurs de paramètres déjà connues,
     typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
@@ -578,7 +582,6 @@ def compute_summary_statistics_from_values(
         Le dict summary_statistics (pas de `values` en retour,
         puisqu'il est déjà connu de l'appelant).
     """
-
     header_text = context.header_text
     snp_path = context.snp_path
 
@@ -748,9 +751,9 @@ def compute_summary_statistics_dna(
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Calcule les 13 statistiques résumées ADN (compute_all_statistics_dna)
     sur des données SIMULÉES par msprime -- équivalent ADN de
-    compute_summary_statistics (chemin IND/PoolSeq), pour les datasets
-    qui déclarent des loci séquence (`[S]`, groupes `G2`/`G3`... de
-    header.txt) plutôt que des SNP.
+    compute_summary_statistics (chemin IND/PoolSeq), pour les datasets qui
+    déclarent des loci séquence (`[S]`, groupes `G2`/`G3`... de header.txt)
+    plutôt que des SNP.
 
     Tire les paramètres historiques (N1, ta, ts...) ET les priors de
     groupe (k1/k2/mus_rate par groupe ADN, en interne à
@@ -785,7 +788,6 @@ def compute_summary_statistics_dna(
         colonne_diyabc: valeur} de compute_all_statistics_dna (ex.
         "NSS_2_1"), values est {nom_paramètre_historique: valeur}.
     """
-
     header_text = context.header_text
 
     demography, values = build_random_demography_for_scenario_index(
@@ -831,8 +833,8 @@ def compute_summary_statistics_dna_from_values(
     seed: int,
     stats_filter: str = "ALL",
 ) -> dict[str, float]:
-    """
-    Variante de compute_summary_statistics_dna qui ne tire AUCUNE valeur de prior.
+    """Variante de compute_summary_statistics_dna qui ne tire AUCUNE valeur de
+    prior.
 
     Reprend telles quelles des valeurs de paramètres déjà connues,
     typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
@@ -859,7 +861,6 @@ def compute_summary_statistics_dna_from_values(
            Le dict summary_statistics (pas de `values` en retour,
            puisqu'ils sont déjà connus de l'appelant).
     """
-
     header_text = context.header_text
 
     demography = build_demography_for_scenario_index(
@@ -908,11 +909,11 @@ def compute_summary_statistics_microsat(
     seed: int,
     stats_filter: str = "ALL",
 ) -> tuple[dict[str, float], dict[str, float]]:
-    """Calcule les statistiques résumées microsat (compute_all_statistics_microsat)
-    sur des données SIMULÉES par msprime -- équivalent microsat de
-    compute_summary_statistics (chemin IND/PoolSeq), pour les datasets
-    qui déclarent des loci microsat (`[M]`, groupes `G4`/`G5`... de
-    header.txt) plutôt que des SNP.
+    """Calcule les statistiques résumées microsat
+    (compute_all_statistics_microsat) sur des données SIMULÉES par msprime --
+    équivalent microsat de compute_summary_statistics (chemin IND/PoolSeq),
+    pour les datasets qui déclarent des loci microsat (`[M]`, groupes
+    `G4`/`G5`... de header.txt) plutôt que des SNP.
 
     Tire les paramètres historiques (N1, ta, ts...) ET les priors de
     groupe (mus_rate,Pgeom) par groupe microsat, en interne à
@@ -945,7 +946,6 @@ def compute_summary_statistics_microsat(
         colonne_diyabc: valeur} de compute_all_statistics_microsat (ex.
         "NSS_2_1"), values est {nom_paramètre_historique: valeur}.
     """
-
     header_text = context.header_text
 
     demography, values = build_random_demography_for_scenario_index(
@@ -995,7 +995,8 @@ def compute_summary_statistics_microsat_from_values(
     seed: int,
     stats_filter: str = "ALL",
 ) -> dict[str, float]:
-    """Variante de compute_summary_statistics_microsat qui ne tire AUCUNE valeur de prior.
+    """Variante de compute_summary_statistics_microsat qui ne tire AUCUNE
+    valeur de prior.
 
     Reprend telles quelles des valeurs de paramètres déjà connues,
     typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
@@ -1024,7 +1025,6 @@ def compute_summary_statistics_microsat_from_values(
         Le dict summary_statistics (pas de `values` en retour,
         puisqu'ils sont déjà connus de l'appelant).
     """
-
     demography = build_demography_for_scenario_index(
         context.header_text, scenario_index, values
     )

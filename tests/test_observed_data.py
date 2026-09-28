@@ -1,7 +1,7 @@
-"""Vérifie observed_data : comptage d'individus par population, mapping
-indice-de-scénario -> nom réel de population, sex-ratio et sexe par
-individu (ces deux derniers nécessaires pour les futurs loci <X>/<Y>/<M>,
-voir notes/exploration.md)."""
+"""Vérifie observed_data : comptage d'individus par population, mapping indice-
+de-scénario -> nom réel de population, sex-ratio et sexe par individu (ces deux
+derniers nécessaires pour les futurs loci <X>/<Y>/<M>, voir
+notes/exploration.md)."""
 
 import pytest
 from conftest import (
@@ -35,15 +35,16 @@ from bridge.observed_data import (
 
 
 def test_detect_snp_file_type():
-    """Vérifie que le type de fichier .snp : INDSEQ (individus par ligne) ou POOLSEQ (pools par ligne)
-    est correctement détecté pour les fichiers de référence human et toy_example4."""
+    """Vérifie que le type de fichier .snp : INDSEQ (individus par ligne) ou
+    POOLSEQ (pools par ligne) est correctement détecté pour les fichiers de
+    référence human et toy_example4."""
     assert detect_snp_file_type(OBSERVED_SNP_FILE_HUMAN) == "IND"
     assert detect_snp_file_type(OBSERVED_SNP_FILE_TE4) == "POOL"
 
 
 def test_count_individuals_per_sample():
-    """Vérifie que le comptage retrouve bien les 4 populations à 30
-    individus chacune, annoncées en commentaire dans le fichier."""
+    """Vérifie que le comptage retrouve bien les 4 populations à 30 individus
+    chacune, annoncées en commentaire dans le fichier."""
     counts_human = count_individuals_per_sample(OBSERVED_SNP_FILE_HUMAN)
     counts_te4 = count_individuals_per_sample(OBSERVED_SNP_FILE_TE4)
 
@@ -61,7 +62,8 @@ def test_sample_index_to_name():
 
 
 def test_parse_sex_ratio():
-    """Vérifie que le parsing du fichier snp renvoie bien la bonne proportion"""
+    """Vérifie que le parsing du fichier snp renvoie bien la bonne
+    proportion."""
     sex_ratio_human = parse_sex_ratio(OBSERVED_SNP_FILE_HUMAN)
     sex_ratio_te5 = parse_sex_ratio(OBSERVED_SNP_FILE_TE5)
     assert sex_ratio_human == 0.5
@@ -69,7 +71,8 @@ def test_parse_sex_ratio():
 
 
 def test_parse_maf_ratio():
-    """Vérifie que le parsing du fichier snp renvoie bien la bonne proportion"""
+    """Vérifie que le parsing du fichier snp renvoie bien la bonne
+    proportion."""
     maf_ratio_human = parse_maf_ratio(OBSERVED_SNP_FILE_HUMAN)
     maf_ratio_te5 = parse_maf_ratio(OBSERVED_SNP_FILE_TE5)
     maf_ratio_te3 = parse_maf_ratio(OBSERVED_SNP_FILE_TE3)
@@ -79,7 +82,8 @@ def test_parse_maf_ratio():
 
 
 def test_parse_mrc_ratio():
-    """Vérifie que le parsing du fichier snp renvoie bien la bonne proportion"""
+    """Vérifie que le parsing du fichier snp renvoie bien la bonne
+    proportion."""
     mrc_ratio_human = parse_mrc_ratio(OBSERVED_SNP_FILE_HUMAN)
     mrc_ratio_te5 = parse_mrc_ratio(OBSERVED_SNP_FILE_TE5)
     mrc_ratio_te3 = parse_mrc_ratio(OBSERVED_SNP_FILE_TE3)
@@ -119,12 +123,14 @@ def test_observed_reads(header_text_te4):
 
 
 def test_individual_sexes_per_sample():
-    """Sur human (dataset <A>-only), le sexe n'est jamais renseigné : les
-    120 individus doivent tous ressortir en "9" (sexe inconnu, cf.
+    """Sur human (dataset <A>-only), le sexe n'est jamais renseigné : les 120
+    individus doivent tous ressortir en "9" (sexe inconnu, cf.
+
     data.cpp:702-704). Sur toy_example5 (qui a des loci <X>/<Y>/<M>), le
     sexe est réellement renseigné : on doit retrouver 10 M et 10 F par
-    échantillon, cohérent avec les 20 individus par échantillon comptés par
-    test_count_individuals_per_sample."""
+    échantillon, cohérent avec les 20 individus par échantillon comptés
+    par test_count_individuals_per_sample.
+    """
     sexes_human = individual_sexes_per_sample(OBSERVED_SNP_FILE_HUMAN)
 
     assert set(sexes_human.keys()) == {"ASW", "YRI", "CHB", "GBR"}
@@ -140,9 +146,8 @@ def test_individual_sexes_per_sample():
 
 
 def test_coalescence_coefficient():
-    """Vérifie que le coefficient de coalescence est bien calculé pour
-    human (dataset <A>-only) et toy_example5 (qui a des loci <X>/<Y>/<M>).
-    """
+    """Vérifie que le coefficient de coalescence est bien calculé pour human
+    (dataset <A>-only) et toy_example5 (qui a des loci <X>/<Y>/<M>)."""
     sexe_ratio_human = parse_sex_ratio(OBSERVED_SNP_FILE_HUMAN)
     assert coalescence_coefficient("A", sexe_ratio_human) == 16 * sexe_ratio_human * (
         1 - sexe_ratio_human
@@ -167,8 +172,8 @@ def test_coalescence_coefficient():
 
 def test_observed_sequences(header_text_te2):
     """Vérifie que le parsing du fichier snp renvoie bien les séquences
-    observées par individu, pour le fichier toy_example2 (dataset <A>+<M>
-    avec 3 populations)."""
+    observées par individu, pour le fichier toy_example2 (dataset <A>+<M> avec
+    3 populations)."""
     list_loci = parse_loci_description(header_text_te2)
     nb_seq = len([locus for locus in list_loci if locus.ms_or_seq == "S"])
     sequences_te2 = observed_sequences(OBSERVED_MSS_FILE_TE2, list_loci)
@@ -188,8 +193,8 @@ def test_observed_count_population():
 
 
 def test_base_frequency_by_locus(header_text_te2):
-    """Vérifie que le calcul des fréquences de bases par locus est correct
-    pour le fichier toy_example2 (dataset <A>+<M> avec 3 populations)."""
+    """Vérifie que le calcul des fréquences de bases par locus est correct pour
+    le fichier toy_example2 (dataset <A>+<M> avec 3 populations)."""
     list_loci = parse_loci_description(header_text_te2)
     sequences_te2 = observed_sequences(OBSERVED_MSS_FILE_TE2, list_loci)
     base_freqs = base_frequency_by_locus(sequences_te2)
@@ -203,7 +208,8 @@ def test_base_frequency_by_locus(header_text_te2):
 
 
 def test_base_frequency_by_locus_limites():
-    """Vérifie le comportement de base_frequency_by_locus dans les cas limites."""
+    """Vérifie le comportement de base_frequency_by_locus dans les cas
+    limites."""
     # test du cas limite avec que des N ou des - dans les séquences
     sequence_test = {
         "locus_test": ["NNNNNNNNNN", "----------", "NNNNNNNNNN", "----------"]
@@ -216,7 +222,8 @@ def test_base_frequency_by_locus_limites():
 
 
 def test_base_frequency_by_locus_invalid_base():
-    """Vérifie le comportement de base_frequency_by_locus avec des bases invalides."""
+    """Vérifie le comportement de base_frequency_by_locus avec des bases
+    invalides."""
     # test du cas avec une séquence qui contient un caractère inconnu
     sequence_test_invalid = {
         "locus_test_invalid": ["ACGTACGTAC", "ACGTACGTAC", "ACGTACGTAC", "ACGTACGTAX"]
@@ -245,9 +252,9 @@ def test_observed_microsatellites(header_text_te2_XY):
 
 
 def test_individual_sexes_from_locus_genotype(header_text_te2, header_text_te2_XY):
-    """Vérifie que le parsing du fichier mss renvoie bien les sexes des individus par population
-    pour le fichier toy_example2_xy (dataset <A>+<X>+<Y> avec 2 populations)."""
-
+    """Vérifie que le parsing du fichier mss renvoie bien les sexes des
+    individus par population pour le fichier toy_example2_xy (dataset
+    <A>+<X>+<Y> avec 2 populations)."""
     list_loci = parse_loci_description(header_text_te2)
     locus_name = "Locus_S_A_11_"
     sexes = individual_sexes_from_locus_genotype(
@@ -296,9 +303,9 @@ def test_individual_sexes_from_locus_genotype(header_text_te2, header_text_te2_X
 
 
 def test_allele_bounds_per_locus(header_text_te2_XY):
-    """Vérifie que le parsing du fichier mss renvoie bien les bornes d'allèles par locus
-    pour le fichier toy_example2_xy (dataset <A>+<X>+<Y> avec 2 populations)."""
-
+    """Vérifie que le parsing du fichier mss renvoie bien les bornes d'allèles
+    par locus pour le fichier toy_example2_xy (dataset <A>+<X>+<Y> avec 2
+    populations)."""
     list_loci = parse_loci_description(header_text_te2_XY)
     microsatellites_te2 = observed_microsatellites(OBSERVED_MSS_FILE_TE2_XY, list_loci)
 

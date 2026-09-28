@@ -1,8 +1,6 @@
-"""
-Vérifie que scenario_parser produit, sur le vrai header.txt du dataset
-human, exactement les événements qu'on a décortiqués à la main avec le
-mentor (voir notes/exploration.md) pour les scénarios 1, 2 et 4.
-"""
+"""Vérifie que scenario_parser produit, sur le vrai header.txt du dataset
+human, exactement les événements qu'on a décortiqués à la main avec le mentor
+(voir notes/exploration.md) pour les scénarios 1, 2 et 4."""
 
 import pytest
 
@@ -13,7 +11,8 @@ from bridge.scenario_parser import parse_header_scenarios, split_scenario_blocks
 def test_unimplemented_scenarios_are_skipped_with_warning(header_text):
     """Les scénarios 2,3,5,6 utilisent 'split' (pas encore implémenté) :
     ils doivent être ignorés avec un avertissement, pas faire planter le
-    parsing des autres scénarios."""
+    parsing des autres scénarios.
+    """
     # with pytest.warns(UserWarning, match="split"):
     scenarios = parse_header_scenarios(header_text)
 
@@ -74,11 +73,10 @@ def test_scenario4_events(header_text):
 
 
 def test_scenario2_events(header_text):
-    """Vérifie qu'un événement 'split' (admixture) est correctement
-    interprété : 't1 split 1 4 2 ra' -> pop 1 disparaît, chaque lignée
-    part vers pop 4 avec probabilité 'ra', sinon vers pop 2 -- sémantique
-    vérifiée contre history.cpp/particuleC.cpp (voir docstring de
-    SplitEvent)."""
+    """Vérifie qu'un événement 'split' (admixture) est correctement interprété
+    : 't1 split 1 4 2 ra' -> pop 1 disparaît, chaque lignée part vers pop 4
+    avec probabilité 'ra', sinon vers pop 2 -- sémantique vérifiée contre
+    history.cpp/particuleC.cpp (voir docstring de SplitEvent)."""
     scenarios = parse_header_scenarios(header_text)
     scenario2 = next(s for s in scenarios if s.index == 2)
 
@@ -97,8 +95,8 @@ def test_parse_header_scenarios(header_text_te1):
 
 
 def test_split_scenario_blocks(header_text_te1):
-    """Vérifie que le parser de scénarios découpe correctement le bloc
-    header en sous-blocs par scénario, même si les scénarios sont
-    séparés par des lignes vides ou des commentaires."""
+    """Vérifie que le parser de scénarios découpe correctement le bloc header
+    en sous-blocs par scénario, même si les scénarios sont séparés par des
+    lignes vides ou des commentaires."""
     results = split_scenario_blocks(header_text_te1)
     assert len(results) == 2

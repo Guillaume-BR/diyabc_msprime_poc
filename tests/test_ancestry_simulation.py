@@ -1,7 +1,6 @@
 """Vérifie ancestry_simulation : construction de l'argument samples pour
-msprime.sim_ancestry, simulation de généalogies indépendantes par locus,
-et mutation Hudson (exactement une mutation par locus, toujours
-polymorphe)."""
+msprime.sim_ancestry, simulation de généalogies indépendantes par locus, et
+mutation Hudson (exactement une mutation par locus, toujours polymorphe)."""
 
 import msprime
 import numpy as np
@@ -67,7 +66,8 @@ from bridge.scenario_parser import parse_header_scenarios
 
 # Petit helper pour créer un TreeSequence minimal avec une population et un individu, pour tester compute_sample_layout
 def _ts_from_sample_sets(sample_sets):
-    """TreeSequence minimale pour tester un layout : la topologie n'importe pas."""
+    """TreeSequence minimale pour tester un layout : la topologie n'importe
+    pas."""
     demography = msprime.Demography()
     for name in ("pop1", "pop2", "anc"):
         demography.add_population(name=name, initial_size=1000)
@@ -136,8 +136,8 @@ def test_build_sample_sets_from_scenario_evaluates_time_expressions():
 
 def test_build_sample_sets_from_scenario_raises_on_count_mismatch():
     """Vérifie que build_sample_sets_from_scenario lève une ValueError si le
-    nombre de comptes d'échantillons ne correspond pas au nombre d'événements sample.
-    """
+    nombre de comptes d'échantillons ne correspond pas au nombre d'événements
+    sample."""
     # test pour lever l'erreur
     fake_scenario = Scenario(
         index=1,
@@ -156,10 +156,9 @@ def test_build_sample_sets_from_scenario_raises_on_count_mismatch():
 
 
 def test_simulate_independent_loci_scenario1(header_text):
-    """Vérifie que build_samples_argument construit bien le dict attendu
-    par msprime.sim_ancestry, avec les bons noms de populations et le bon
-    nombre d'individus par population."""
-
+    """Vérifie que build_samples_argument construit bien le dict attendu par
+    msprime.sim_ancestry, avec les bons noms de populations et le bon nombre
+    d'individus par population."""
     demography, _ = build_random_demography_for_scenario_index(
         header_text, scenario_index=1, seed=42
     )
@@ -185,10 +184,9 @@ def test_simulate_independent_loci_scenario1(header_text):
 
 
 def test_simulate_snp_genotypes_scenario1(header_text):
-    """Vérifie que chaque locus simulé est polymorphe (au moins un 0 et
-    un 1 parmi les génotypes), garantissant la propriété centrale de
-    l'algorithme de Hudson : exactement une mutation par locus, jamais
-    un locus monomorphe."""
+    """Vérifie que chaque locus simulé est polymorphe (au moins un 0 et un 1
+    parmi les génotypes), garantissant la propriété centrale de l'algorithme de
+    Hudson : exactement une mutation par locus, jamais un locus monomorphe."""
     demography, _ = build_random_demography_for_scenario_index(
         header_text, scenario_index=1, seed=42
     )
@@ -236,11 +234,10 @@ def test_simulate_snp_genotypes_grouped_by_population(header_text):
 
 
 def test_build_sex_stratified_samples_argument():
-    """Vérifie que build_samples_argument construit bien le dict attendu
-    par msprime.sim_ancestry, avec les bons noms de populations et le bon
-    nombre d'individus par population, en tenant compte du sexe des individus (pour les loci <X>/<Y>/<M>).
-    """
-
+    """Vérifie que build_samples_argument construit bien le dict attendu par
+    msprime.sim_ancestry, avec les bons noms de populations et le bon nombre
+    d'individus par population, en tenant compte du sexe des individus (pour
+    les loci <X>/<Y>/<M>)."""
     with pytest.raises(ValueError, match="sexe inconnu"):
         build_sex_stratified_samples_argument(
             OBSERVED_SNP_FILE_HUMAN
@@ -255,11 +252,11 @@ def test_build_sex_stratified_samples_argument():
 
 
 def test_build_male_only_samples_argument():
-    """Vérifie que build_male_only_samples_argument construit bien un
-    dict {population: nombre_de_mâles} (PAS une liste de SampleSet,
-    contrairement à build_sex_stratified_samples_argument) -- <Y> n'a
-    besoin que d'un ploidy uniforme=1 parmi les mâles, pas d'hétérogénéité
-    au sein d'une population."""
+    """Vérifie que build_male_only_samples_argument construit bien un dict
+    {population: nombre_de_mâles} (PAS une liste de SampleSet, contrairement à
+    build_sex_stratified_samples_argument) -- <Y> n'a besoin que d'un ploidy
+    uniforme=1 parmi les mâles, pas d'hétérogénéité au sein d'une
+    population."""
     with pytest.raises(ValueError, match="sexe inconnu"):
         build_male_only_samples_argument(OBSERVED_SNP_FILE_HUMAN)  # sexe non renseigné
 
@@ -304,10 +301,8 @@ def test_simulate_genotypes_for_locus_type(snp_context_te5):
 
 def test_compute_sample_layout_different_count():
     """Vérifie que compute_sample_layout renvoie bien une liste de tuples
-    (nom_population, sample_ids) avec les bons noms de populations et le
-    bon nombre d'individus par population.
-    """
-
+    (nom_population, sample_ids) avec les bons noms de populations et le bon
+    nombre d'individus par population."""
     # test effectifs inégaux
     ts = _ts_from_sample_sets(
         [msprime.SampleSet(7, "pop1"), msprime.SampleSet(3, "pop2")]
@@ -373,10 +368,12 @@ def test_compute_sample_layout_matches_population_layout_on_non_serial_data(
     dna_context_te2,
 ):
     """Sur un jeu NON sériel, le découpage par échantillon doit être
-    STRICTEMENT identique au découpage par population. C'est cette
-    propriété qui rend sûre la substitution dans summary_statistics.py :
-    sans elle, remplacer compute_population_layout changerait les
-    résultats sur tous les jeux déjà validés.
+    STRICTEMENT identique au découpage par population.
+
+    C'est cette propriété qui rend sûre la substitution dans
+    summary_statistics.py : sans elle, remplacer
+    compute_population_layout changerait les résultats sur tous les jeux
+    déjà validés.
     """
     scenarios = parse_header_scenarios(dna_context_te2.header_text)
     demography, values = build_random_demography_for_scenario_index(
@@ -432,16 +429,18 @@ def test_with_maf_filter_no_filter_matches_direct_call(header_text):
 
 
 def test_simulate_snp_genotypes_raises_on_layout_ploidy_mismatch():
-    """Un layout dont la taille ne correspond pas à la ts doit lever, pas mentir.
+    """Un layout dont la taille ne correspond pas à la ts doit lever, pas
+    mentir.
 
-    La compréhension de `simulate_snp_genotypes` fait un test d'APPARTENANCE
-    (`s in derived_samples`), jamais une indexation : un ID de noeud absent de
-    la TreeSequence ne lève rien, il rend silencieusement 0. Sans le garde, on
-    obtiendrait ici 20 génotypes (dont 10 faux zéros) pour une simulation qui
-    n'a que 10 noeuds -- et des statistiques calculées là-dessus.
+    La compréhension de `simulate_snp_genotypes` fait un test
+    d'APPARTENANCE (`s in derived_samples`), jamais une indexation : un
+    ID de noeud absent de la TreeSequence ne lève rien, il rend
+    silencieusement 0. Sans le garde, on obtiendrait ici 20 génotypes
+    (dont 10 faux zéros) pour une simulation qui n'a que 10 noeuds -- et
+    des statistiques calculées là-dessus.
 
-    Le cas reproduit la vraie erreur qui a motivé le garde : un layout calculé
-    sur une ts DIPLOÏDE, passé à une simulation HAPLOÏDE.
+    Le cas reproduit la vraie erreur qui a motivé le garde : un layout
+    calculé sur une ts DIPLOÏDE, passé à une simulation HAPLOÏDE.
     """
     demography = msprime.Demography()
     for name in ("pop1", "pop2", "anc"):
@@ -470,8 +469,8 @@ def test_simulate_snp_genotypes_raises_on_layout_ploidy_mismatch():
 def test_simulate_snp_genotypes_accepts_a_consistent_layout():
     """Contrepartie du test précédent : un layout cohérent ne doit PAS lever.
 
-    Sans cette assertion, un garde trop strict (qui refuserait tout layout
-    fourni) passerait le test de levée sans qu'on s'en aperçoive.
+    Sans cette assertion, un garde trop strict (qui refuserait tout
+    layout fourni) passerait le test de levée sans qu'on s'en aperçoive.
     """
     demography = msprime.Demography()
     for name in ("pop1", "pop2", "anc"):
@@ -501,7 +500,9 @@ def test_simulate_snp_genotypes_accepts_a_consistent_layout():
 
 
 def test_with_maf_filter_with_same_layout_matches_null_maf():
-    """Vérifie que l'argument si l'argument layout correspond à compute_population_layout(ts) ne change pas le résultat de with_maf_filter."""
+    """Vérifie que l'argument si l'argument layout correspond à
+    compute_population_layout(ts) ne change pas le résultat de
+    with_maf_filter."""
     demography = msprime.Demography()
     for name in ("pop1", "pop2", "anc"):
         demography.add_population(name=name, initial_size=1000)
@@ -528,7 +529,9 @@ def test_with_maf_filter_with_same_layout_matches_null_maf():
 
 
 def test_with_maf_filter_with_same_layout_matches_nonnull_maf():
-    """Vérifie que l'argument layout ne change pas le résultat de with_maf_filter si le MAF est nul, même si le layout est différent de compute_population_layout(ts)."""
+    """Vérifie que l'argument layout ne change pas le résultat de
+    with_maf_filter si le MAF est nul, même si le layout est différent de
+    compute_population_layout(ts)."""
     demography = msprime.Demography()
     for name in ("pop1", "pop2", "anc"):
         demography.add_population(name=name, initial_size=1000)
@@ -555,7 +558,9 @@ def test_with_maf_filter_with_same_layout_matches_nonnull_maf():
 
 
 def test_with_maf_filter_with_different_layout_null_maf():
-    """Vérifie que l'argument layout ne change pas le résultat de with_maf_filter si le MAF est nul, même si le layout est différent de compute_population_layout(ts)."""
+    """Vérifie que l'argument layout ne change pas le résultat de
+    with_maf_filter si le MAF est nul, même si le layout est différent de
+    compute_population_layout(ts)."""
     demography = msprime.Demography()
     for name in ("pop1", "pop2", "anc"):
         demography.add_population(name=name, initial_size=1000)
@@ -600,7 +605,9 @@ def test_with_maf_filter_with_different_layout_null_maf():
 
 
 def test_with_maf_filter_with_different_layout_nonnull_maf():
-    """Vérifie que l'argument layout ne change pas le résultat de with_maf_filter si le MAF est non nul, même si le layout est différent de compute_population_layout(ts)."""
+    """Vérifie que l'argument layout ne change pas le résultat de
+    with_maf_filter si le MAF est non nul, même si le layout est différent de
+    compute_population_layout(ts)."""
     demography = msprime.Demography()
     for name in ("pop1", "pop2", "anc"):
         demography.add_population(name=name, initial_size=1000)
@@ -650,11 +657,10 @@ def test_with_maf_filter_with_different_layout_nonnull_maf():
 def test_with_maf_filter_shared_ancestry_no_filter_matches_direct_call(
     header_text_te5,
 ):
-    """maf=0.0 doit produire EXACTEMENT le même résultat qu'un appel
-    direct à simulate_shared_ancestry_loci + simulate_snp_genotypes
-    (même graine pour les deux) -- garantit que
-    with_maf_filter_shared_ancestry ne change rien à toy_example5, qui
-    n'a pas de filtre MAF actif."""
+    """maf=0.0 doit produire EXACTEMENT le même résultat qu'un appel direct à
+    simulate_shared_ancestry_loci + simulate_snp_genotypes (même graine pour
+    les deux) -- garantit que with_maf_filter_shared_ancestry ne change rien à
+    toy_example5, qui n'a pas de filtre MAF actif."""
     demography, _ = build_random_demography_for_scenario_index(
         header_text_te5, scenario_index=1, seed=42
     )
@@ -684,10 +690,12 @@ def test_with_maf_filter_shared_ancestry_no_filter_matches_direct_call(
 
 def test_with_maf_filter_shared_ancestry_rejects_low_maf_loci(header_text_te5):
     """Avec maf>0, chaque locus retourné doit respecter le seuil -- même
-    contrat que with_maf_filter, mais ici sur une généalogie UNIQUE
-    partagée entre tous les loci (reproduit particuleC.cpp:2424-2495 :
+    contrat que with_maf_filter, mais ici sur une généalogie UNIQUE partagée
+    entre tous les loci (reproduit particuleC.cpp:2424-2495 :
+
     le cache GeneTreeY est rempli avant le test MAF, donc un rejet ne
-    redessine jamais l'arbre, seulement la mutation)."""
+    redessine jamais l'arbre, seulement la mutation).
+    """
     demography, _ = build_random_demography_for_scenario_index(
         header_text_te5, scenario_index=1, seed=42
     )
@@ -711,7 +719,9 @@ def test_with_maf_filter_shared_ancestry_rejects_low_maf_loci(header_text_te5):
 
 
 def test_with_maf_filter_shared_ancestry_with_same_layout_matches_null_maf():
-    """Vérifie que l'argument si l'argument layout correspond à compute_population_layout(ts) ne change pas le résultat de with_maf_filter."""
+    """Vérifie que l'argument si l'argument layout correspond à
+    compute_population_layout(ts) ne change pas le résultat de
+    with_maf_filter."""
     demography = msprime.Demography()
     for name in ("pop1", "pop2", "anc"):
         demography.add_population(name=name, initial_size=1000)
@@ -738,7 +748,9 @@ def test_with_maf_filter_shared_ancestry_with_same_layout_matches_null_maf():
 
 
 def test_with_maf_filter_shared_ancestry_with_same_layout_matches_nonnull_maf():
-    """Vérifie que l'argument layout ne change pas le résultat de with_maf_filter si le MAF est nul, même si le layout est différent de compute_population_layout(ts)."""
+    """Vérifie que l'argument layout ne change pas le résultat de
+    with_maf_filter si le MAF est nul, même si le layout est différent de
+    compute_population_layout(ts)."""
     demography = msprime.Demography()
     for name in ("pop1", "pop2", "anc"):
         demography.add_population(name=name, initial_size=1000)
@@ -765,7 +777,9 @@ def test_with_maf_filter_shared_ancestry_with_same_layout_matches_nonnull_maf():
 
 
 def test_with_maf_filter_shared_ancestry_with_different_layout_null_maf():
-    """Vérifie que l'argument layout ne change pas le résultat de with_maf_filter_shared_ancestry si le MAF est nul, même si le layout est différent de compute_population_layout(ts)."""
+    """Vérifie que l'argument layout ne change pas le résultat de
+    with_maf_filter_shared_ancestry si le MAF est nul, même si le layout est
+    différent de compute_population_layout(ts)."""
     demography = msprime.Demography()
     for name in ("pop1", "pop2", "anc"):
         demography.add_population(name=name, initial_size=1000)
@@ -811,7 +825,9 @@ def test_with_maf_filter_shared_ancestry_with_different_layout_null_maf():
 
 
 def test_with_maf_filter_shared_ancestry_with_different_layout_nonnull_maf():
-    """Vérifie que l'argument layout ne change pas le résultat de with_maf_filter_shared_ancestry si le MAF est non nul, même si le layout est différent de compute_population_layout(ts)."""
+    """Vérifie que l'argument layout ne change pas le résultat de
+    with_maf_filter_shared_ancestry si le MAF est non nul, même si le layout
+    est différent de compute_population_layout(ts)."""
     demography = msprime.Demography()
     for name in ("pop1", "pop2", "anc"):
         demography.add_population(name=name, initial_size=1000)
@@ -981,8 +997,9 @@ def test_simulate_poolseq_reads_with_mrc_filter(snp_context_te4):
 
 
 def test_transition_matrix_jk():
-    """Vérifie que la matrice de transition est bien contruite pour les différents
-    modèles de mutation (JK, K2P, HKY, TN) et que les paramètres sont corrects."""
+    """Vérifie que la matrice de transition est bien contruite pour les
+    différents modèles de mutation (JK, K2P, HKY, TN) et que les paramètres
+    sont corrects."""
     kappas = (2, 3)
     frequences_by_locus = {"pi_A": 0.1, "pi_C": 0.2, "pi_G": 0.3, "pi_T": 0.4}
     # test pour le modèle JK
@@ -1000,7 +1017,8 @@ def test_transition_matrix_jk():
 
 
 def test_transition_matrix_k2p():
-    """Vérifie que la matrice de transition est bien construite pour le modèle K2P."""
+    """Vérifie que la matrice de transition est bien construite pour le modèle
+    K2P."""
     kappas = (2, 3)
     frequences_by_locus = {"pi_A": 0.1, "pi_C": 0.2, "pi_G": 0.3, "pi_T": 0.4}
     # test pour le modèle K2P
@@ -1016,7 +1034,8 @@ def test_transition_matrix_k2p():
 
 
 def test_transition_matrix_hky():
-    """Vérifie que la matrice de transition est bien construite pour le modèle HKY."""
+    """Vérifie que la matrice de transition est bien construite pour le modèle
+    HKY."""
     kappas = (2, 3)
     frequences_by_locus = {"pi_A": 0.1, "pi_C": 0.2, "pi_G": 0.3, "pi_T": 0.4}
     # test pour le modèle HKY
@@ -1032,7 +1051,8 @@ def test_transition_matrix_hky():
 
 
 def test_transition_matrix_tn():
-    """Vérifie que la matrice de transition est bien construite pour le modèle TN."""
+    """Vérifie que la matrice de transition est bien construite pour le modèle
+    TN."""
     kappas = (2, 3)
     frequences_by_locus = {"pi_A": 0.1, "pi_C": 0.2, "pi_G": 0.3, "pi_T": 0.4}
     # test pour le modèle TN
@@ -1048,7 +1068,8 @@ def test_transition_matrix_tn():
 
 
 def test_transition_matrix_invalid_model():
-    """Vérifie que la fonction build_transition_matrix lève une exception pour un modèle invalide."""
+    """Vérifie que la fonction build_transition_matrix lève une exception pour
+    un modèle invalide."""
     kappas = (2, 3)
     frequences_by_locus = {"pi_A": 0.1, "pi_C": 0.2, "pi_G": 0.3, "pi_T": 0.4}
     with pytest.raises(NotImplementedError, match="Modèle de"):
@@ -1056,7 +1077,8 @@ def test_transition_matrix_invalid_model():
 
 
 def test_count_loci_per_group(header_text_te2):
-    """Vérifie que la fonction count_loci_per_group retourne le bon nombre de loci par groupe."""
+    """Vérifie que la fonction count_loci_per_group retourne le bon nombre de
+    loci par groupe."""
     list_loci = parse_loci_description(header_text_te2)
     counts = count_loci_per_group(list_loci)
     assert counts == {"G1": 10, "G2": 5, "G3": 5}
@@ -1088,11 +1110,12 @@ def test_count_loci_per_group(header_text_te2):
 
 
 def test_build_group_local_param_per_locus(header_text_te2):
-    """Vérifie que la fonction build_group_local_param_per_locus retourne le bon dictionnaire
-    de kappa1 et kappa2 par locus pour le fichier toy_example2 (dataset <A>+<M>
-    avec 3 populations).
-    Test de reproductibilité avec la même graine.
-    Il manque un test pour vérifier lorsuqe le model est JK ou TN
+    """Vérifie que la fonction build_group_local_param_per_locus retourne le
+    bon dictionnaire de kappa1 et kappa2 par locus pour le fichier toy_example2
+    (dataset <A>+<M> avec 3 populations).
+
+    Test de reproductibilité avec la même graine. Il manque un test pour
+    vérifier lorsuqe le model est JK ou TN
     """
     params_per_locus = build_group_local_param_per_locus(header_text_te2, seed=42)
 
@@ -1112,9 +1135,10 @@ def test_build_group_local_param_per_locus(header_text_te2):
 
 
 def test_build_matrix_per_locus(dna_context_te2):
-    """Vérifie que la fonction build_matrix_per_locus retourne le bon dictionnaire
-    de matrices de transition par locus pour le fichier toy_example2 (dataset <A>+<M>
-    avec 3 populations).
+    """Vérifie que la fonction build_matrix_per_locus retourne le bon
+    dictionnaire de matrices de transition par locus pour le fichier
+    toy_example2 (dataset <A>+<M> avec 3 populations).
+
     Test de reproductibilité avec la même graine.
     """
     matrix_per_locus = build_matrix_per_locus(dna_context_te2, seed=42)
@@ -1131,9 +1155,10 @@ def test_build_matrix_per_locus(dna_context_te2):
 
 
 def test_build_rate_map():
-    """Vérifie que la fonction build_rate_map retourne le bon dictionnaire
-    de cartes de taux par locus pour le fichier toy_example2 (dataset <A>+<M>
-    avec 3 populations).
+    """Vérifie que la fonction build_rate_map retourne le bon dictionnaire de
+    cartes de taux par locus pour le fichier toy_example2 (dataset <A>+<M> avec
+    3 populations).
+
     Test de reproductibilité avec la même graine.
     """
     # Test avec un exemple qui ne passerait pas
@@ -1151,9 +1176,10 @@ def test_build_rate_map():
 
 
 def test_build_rate_map_per_locus(header_text_te2):
-    """Vérifie que la fonction build_rate_map_per_locus retourne le bon dictionnaire
-    de cartes de taux par locus pour le fichier toy_example2 (dataset <A>+<M>
-    avec 3 populations).
+    """Vérifie que la fonction build_rate_map_per_locus retourne le bon
+    dictionnaire de cartes de taux par locus pour le fichier toy_example2
+    (dataset <A>+<M> avec 3 populations).
+
     Test de reproductibilité avec la même graine.
     """
     rate_map_per_locus = build_rate_map_per_locus(header_text_te2, seed=42)
@@ -1185,10 +1211,10 @@ def test_build_rate_map_per_locus(header_text_te2):
 
 def test_dna_mutation_simulation_per_locus(dna_context_te2, dna_context_te2_xy):
     """Vérifie que dna_mutation_simulation_per_locus produit bien une
-    TreeSequence mutée par locus séquence (pas les loci microsat), avec
-    une généalogie ET des mutations indépendantes d'un locus à l'autre
-    (pas la même graine réutilisée partout), et reproductible avec la
-    même graine de particule."""
+    TreeSequence mutée par locus séquence (pas les loci microsat), avec une
+    généalogie ET des mutations indépendantes d'un locus à l'autre (pas la même
+    graine réutilisée partout), et reproductible avec la même graine de
+    particule."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -1256,8 +1282,8 @@ def test_ms_dna_ancestry_parameters_for_heritage(header_text_te2):
     """Vérifie le dispatch démographie/ploïdie par type d'héritage pour les
     loci ADN, exactement le même que celui de simulate_genotypes_for_locus_type
     côté SNP : <A> -- démographie inchangée, ploidy=2 ; <H>/<M> -- démographie
-    rescalée par coalescence_coefficient/2, ploidy=1 ; <X>/<Y> -- pas
-    supportés sur .mss (pas de sexe par individu dans ce format)."""
+    rescalée par coalescence_coefficient/2, ploidy=1 ; <X>/<Y> -- pas supportés
+    sur .mss (pas de sexe par individu dans ce format)."""
     demography, _ = build_random_demography_for_scenario_index(
         header_text_te2, scenario_index=1, seed=42
     )
@@ -1282,10 +1308,10 @@ def test_ms_dna_ancestry_parameters_for_heritage(header_text_te2):
 
 
 def test_dna_mutation_simulation_per_locus_ploidy_matches_heritage(dna_context_te2):
-    """Vérifie que le nombre de lignées échantillonnées reflète bien la
-    ploïdie attendue par héritage : un locus <A> (G2) doit avoir 2x plus de
-    "samples" msprime qu'un locus <M> (G3) pour la même population -- avant
-    la correction, les deux étaient simulés en ploidy=2 sans distinction."""
+    """Vérifie que le nombre de lignées échantillonnées reflète bien la ploïdie
+    attendue par héritage : un locus <A> (G2) doit avoir 2x plus de "samples"
+    msprime qu'un locus <M> (G3) pour la même population -- avant la
+    correction, les deux étaient simulés en ploidy=2 sans distinction."""
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -1344,7 +1370,8 @@ def test_build_group_local_param_per_locus_from_values(header_text_te2):
 
 
 def test_build_sex_stratified_samples_argument_ms_dna(header_text_te2_XY):
-    """Vérifie que build_sex_stratified_samples construit bien la liste de SampleSet attendue par msprime.sim_ancestry,"""
+    """Vérifie que build_sex_stratified_samples construit bien la liste de
+    SampleSet attendue par msprime.sim_ancestry,"""
     liste_loci = parse_loci_description(header_text_te2_XY)
     locus_name = "Locus_M_A_1_"
     samples = build_sex_stratified_samples_argument_ms_dna(
@@ -1359,8 +1386,9 @@ def test_build_sex_stratified_samples_argument_ms_dna(header_text_te2_XY):
 
 
 def test_build_male_only_samples_argument_ms_dna(header_text_te2_XY):
-    """Vérifie que build_male_only_samples_argument construit bien un dict {population: nombre_de_mâles} (PAS une liste de SampleSet, contrairement à build_sex_stratified_samples"""
-
+    """Vérifie que build_male_only_samples_argument construit bien un dict
+    {population: nombre_de_mâles} (PAS une liste de SampleSet, contrairement à
+    build_sex_stratified_samples."""
     liste_loci = parse_loci_description(header_text_te2_XY)
     locus_name = "Locus_M_A_1_"
     samples = build_male_only_samples_argument_ms_dna(
@@ -1373,7 +1401,8 @@ def test_build_male_only_samples_argument_ms_dna(header_text_te2_XY):
 # Tests sur les fonctions relatives aux microsatellites
 # ------------------------------------------------------
 def test_distribution_from_position():
-    """Vérifie que la fonction distribution_from_position retourne la bonne distribution de mutation pour un locus microsatellite donné."""
+    """Vérifie que la fonction distribution_from_position retourne la bonne
+    distribution de mutation pour un locus microsatellite donné."""
     # Test avec un exemple simple
     position = 4
     kmin = 1
@@ -1391,7 +1420,8 @@ def test_distribution_from_position():
 
 
 def test_place_gsm_row_on_dense_grid():
-    """Vérifie que la fonction place_gsm_row_on_dense_grid retourne la bonne ligne de matrice de transition pour un locus microsatellite donné."""
+    """Vérifie que la fonction place_gsm_row_on_dense_grid retourne la bonne
+    ligne de matrice de transition pour un locus microsatellite donné."""
     local_distribution = np.array([0.05, 0.05, 0.2, 0.3, 0.4])
     position = 3
     kmin = 0
@@ -1407,8 +1437,8 @@ def test_place_gsm_row_on_dense_grid():
 
 
 def test_sni_row_on_dense_grid():
-    """Vérifie que la fonction sni_row_on_dense_grid retourne la bonne ligne de matrice de transition pour un locus microsatellite donné."""
-
+    """Vérifie que la fonction sni_row_on_dense_grid retourne la bonne ligne de
+    matrice de transition pour un locus microsatellite donné."""
     kmin = 0
     kmax = 5
 
@@ -1428,7 +1458,8 @@ def test_sni_row_on_dense_grid():
 
 
 def test_build_microsat_transition_matrix_with_sni():
-    """Vérifie que la fonction build_microsat_transition_matrix_with_sni retourne la bonne matrice de transition pour les loci microsatellites."""
+    """Vérifie que la fonction build_microsat_transition_matrix_with_sni
+    retourne la bonne matrice de transition pour les loci microsatellites."""
     kmin = 0
     kmax = 6
     motif_size = 2
@@ -1479,8 +1510,8 @@ def test_build_microsat_transition_matrix_with_sni():
 
 
 def test_build_microsat_transition_matrix():
-    """Vérifie que la fonction build_microsat_transition_matrix retourne la bonne matrice de transition pour les loci microsatellites."""
-
+    """Vérifie que la fonction build_microsat_transition_matrix retourne la
+    bonne matrice de transition pour les loci microsatellites."""
     model = build_microsat_transition_matrix(
         kmin=162,
         kmax=240,
@@ -1524,9 +1555,9 @@ def test_build_microsat_transition_matrix():
 
 
 def test_build_microsat_local_param_per_locus(header_text_te2_XY):
-    """Vérifie que la fonction buiomparaison directe de forme), le raleld_microsat_local_param_per_locus retourne le bon dictionnaire
-    Test de reproductibilité avec la même graine.
-    """
+    """Vérifie que la fonction buiomparaison directe de forme), le
+    raleld_microsat_local_param_per_locus retourne le bon dictionnaire Test de
+    reproductibilité avec la même graine."""
     params_per_locus = build_microsat_local_param_per_locus(header_text_te2_XY, seed=42)
 
     list_loci = parse_loci_description(header_text_te2_XY)
@@ -1569,7 +1600,8 @@ def test_build_microsat_local_param_per_locus(header_text_te2_XY):
 
 
 def test_build_matrix_microsat_per_locus(microsat_context_te2_xy):
-    """Vérifie que la fonction build_matrix_microsat_per_locus retourne le bon dictionnaire"""
+    """Vérifie que la fonction build_matrix_microsat_per_locus retourne le bon
+    dictionnaire."""
     list_loci = microsat_context_te2_xy.list_loci
     matrix_per_locus = build_matrix_microsat_per_locus(microsat_context_te2_xy, seed=42)
 
@@ -1605,9 +1637,9 @@ def test_build_matrix_microsat_per_locus(microsat_context_te2_xy):
 
 def test_microsat_mutation_simulation_per_locus(microsat_context_te2_xy):
     """Vérifie que microsat_mutation_simulation_per_locus produit bien une
-    TreeSequence mutée par locus microsat, avec une généalogie ET des
-    mutations indépendantes d'un locus à l'autre (pas la même graine
-    réutilisée partout), et reproductible avec la même graine de particule."""
+    TreeSequence mutée par locus microsat, avec une généalogie ET des mutations
+    indépendantes d'un locus à l'autre (pas la même graine réutilisée partout),
+    et reproductible avec la même graine de particule."""
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
@@ -1653,10 +1685,10 @@ def test_microsat_mutation_simulation_per_locus(microsat_context_te2_xy):
 def test_microsat_mutation_simulation_per_locus_ploidy_matches_heritage(
     microsat_context_te2_xy,
 ):
-    """Vérifie que le nombre de lignées échantillonnées reflète bien la
-    ploïdie attendue par héritage : un locus <A> (G2) doit avoir 2x plus de
-    "samples" msprime qu'un locus <M> (G3) pour la même population -- avant
-    la correction, les deux étaient simulés en ploidy=2 sans distinction."""
+    """Vérifie que le nombre de lignées échantillonnées reflète bien la ploïdie
+    attendue par héritage : un locus <A> (G2) doit avoir 2x plus de "samples"
+    msprime qu'un locus <M> (G3) pour la même population -- avant la
+    correction, les deux étaient simulés en ploidy=2 sans distinction."""
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )

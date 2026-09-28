@@ -1,10 +1,10 @@
 """Parseur de la section 'loci description' de header.txt.
 
 Gère le format condensé observé dans human et toy_example5 pour les SNP
-("5000 <A> G1 from 1", ou "70 <A> 10 <X> 10 <M> 10 <Y> G1 from 1"), ainsi
-que le format détaillé un-locus-par-ligne observé dans sequences-mut
-("Lep04 <A> [M] G1 2 40") -- ce sont deux formats différents (header.cpp
-distingue ces deux cas selon dataobs.filetype).
+("5000 <A> G1 from 1", ou "70 <A> 10 <X> 10 <M> 10 <Y> G1 from 1"),
+ainsi que le format détaillé un-locus-par-ligne observé dans sequences-
+mut ("Lep04 <A> [M] G1 2 40") -- ce sont deux formats différents
+(header.cpp distingue ces deux cas selon dataobs.filetype).
 """
 
 import re

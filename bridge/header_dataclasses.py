@@ -80,7 +80,8 @@ class Prior:
 
 @dataclass
 class GroupPrior:
-    """Une ligne de la section 'group priors' de header.txt (MicroSat/sequences-mut).
+    """Une ligne de la section 'group priors' de header.txt
+    (MicroSat/sequences-mut).
 
     Ex: 'MEANMU UN[1e-4,1e-3,5e-4,2]' sous 'group G1 [M]' devient
     GroupPrior(group="G1", ms_or_seq="M", name="MEANMU", law="UN",

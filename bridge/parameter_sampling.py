@@ -1,15 +1,13 @@
-"""
-Tirage des valeurs numériques des priors, avec retirage si les contraintes
-d'ordre (ex: "t4>t3") ne sont pas respectées -- équivalent du mécanisme
-"DRAW UNTIL" observé dans header.txt.
+"""Tirage des valeurs numériques des priors, avec retirage si les contraintes
+d'ordre (ex: "t4>t3") ne sont pas respectées -- équivalent du mécanisme "DRAW
+UNTIL" observé dans header.txt.
 
-Les priors de catégorie N (taille) et T (temps) sont arrondis à
-l'entier le plus proche juste après le tirage, comme DIYABC
-(particuleC.cpp, voir _draw_one_value) -- seul le taux d'admixture (A)
-reste continu.
+Les priors de catégorie N (taille) et T (temps) sont arrondis à l'entier
+le plus proche juste après le tirage, comme DIYABC (particuleC.cpp, voir
+_draw_one_value) -- seul le taux d'admixture (A) reste continu.
 
-Tirage des paramètres de group priors, avec gestion des dépendances entre les priors
-d'un même groupe (ex: MEANMU et GAMMU pour la loi GA)
+Tirage des paramètres de group priors, avec gestion des dépendances
+entre les priors d'un même groupe (ex: MEANMU et GAMMU pour la loi GA)
 """
 
 import dataclasses
@@ -74,8 +72,9 @@ def draw_scenario(scenarios: list[Scenario], seed: int) -> Scenario:
 
 
 def _draw_one_value(prior: Prior, rng: random.Random) -> float:
-    """Tire une valeur pour un prior donné, selon sa loi et ses bornes.
-    Pour les lois normale, log-normale et gamma, on retire les valeurs hors bornes comme DIYABC.
+    """Tire une valeur pour un prior donné, selon sa loi et ses bornes. Pour
+    les lois normale, log-normale et gamma, on retire les valeurs hors bornes
+    comme DIYABC.
 
     Args:
         prior: Le prior à tirer.
@@ -193,9 +192,9 @@ def draw_parameter_values(
     seed: int,
     max_attempts: int = 1000,
 ) -> dict[str, float]:
-    """Tire une valeur pour chaque prior, en retirant tant que les
-    contraintes d'ordre ne sont pas toutes satisfaites. On reproduit le comportement de DIYABC,
-    en gardant le premier tirage satisfaisant toutes les contraintes.
+    """Tire une valeur pour chaque prior, en retirant tant que les contraintes
+    d'ordre ne sont pas toutes satisfaites. On reproduit le comportement de
+    DIYABC, en gardant le premier tirage satisfaisant toutes les contraintes.
 
     Args:
         priors: Les priors à tirer.
@@ -231,7 +230,8 @@ def draw_group_parameter_values(
     group_priors: dict[str, list[GroupPrior]],
     seed: int,
 ) -> dict[str, dict[str, float]]:
-    """Tire une valeur pour chaque group prior ou bien des valeurs pour le modèle.
+    """Tire une valeur pour chaque group prior ou bien des valeurs pour le
+    modèle.
 
     `seed` est décalé de _GROUP_PRIOR_SEED_OFFSET avant utilisation -- ne
     corrèle jamais ce tirage avec celui de draw_parameter_values, même si
@@ -276,7 +276,8 @@ def sampling_group_local_param(
     list_loci: list[LociDescriptionDetailed],
     rng: random.Random,
 ) -> dict[str, float]:
-    """Échantillonne le tirage par-locus (second niveau) d'un paramètre de groupe.
+    """Échantillonne le tirage par-locus (second niveau) d'un paramètre de
+    groupe.
 
     S'applique aussi bien à kappa1/kappa2 (`build_transition_matrix`)
     qu'à mus_rate -- rien de spécifique à kappa dans l'implémentation.
@@ -300,7 +301,6 @@ def sampling_group_local_param(
         Un dict {nom_locus: valeur} -- soit un tirage indépendant par
         locus, soit `k_moy` répété pour chaque locus.
     """
-
     kappa_values = {}
     if check_nloc:
         if group_prior.sdshape > 0.001 and n_loci > 1:
@@ -326,7 +326,8 @@ def sampling_group_local_param(
 def sample_site_rates(
     p_fixe: float, gams: float, dnalength: int, rng: random.Random
 ) -> list[float]:
-    """Tire mutsit : le taux de mutation relatif par site pour un locus séquence.
+    """Tire mutsit : le taux de mutation relatif par site pour un locus
+    séquence.
 
     Reproduit header.cpp:707-738 (y compris le "bug" sitefix -- les
     sites fixes sont toujours les premiers de la séquence, pas un
