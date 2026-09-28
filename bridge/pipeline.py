@@ -103,7 +103,7 @@ def _simulate_genotypes_for_all_locus_types(
     num_loci: int | None = None,
     seed: int,
     sample_sets: list[msprime.SampleSet] | None = None,
-    counts_by_samples: dict[str, int] | None = None,
+    counts_per_sample: dict[str, int] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
     """Simule les génotypes de TOUS les types de locus déclarés dans header_text.
 
@@ -161,13 +161,13 @@ def _simulate_genotypes_for_all_locus_types(
                 loci_count,
                 seed_for_type,
                 sample_sets=sample_sets,
-                counts_by_samples=counts_by_samples,
+                counts_per_sample=counts_per_sample,
             )
         )
     return itertools.chain(*liste_iterateurs_par_type)
 
 
-def _population_names(
+def _sample_names(
     genotypes_list: list[dict[str, list[int]]], snp_path: Path
 ) -> list[str]:
     """Noms de population ("pop1", "pop2"...), dans le même ordre que build_samples_argument.
@@ -315,7 +315,7 @@ def simulate_particle_genotypes(
     num_loci: int | None = None,
     seed: int,
     sample_sets: list[msprime.SampleSet] | None = None,
-    counts_by_samples: dict[str, int] | None = None,
+    counts_per_sample: dict[str, int] | None = None,
 ):
     """Point d'entrée de haut niveau : équivalent du `-p ./` de DIYABC.
 
@@ -345,9 +345,9 @@ def simulate_particle_genotypes(
         header_text, scenario_index, seed
     )
 
-    if counts_by_samples is None:
-        counts_by_samples = {
-            f"pop{i}": n for i, n in enumerate(context.count_samples.values(), 1)
+    if counts_per_sample is None:
+        counts_per_sample = {
+            f"pop{i}": n for i, n in enumerate(context.counts_per_sample.values(), 1)
         }
     if sample_sets is None:
         scenario = next(
@@ -356,7 +356,7 @@ def simulate_particle_genotypes(
             if s.index == scenario_index
         )
         sample_sets = build_sample_sets_from_scenario(
-            scenario, values, counts_by_samples
+            scenario, values, counts_per_sample
         )
 
     mutated = _simulate_genotypes_for_all_locus_types(
@@ -365,7 +365,7 @@ def simulate_particle_genotypes(
         num_loci=num_loci,
         seed=seed,
         sample_sets=sample_sets,
-        counts_by_samples=counts_by_samples,
+        counts_per_sample=counts_per_sample,
     )
 
     return mutated, values
@@ -435,8 +435,8 @@ def compute_summary_statistics(
         )
         genotypes_list = list(genotypes_per_locus)
 
-        population_names = _population_names(genotypes_list, snp_path)
-        summary_stats = compute_all_statistics(genotypes_list, population_names)
+        sample_names = _sample_names(genotypes_list, snp_path)
+        summary_stats = compute_all_statistics(genotypes_list, sample_names)
         summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
     else:
         reads_per_locus, values = simulate_particle_reads(
@@ -449,14 +449,14 @@ def compute_summary_statistics(
 
         # pool_sizes reste en tailles HAPLOÏDES : la correction de biais de
         # lecture de compute_all_statistics_poolseq en a besoin, contrairement
-        # à counts_by_samples qui compte des individus.
+        # à counts_per_sample qui compte des individus.
         pool_sizes = {
             f"pop{index}": count
-            for index, count in enumerate(context.count_samples.values(), start=1)
+            for index, count in enumerate(context.counts_per_sample.values(), start=1)
         }
-        population_names = list(pool_sizes.keys())
+        sample_names = list(pool_sizes.keys())
         summary_stats = compute_all_statistics_poolseq(
-            reads_list, population_names, pool_sizes
+            reads_list, sample_names, pool_sizes
         )
         summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
     return summary_stats, values
@@ -507,7 +507,7 @@ def simulate_particle_genotypes_from_values(
     num_loci: int | None = None,
     seed: int,
     sample_sets: list[msprime.SampleSet] | None = None,
-    counts_by_samples: dict[str, int] | None = None,
+    counts_per_sample: dict[str, int] | None = None,
 ):
     """Variante de simulate_particle_genotypes qui prend des valeurs de paramètres déjà connues.
 
@@ -540,7 +540,7 @@ def simulate_particle_genotypes_from_values(
         num_loci=num_loci,
         seed=seed,
         sample_sets=sample_sets,
-        counts_by_samples=counts_by_samples,
+        counts_per_sample=counts_per_sample,
     )
 
 
@@ -583,7 +583,7 @@ def compute_summary_statistics_from_values(
     snp_path = context.snp_path
 
     # Les effectifs par échantillon dépendent de la FAMILLE de données :
-    # sur un fichier IND, `count_samples` compte des individus ; sur un fichier
+    # sur un fichier IND, `counts_per_sample` compte des individus ; sur un fichier
     # POOL, il compte des copies de gènes haploïdes, qu'il faut diviser par 2
     # (voir poolseq_counts_by_sample). Appliquer la formule IND à un fichier
     # POOL simule DEUX FOIS trop de copies par échantillon, ce qui divise par
@@ -602,8 +602,8 @@ def compute_summary_statistics_from_values(
         )
         genotypes_list = list(genotypes_per_locus)
 
-        population_names = _population_names(genotypes_list, snp_path)
-        summary_stats = compute_all_statistics(genotypes_list, population_names)
+        sample_names = _sample_names(genotypes_list, snp_path)
+        summary_stats = compute_all_statistics(genotypes_list, sample_names)
         summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
     else:
         # `num_loci` est ignoré côté PoolSeq : on simule tous les loci du
@@ -620,11 +620,11 @@ def compute_summary_statistics_from_values(
         # Tailles HAPLOÏDES, cf. la branche jumelle de compute_summary_statistics.
         pool_sizes = {
             f"pop{index}": count
-            for index, count in enumerate(context.count_samples.values(), start=1)
+            for index, count in enumerate(context.counts_per_sample.values(), start=1)
         }
-        population_names = list(pool_sizes.keys())
+        sample_names = list(pool_sizes.keys())
         summary_stats = compute_all_statistics_poolseq(
-            reads_list, population_names, pool_sizes
+            reads_list, sample_names, pool_sizes
         )
         summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
     return summary_stats
@@ -669,8 +669,8 @@ def simulate_particle_reads(
     scenario = next(
         s for s in parse_header_scenarios(header_text) if s.index == scenario_index
     )
-    counts_by_samples = poolseq_counts_by_sample(context)
-    sample_sets = build_sample_sets_from_scenario(scenario, values, counts_by_samples)
+    counts_per_sample = poolseq_counts_by_sample(context)
+    sample_sets = build_sample_sets_from_scenario(scenario, values, counts_per_sample)
 
     reads = simulate_poolseq_reads_with_mrc_filter(
         demography,
@@ -679,7 +679,7 @@ def simulate_particle_reads(
         num_loci=context.loci_description.loci_counts_by_heritage["A"],
         observed_reads_per_locus=observed_reads_per_locus,
         sample_sets=sample_sets,
-        counts_by_samples=counts_by_samples,
+        counts_per_sample=counts_per_sample,
     )
     return reads, values
 
@@ -694,7 +694,7 @@ def simulate_particle_reads_from_values(
 ) -> Iterator[dict[str, tuple[int, int]]]:
     """Variante de `simulate_particle_reads` qui rejoue des valeurs connues.
 
-    Construit ses propres `counts_by_samples` avec la formule PoolSeq
+    Construit ses propres `counts_per_sample` avec la formule PoolSeq
     (`poolseq_counts_by_sample`, qui divise par 2 des tailles haploïdes).
     C'est délibéré et ça vaut d'être respecté : tant que chaque famille de
     données construit les siens, il est structurellement impossible
@@ -720,8 +720,8 @@ def simulate_particle_reads_from_values(
     scenario = next(
         s for s in parse_header_scenarios(header_text) if s.index == scenario_index
     )
-    counts_by_samples = poolseq_counts_by_sample(context)
-    sample_sets = build_sample_sets_from_scenario(scenario, values, counts_by_samples)
+    counts_per_sample = poolseq_counts_by_sample(context)
+    sample_sets = build_sample_sets_from_scenario(scenario, values, counts_per_sample)
 
     return simulate_poolseq_reads_with_mrc_filter(
         demography,
@@ -730,7 +730,7 @@ def simulate_particle_reads_from_values(
         num_loci=context.loci_description.loci_counts_by_heritage["A"],
         observed_reads_per_locus=observed_reads_per_locus,
         sample_sets=sample_sets,
-        counts_by_samples=counts_by_samples,
+        counts_per_sample=counts_per_sample,
     )
 
 
@@ -810,9 +810,9 @@ def compute_summary_statistics_dna(
         for name, ts in mutated.items()
     }
 
-    population_names = list(context.samples_default.keys())
+    sample_names = list(context.samples_default.keys())
     summary_stats = compute_all_statistics_dna(
-        header_text, mutated, population_names, layouts_by_locus=layouts_by_locus
+        header_text, mutated, sample_names, layouts_by_locus=layouts_by_locus
     )
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 
@@ -887,9 +887,9 @@ def compute_summary_statistics_dna_from_values(
         )
         for name, ts in mutated.items()
     }
-    population_names = list(context.samples_default.keys())
+    sample_names = list(context.samples_default.keys())
     summary_stats = compute_all_statistics_dna(
-        header_text, mutated, population_names, layouts_by_locus=layouts_by_locus
+        header_text, mutated, sample_names, layouts_by_locus=layouts_by_locus
     )
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 
@@ -970,11 +970,11 @@ def compute_summary_statistics_microsat(
         for name, ts in mutated.items()
     }
 
-    population_names = list(context.samples_default.keys())
+    sample_names = list(context.samples_default.keys())
     summary_stats = compute_all_statistics_microsat(
         header_text,
         mutated,
-        population_names,
+        sample_names,
         seed=seed,
         layouts_by_locus=layouts_by_locus,
     )
@@ -1047,11 +1047,11 @@ def compute_summary_statistics_microsat_from_values(
         for name, ts in mutated.items()
     }
 
-    population_names = list(context.samples_default.keys())
+    sample_names = list(context.samples_default.keys())
     summary_stats = compute_all_statistics_microsat(
         context.header_text,
         mutated,
-        population_names,
+        sample_names,
         seed=seed,
         layouts_by_locus=layouts_by_locus,
     )

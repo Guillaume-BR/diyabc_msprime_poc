@@ -21,9 +21,9 @@ from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
     allele_bounds_per_locus,
     base_frequency_by_locus,
-    count_samples_per_population,
+    count_individuals_per_sample,
     detect_snp_file_type,
-    individual_sexes_per_population,
+    individual_sexes_per_sample,
     observed_count_population,
     observed_microsatellites,
     observed_reads,
@@ -131,23 +131,23 @@ def snp_context_human(header_text) -> SnpReplayContext:
     snp_path = OBSERVED_SNP_FILE_HUMAN
     snp_file_type = detect_snp_file_type(snp_path)
     loci_description = parse_loci_description(header_text)
-    count_samples = count_samples_per_population(snp_path)
+    counts_per_sample = count_individuals_per_sample(snp_path)
     sex_ratio = parse_sex_ratio(snp_path)
     maf_ratio = parse_maf_ratio(snp_path)
     mrc_ratio = parse_mrc_ratio(snp_path)
     reads_observed = None
-    sexes_per_population = individual_sexes_per_population(snp_path)
+    sexes_per_sample = individual_sexes_per_sample(snp_path)
     return SnpReplayContext(
         header_text=header_text,
         snp_path=snp_path,
         snp_file_type=snp_file_type,
         loci_description=loci_description,
-        count_samples=count_samples,
+        counts_per_sample=counts_per_sample,
         sex_ratio=sex_ratio,
         maf_ratio=maf_ratio,
         mrc_ratio=mrc_ratio,
         reads_observed=reads_observed,
-        sexes_per_population=sexes_per_population,
+        sexes_per_sample=sexes_per_sample,
     )
 
 
@@ -156,25 +156,25 @@ def snp_context_te4(header_text_te4) -> SnpReplayContext:
     snp_path = OBSERVED_SNP_FILE_TE4
     snp_file_type = detect_snp_file_type(snp_path)
     loci_description = parse_loci_description(header_text_te4)
-    count_samples = count_samples_per_population(snp_path)
+    counts_per_sample = count_individuals_per_sample(snp_path)
     sex_ratio = parse_sex_ratio(snp_path)
     maf_ratio = parse_maf_ratio(snp_path)
     mrc_ratio = parse_mrc_ratio(snp_path)
     reads_observed = observed_reads(snp_path)
-    sexes_per_population = (
-        individual_sexes_per_population(snp_path) if snp_file_type == "IND" else {}
+    sexes_per_sample = (
+        individual_sexes_per_sample(snp_path) if snp_file_type == "IND" else {}
     )
     return SnpReplayContext(
         header_text=header_text_te4,
         snp_path=snp_path,
         snp_file_type=snp_file_type,
         loci_description=loci_description,
-        count_samples=count_samples,
+        counts_per_sample=counts_per_sample,
         sex_ratio=sex_ratio,
         maf_ratio=maf_ratio,
         mrc_ratio=mrc_ratio,
         reads_observed=reads_observed,
-        sexes_per_population=sexes_per_population,
+        sexes_per_sample=sexes_per_sample,
     )
 
 
@@ -183,23 +183,23 @@ def snp_context_te5(header_text_te5) -> SnpReplayContext:
     snp_path = OBSERVED_SNP_FILE_TE5
     snp_file_type = detect_snp_file_type(snp_path)
     loci_description = parse_loci_description(header_text_te5)
-    count_samples = count_samples_per_population(snp_path)
+    counts_per_sample = count_individuals_per_sample(snp_path)
     sex_ratio = parse_sex_ratio(snp_path)
     maf_ratio = parse_maf_ratio(snp_path)
     mrc_ratio = parse_mrc_ratio(snp_path)
     reads_observed = None
-    sexes_per_population = individual_sexes_per_population(snp_path)
+    sexes_per_sample = individual_sexes_per_sample(snp_path)
     return SnpReplayContext(
         header_text=header_text_te5,
         snp_path=snp_path,
         snp_file_type=snp_file_type,
         loci_description=loci_description,
-        count_samples=count_samples,
+        counts_per_sample=counts_per_sample,
         sex_ratio=sex_ratio,
         maf_ratio=maf_ratio,
         mrc_ratio=mrc_ratio,
         reads_observed=reads_observed,
-        sexes_per_population=sexes_per_population,
+        sexes_per_sample=sexes_per_sample,
     )
 
 

@@ -93,7 +93,7 @@ def test_build_sample_sets_from_scenario(microsat_context_te1):
     counts = {"pop1": 20, "pop2": 15, "pop3": 30, "pop4": 10}
 
     sample_sets = build_sample_sets_from_scenario(
-        scenario=scenarios[0], values={}, counts_by_samples=counts
+        scenario=scenarios[0], values={}, counts_per_sample=counts
     )
 
     assert len(sample_sets) == 4
@@ -125,7 +125,7 @@ def test_build_sample_sets_from_scenario_evaluates_time_expressions():
     counts = {"pop1": 20, "pop2": 15}
 
     sample_sets = build_sample_sets_from_scenario(
-        scenario=fake_scenario, values=values, counts_by_samples=counts
+        scenario=fake_scenario, values=values, counts_per_sample=counts
     )
 
     assert len(sample_sets) == 2
@@ -151,7 +151,7 @@ def test_build_sample_sets_from_scenario_raises_on_count_mismatch():
         ValueError, match="2 événements sample mais 3 échantillons observés"
     ):
         build_sample_sets_from_scenario(
-            scenario=fake_scenario, values=values, counts_by_samples=counts
+            scenario=fake_scenario, values=values, counts_per_sample=counts
         )
 
 
@@ -518,7 +518,7 @@ def test_with_maf_filter_with_same_layout_matches_null_maf():
         maf=0.0,
         seed=123,
         ploidy=2,
-        counts_by_samples={"pop1": 7, "pop2": 3},
+        counts_per_sample={"pop1": 7, "pop2": 3},
     )
     result_without_layout = with_maf_filter(
         demography, sample_sets, num_loci=10, maf=0.0, seed=123, ploidy=2
@@ -545,7 +545,7 @@ def test_with_maf_filter_with_same_layout_matches_nonnull_maf():
         maf=0.05,
         seed=123,
         ploidy=2,
-        counts_by_samples={"pop1": 7, "pop2": 3},
+        counts_per_sample={"pop1": 7, "pop2": 3},
     )
     result_without_layout = with_maf_filter(
         demography, sample_sets, num_loci=10, maf=0.05, seed=123, ploidy=2
@@ -586,7 +586,7 @@ def test_with_maf_filter_with_different_layout_null_maf():
         maf=0.0,
         seed=123,
         ploidy=2,
-        counts_by_samples={"pop1_a": 4, "pop1_b": 3, "pop2_a": 2, "pop2_b": 1},
+        counts_per_sample={"pop1_a": 4, "pop1_b": 3, "pop2_a": 2, "pop2_b": 1},
     )
 
     without_layout = with_maf_filter(
@@ -631,7 +631,7 @@ def test_with_maf_filter_with_different_layout_nonnull_maf():
         maf=0.05,
         seed=123,
         ploidy=2,
-        counts_by_samples={"pop1_a": 4, "pop1_b": 3, "pop2_a": 2, "pop2_b": 1},
+        counts_per_sample={"pop1_a": 4, "pop1_b": 3, "pop2_a": 2, "pop2_b": 1},
     )
 
     without_layout = with_maf_filter(
@@ -728,7 +728,7 @@ def test_with_maf_filter_shared_ancestry_with_same_layout_matches_null_maf():
         maf=0.0,
         seed=123,
         ploidy=1,
-        counts_by_samples={"pop1": 7, "pop2": 3},
+        counts_per_sample={"pop1": 7, "pop2": 3},
     )
     result_without_layout = with_maf_filter_shared_ancestry(
         demography, sample_sets, num_loci=10, maf=0.0, seed=123, ploidy=1
@@ -755,7 +755,7 @@ def test_with_maf_filter_shared_ancestry_with_same_layout_matches_nonnull_maf():
         maf=0.05,
         seed=123,
         ploidy=1,
-        counts_by_samples={"pop1": 7, "pop2": 3},
+        counts_per_sample={"pop1": 7, "pop2": 3},
     )
     result_without_layout = with_maf_filter_shared_ancestry(
         demography, sample_sets, num_loci=10, maf=0.05, seed=123, ploidy=1
@@ -797,7 +797,7 @@ def test_with_maf_filter_shared_ancestry_with_different_layout_null_maf():
         maf=0.0,
         seed=123,
         ploidy=1,
-        counts_by_samples={"pop1_a": 4, "pop1_b": 3, "pop2_a": 2, "pop2_b": 1},
+        counts_per_sample={"pop1_a": 4, "pop1_b": 3, "pop2_a": 2, "pop2_b": 1},
     )
 
     without_layout = with_maf_filter_shared_ancestry(
@@ -843,7 +843,7 @@ def test_with_maf_filter_shared_ancestry_with_different_layout_nonnull_maf():
         maf=0.05,
         seed=123,
         ploidy=1,
-        counts_by_samples={"pop1_a": 4, "pop1_b": 3, "pop2_a": 2, "pop2_b": 1},
+        counts_per_sample={"pop1_a": 4, "pop1_b": 3, "pop2_a": 2, "pop2_b": 1},
     )
 
     without_layout = with_maf_filter_shared_ancestry(

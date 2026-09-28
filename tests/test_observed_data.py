@@ -19,10 +19,10 @@ from bridge.observed_data import (
     allele_bounds_per_locus,
     base_frequency_by_locus,
     coalescence_coefficient,
-    count_samples_per_population,
+    count_individuals_per_sample,
     detect_snp_file_type,
     individual_sexes_from_locus_genotype,
-    individual_sexes_per_population,
+    individual_sexes_per_sample,
     observed_count_population,
     observed_microsatellites,
     observed_reads,
@@ -30,7 +30,7 @@ from bridge.observed_data import (
     parse_maf_ratio,
     parse_mrc_ratio,
     parse_sex_ratio,
-    population_index_to_name,
+    sample_index_to_name,
 )
 
 
@@ -41,21 +41,21 @@ def test_detect_snp_file_type():
     assert detect_snp_file_type(OBSERVED_SNP_FILE_TE4) == "POOL"
 
 
-def test_count_samples_per_population():
+def test_count_individuals_per_sample():
     """Vérifie que le comptage retrouve bien les 4 populations à 30
     individus chacune, annoncées en commentaire dans le fichier."""
-    counts_human = count_samples_per_population(OBSERVED_SNP_FILE_HUMAN)
-    counts_te4 = count_samples_per_population(OBSERVED_SNP_FILE_TE4)
+    counts_human = count_individuals_per_sample(OBSERVED_SNP_FILE_HUMAN)
+    counts_te4 = count_individuals_per_sample(OBSERVED_SNP_FILE_TE4)
 
     assert set(counts_human.keys()) == {"ASW", "YRI", "CHB", "GBR"}
     assert all(n == 30 for n in counts_human.values())
     assert counts_te4 == {"POP1": 200, "POP2": 200, "POP3": 200, "POP4": 200}
 
 
-def test_population_index_to_name():
+def test_sample_index_to_name():
     """Vérifie le mapping indice de scénario (1-indexed) -> nom réel de
     population, dans l'ordre d'apparition du fichier .snp."""
-    mapping = population_index_to_name(OBSERVED_SNP_FILE_HUMAN)
+    mapping = sample_index_to_name(OBSERVED_SNP_FILE_HUMAN)
 
     assert mapping == {1: "ASW", 2: "YRI", 3: "CHB", 4: "GBR"}
 
@@ -118,19 +118,19 @@ def test_observed_reads(header_text_te4):
         observed_reads(OBSERVED_SNP_FILE_HUMAN)  # fichier INDSEQ
 
 
-def test_individual_sexes_per_population():
+def test_individual_sexes_per_sample():
     """Sur human (dataset <A>-only), le sexe n'est jamais renseigné : les
     120 individus doivent tous ressortir en "9" (sexe inconnu, cf.
     data.cpp:702-704). Sur toy_example5 (qui a des loci <X>/<Y>/<M>), le
     sexe est réellement renseigné : on doit retrouver 10 M et 10 F par
-    population, cohérent avec les 20 individus par population comptés par
-    test_count_samples_per_population."""
-    sexes_human = individual_sexes_per_population(OBSERVED_SNP_FILE_HUMAN)
+    échantillon, cohérent avec les 20 individus par échantillon comptés par
+    test_count_individuals_per_sample."""
+    sexes_human = individual_sexes_per_sample(OBSERVED_SNP_FILE_HUMAN)
 
     assert set(sexes_human.keys()) == {"ASW", "YRI", "CHB", "GBR"}
     assert all(sexes == ["9"] * 30 for sexes in sexes_human.values())
 
-    sexes_te5 = individual_sexes_per_population(OBSERVED_SNP_FILE_TE5)
+    sexes_te5 = individual_sexes_per_sample(OBSERVED_SNP_FILE_TE5)
 
     assert set(sexes_te5.keys()) == {"P1", "P2", "P3"}
     for sexes in sexes_te5.values():
@@ -158,6 +158,11 @@ def test_coalescence_coefficient():
         match="Type de locus inconnu pour le calcul du coefficient de coalescence : 'Z'",
     ):
         coalescence_coefficient("Z", sexe_ratio_te5)  # type de locus inconnu
+
+
+# -----------------------------------------------------------
+# Tests pour les séquences ADN
+# -----------------------------------------------------------
 
 
 def test_observed_sequences(header_text_te2):

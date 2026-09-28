@@ -34,9 +34,9 @@ from bridge.summary_statistics import (
     _compute_VAR_constants,
     _compute_VAR_for_one_population,
     _genotype_matrix_by_population,
-    _genotypes_by_pop_and_individuals,
-    _length_by_pop_and_individuals,
-    _length_by_population,
+    _genotypes_by_sample_and_individuals,
+    _length_by_sample,
+    _length_by_sample_and_individuals,
     _pool_allele_counts_for_two_populations,
     _prepare_matrices_poolseq,
     compute_all_statistics_dna,
@@ -227,7 +227,7 @@ def test_genotype_matrix_by_population_with_different_layout():
     # Les bornes de coupe doivent tomber sur des frontières d'individus
     # (ici multiples de 2, ploïdie diploïde) : une coupe au milieu d'un
     # individu l'attribuerait en entier au groupe de son premier noeud,
-    # silencieusement -- voir _length_by_pop_and_individuals, qui retrouve
+    # silencieusement -- voir _length_by_sample_and_individuals, qui retrouve
     # la population d'un individu par `nodes[0] in inds`.
     split_layout = []
     for pop_name, node_ids in default_layout:
@@ -842,8 +842,8 @@ def _mutated_microsat_ts(seed=3):
     )
 
 
-def test_length_by_population(microsat_context_te2_xy):
-    """Vérifie _length_by_population sur un locus microsat (Locus_M_A_1_).
+def test_length_by_sample(microsat_context_te2_xy):
+    """Vérifie _length_by_sample sur un locus microsat (Locus_M_A_1_).
 
     Convertit les codes de génotype en tailles réelles (pb) via
     variant.alleles, puis compte les copies de gène par taille et par
@@ -861,7 +861,7 @@ def test_length_by_population(microsat_context_te2_xy):
     )
 
     ts = mutated["Locus_M_A_1_"]
-    results = _length_by_population(ts)
+    results = _length_by_sample(ts)
 
     assert results.keys() == {"pop1", "pop2"}
     assert results["pop1"] == [
@@ -886,8 +886,8 @@ def test_length_by_population_with_same_layout():
     ts = _mutated_microsat_ts()
     default_layout = compute_population_layout(ts)
 
-    result_with_layout = _length_by_population(ts, layout=default_layout)
-    result_without_layout = _length_by_population(ts)
+    result_with_layout = _length_by_sample(ts, layout=default_layout)
+    result_without_layout = _length_by_sample(ts)
 
     assert list(result_with_layout.keys()) == list(result_without_layout.keys())
     for pop_name in result_with_layout:
@@ -906,8 +906,8 @@ def test_length_by_population_with_different_layout():
         split_layout.append((f"{pop_name}_a", node_ids[:half]))
         split_layout.append((f"{pop_name}_b", node_ids[half:]))
 
-    result_with_layout = _length_by_population(ts, layout=split_layout)
-    result_without_layout = _length_by_population(ts)
+    result_with_layout = _length_by_sample(ts, layout=split_layout)
+    result_without_layout = _length_by_sample(ts)
 
     assert list(result_with_layout) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]
     assert list(result_without_layout) == ["pop1", "pop2"]
@@ -982,7 +982,7 @@ def test_total_genes_copies_per_population(microsat_context_te2_xy):
         seed=42,
     )
 
-    length_by_population = _length_by_population(mutated["Locus_M_A_1_"])
+    length_by_population = _length_by_sample(mutated["Locus_M_A_1_"])
     results = total_genes_copies_per_population(length_by_population)
 
     assert results.keys() == {"pop1", "pop2"}
@@ -1041,7 +1041,7 @@ def test_compute_VAR_constants(microsat_context_te2_xy):
         seed=42,
     )
 
-    length_by_population = _length_by_population(mutated["Locus_M_A_1_"])
+    length_by_population = _length_by_sample(mutated["Locus_M_A_1_"])
     raw_sizes, raw_square_sizes, total_counts = _compute_VAR_constants(
         length_by_population
     )
@@ -1076,7 +1076,7 @@ def test_compute_VAR_for_one_population(microsat_context_te2_xy):
         seed=42,
     )
 
-    s, v, n = _compute_VAR_constants(_length_by_population(mutated["Locus_M_A_1_"]))
+    s, v, n = _compute_VAR_constants(_length_by_sample(mutated["Locus_M_A_1_"]))
     result = _compute_VAR_for_one_population(s["pop1"], v["pop1"], n["pop1"], 2)
 
     s1, v1, n1 = (
@@ -1128,7 +1128,7 @@ def test_compute_MGW_by_locus(microsat_context_te2_xy):
         seed=42,
     )
 
-    result = _compute_MGW_by_locus(_length_by_population(mutated["Locus_M_A_1_"]), 2)
+    result = _compute_MGW_by_locus(_length_by_sample(mutated["Locus_M_A_1_"]), 2)
 
     assert result.keys() == {"pop1", "pop2"}
     assert result["pop1"] == (3, 1 + (203 - 193) / 2)
@@ -1225,12 +1225,12 @@ def test_pool_allele_counts_for_two_populations():
 
 def test_compute_H2P_for_one_pair():
     """Vérifie que la fonction _compute_H2P_for_one_pair fonctionne correctement."""
-    length_by_pop = {
+    _length_by_sample = {
         "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
         "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
     }
 
-    h2p_value = _compute_H2P_for_one_pair(length_by_pop, "pop1", "pop2")
+    h2p_value = _compute_H2P_for_one_pair(_length_by_sample, "pop1", "pop2")
 
     expected_h2p_value = (
         79
@@ -1246,8 +1246,8 @@ def test_compute_H2P_for_one_pair():
     )
     assert pytest.approx(h2p_value) == expected_h2p_value
 
-    with pytest.raises(KeyError, match="L'une des populations n'est pas"):
-        _compute_H2P_for_one_pair(length_by_pop, "pop1", "pop3")
+    with pytest.raises(KeyError, match="L'un des échantillons n'est pas"):
+        _compute_H2P_for_one_pair(_length_by_sample, "pop1", "pop3")
 
 
 def test_compute_H2P(microsat_context_te2_xy):
@@ -1338,14 +1338,14 @@ def test_compute_V2P(microsat_context_te2_xy):
 
 def test_compute_identical_pair_for_one_pair():
     """Vérifie que la fonction _compute_identical_pair_for_one_pair fonctionne correctement."""
-    length_by_pop = {
+    _length_by_sample = {
         "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
         "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
     }
     pop_a, pop_b = "pop1", "pop2"
 
     identical_count, total_count = _compute_identical_pair_for_one_pair(
-        length_by_pop, pop_a, pop_b
+        _length_by_sample, pop_a, pop_b
     )
 
     assert total_count == 39 * 40
@@ -1451,8 +1451,8 @@ def test_compute_DM2(microsat_context_te2_xy):
 
 
 # test relatifs à la stat FST
-def test_length_by_pop_and_individuals(microsat_context_te2_xy):
-    """Vérifie _length_by_pop_and_individuals sur un locus microsat (Locus_M_A_1_).
+def test_length_by_sample_and_individuals(microsat_context_te2_xy):
+    """Vérifie _length_by_sample_and_individuals sur un locus microsat (Locus_M_A_1_).
 
     Convertit les codes de génotype en tailles réelles (pb) via
     variant.alleles, puis compte les copies de gène par taille et par
@@ -1470,7 +1470,7 @@ def test_length_by_pop_and_individuals(microsat_context_te2_xy):
     )
 
     ts = mutated["Locus_M_A_1_"]
-    results = _length_by_pop_and_individuals(ts)
+    results = _length_by_sample_and_individuals(ts)
 
     assert results.keys() == {"pop1", "pop2"}
     assert results["pop1"] == [
@@ -1501,8 +1501,8 @@ def test_length_by_pop_and_individuals_with_same_layout():
     ts = _mutated_microsat_ts()
     default_layout = compute_population_layout(ts)
 
-    result_with_layout = _length_by_pop_and_individuals(ts, layout=default_layout)
-    result_without_layout = _length_by_pop_and_individuals(ts)
+    result_with_layout = _length_by_sample_and_individuals(ts, layout=default_layout)
+    result_without_layout = _length_by_sample_and_individuals(ts)
 
     assert list(result_with_layout.keys()) == list(result_without_layout.keys())
     for pop_name in result_with_layout:
@@ -1522,8 +1522,8 @@ def test_length_by_pop_and_individuals_with_different_layout():
         split_layout.append((f"{pop_name}_a", node_ids[:half]))
         split_layout.append((f"{pop_name}_b", node_ids[half:]))
 
-    result_with_layout = _length_by_pop_and_individuals(ts, layout=split_layout)
-    result_without_layout = _length_by_pop_and_individuals(ts)
+    result_with_layout = _length_by_sample_and_individuals(ts, layout=split_layout)
+    result_without_layout = _length_by_sample_and_individuals(ts)
 
     assert list(result_with_layout) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]
     assert list(result_without_layout) == ["pop1", "pop2"]
@@ -1577,14 +1577,17 @@ def test_compute_FST_constants_for_two_populations_combined():
 
 
 def test_compute_FST_constants_on_all_alleles_for_two_populations():
-    """Vérifie que la fonction _compute_constants_on_all_alleles_for_two_populations fonctionne correctement."""
-    length_by_pop = {
+    """
+    Vérifie que la fonction _compute_constants_on_all_alleles_for_two_populations
+    fonctionne correctement.
+    """
+    _length_by_sample = {
         "pop1": [(203, 203), (203, 203), (203, 193), (203, 203)],
         "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
     }
 
     s1l, s2l, s3l = _compute_FST_constants_on_all_alleles_for_two_populations(
-        length_by_pop, "pop1", "pop2"
+        _length_by_sample, "pop1", "pop2"
     )
 
     assert pytest.approx(s1l) == 0.005208333333333332
@@ -1593,7 +1596,7 @@ def test_compute_FST_constants_on_all_alleles_for_two_populations():
 
     # nouveau test avec des pop non présente
     s1l, s2l, s3l = _compute_FST_constants_on_all_alleles_for_two_populations(
-        length_by_pop, "pop3", "pop4"
+        _length_by_sample, "pop3", "pop4"
     )
 
     assert s1l == 0.0
@@ -1657,7 +1660,7 @@ def test_compute_FST_vs_scikit_allel(microsat_context_te1_modified):
 # tests relatif à la stat LIK
 
 
-def test_genotypes_by_pop_and_individuals(microsat_context_te2_xy):
+def test_genotypes_by_sample_and_individuals(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
@@ -1668,7 +1671,7 @@ def test_genotypes_by_pop_and_individuals(microsat_context_te2_xy):
     )
 
     ts = mutated["Locus_M_A_1_"]
-    results = _genotypes_by_pop_and_individuals(ts)
+    results = _genotypes_by_sample_and_individuals(ts)
 
     assert results.keys() == {"pop1", "pop2"}
     assert results["pop1"] == [
@@ -1699,8 +1702,8 @@ def test_genotypes_by_pop_and_individuals_with_same_layout():
     ts = _mutated_microsat_ts()
     default_layout = compute_population_layout(ts)
 
-    result_with_layout = _genotypes_by_pop_and_individuals(ts, layout=default_layout)
-    result_without_layout = _genotypes_by_pop_and_individuals(ts)
+    result_with_layout = _genotypes_by_sample_and_individuals(ts, layout=default_layout)
+    result_without_layout = _genotypes_by_sample_and_individuals(ts)
 
     assert list(result_with_layout.keys()) == list(result_without_layout.keys())
     for pop_name in result_with_layout:
@@ -1720,8 +1723,8 @@ def test_genotypes_by_pop_and_individuals_with_different_layout():
         split_layout.append((f"{pop_name}_a", node_ids[:half]))
         split_layout.append((f"{pop_name}_b", node_ids[half:]))
 
-    result_with_layout = _genotypes_by_pop_and_individuals(ts, layout=split_layout)
-    result_without_layout = _genotypes_by_pop_and_individuals(ts)
+    result_with_layout = _genotypes_by_sample_and_individuals(ts, layout=split_layout)
+    result_without_layout = _genotypes_by_sample_and_individuals(ts)
 
     assert list(result_with_layout) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]
     assert list(result_without_layout) == ["pop1", "pop2"]
@@ -1738,7 +1741,10 @@ def test_genotypes_by_pop_and_individuals_with_different_layout():
 
 
 def test_compute_num_den_lik_for_one_individual():
-    """Vérifie que la fonction _compute_num_den_lik_for_one_individual fonctionne correctement."""
+    """
+    Vérifie que la fonction _compute_num_den_lik_for_one_individual fonctionne
+    correctement.
+    """
     count = {203: 1, 200: 1, 197: 1}
     total_count = 3
     b = 1
@@ -1769,7 +1775,7 @@ def test_compute_num_den_lik_for_one_individual():
 
 
 def test_compute_LIK_for_one_locus():
-    length_by_pop = {
+    _length_by_sample = {
         "pop1": [(203, 203), (203, 203), (203, 193), (203, 203)],
         "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
     }
@@ -1779,14 +1785,14 @@ def test_compute_LIK_for_one_locus():
     }
 
     lik, present = _compute_LIK_for_one_locus(
-        length_by_pop, genotypes_by_pop, "pop1", "pop2"
+        _length_by_sample, genotypes_by_pop, "pop1", "pop2"
     )
     assert pytest.approx(lik) == 1.1175620386325875
     assert present
 
     # test avec une population absente
     lik, present = _compute_LIK_for_one_locus(
-        length_by_pop, genotypes_by_pop, "pop3", "pop2"
+        _length_by_sample, genotypes_by_pop, "pop3", "pop2"
     )
     assert pytest.approx(lik) == 0.0
     assert not present

@@ -240,12 +240,12 @@ def test_compute_summary_statistics_stats_filter_header(tmp_path, snp_context_hu
         snp_path=snp_context_human.snp_path,
         snp_file_type=snp_context_human.snp_file_type,
         loci_description=snp_context_human.loci_description,
-        count_samples=snp_context_human.count_samples,
+        counts_per_sample=snp_context_human.counts_per_sample,
         sex_ratio=snp_context_human.sex_ratio,
         maf_ratio=snp_context_human.maf_ratio,
         mrc_ratio=snp_context_human.mrc_ratio,
         reads_observed=snp_context_human.reads_observed,
-        sexes_per_population=snp_context_human.sexes_per_population,
+        sexes_per_sample=snp_context_human.sexes_per_sample,
     )
 
     summary_stats, values = compute_summary_statistics(

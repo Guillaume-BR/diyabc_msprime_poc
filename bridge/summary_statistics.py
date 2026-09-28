@@ -10,15 +10,15 @@ près), pas statistique.
 
 Trois familles, trois formats d'entrée, trois points d'entrée
 (compute_all_statistics* ci-dessous) :
-  - SNP IndSeq : liste de dicts {nom_population: [génotypes haploïdes
+  - SNP IndSeq : liste de dicts {nom_echantillon: [génotypes haploïdes
     0/1]}, un dict par locus -- la forme produite par
     ancestry_simulation.simulate_snp_genotypes.
-  - SNP PoolSeq : liste de dicts {nom_population: (nreads_dérivé,
+  - SNP PoolSeq : liste de dicts {nom_echantillon: (nreads_dérivé,
     nreads_total)}, un dict par locus -- la forme produite par
     ancestry_simulation.simulate_poolseq_reads_with_mrc_filter.
   - Séquences ADN : dict {nom_locus: tskit.TreeSequence mutée} -- la
     forme produite par ancestry_simulation.dna_mutation_simulation_
-    per_locus, tranchée par population via _genotype_matrix_by_population
+    per_locus, tranchée par échantillon via _genotype_matrix_by_population
     (format complètement différent des deux précédents, pas de liste de
     génotypes 0/1).
 
@@ -44,16 +44,16 @@ from bridge.loci_parser import parse_loci_description
 
 
 def _allele_freq(haploid_genotypes: list[int]) -> float:
-    """Calcule la fréquence de l'allèle dérivé (1) dans une population.
+    """Calcule la fréquence de l'allèle dérivé (1) dans un échantillon.
 
     Équivalent de locuslist[loc].freq[pop][1] dans le code C++.
 
     Args:
-        haploid_genotypes: Les génotypes (0/1) d'une population, un
+        haploid_genotypes: Les génotypes (0/1) d'un échantillon, un
             locus.
 
     Returns:
-        La fréquence de l'allèle dérivé (nan si population vide).
+        La fréquence de l'allèle dérivé (nan si échantillon vide).
     """
     n = len(haploid_genotypes)
     if n == 0:
@@ -62,18 +62,18 @@ def _allele_freq(haploid_genotypes: list[int]) -> float:
 
 
 def _q1(haploid_genotypes: list[int]) -> float:
-    """Calcule la probabilité d'identité par état intra-population.
+    """Calcule la probabilité d'identité par état intra-échantillon.
 
     Tirage SANS remise -- formule exacte de sumstat.cpp::q1 (cas SNP,
     bias=False) : `q1 = (y1*(y1-1) + y2*(y2-1)) / (n*(n-1))`, où
     y1, y2 = comptes d'allèles 0 et 1 (= freq * n).
 
     Args:
-        haploid_genotypes: Les génotypes (0/1) d'une population, un
+        haploid_genotypes: Les génotypes (0/1) d'un échantillon, un
             locus.
 
     Returns:
-        q1 (nan si population de taille <= 1).
+        q1 (nan si échantillon de taille <= 1).
     """
     n = len(haploid_genotypes)
     if n <= 1:
@@ -84,19 +84,19 @@ def _q1(haploid_genotypes: list[int]) -> float:
 
 
 def _q2(haploid_genotypes_a: list[int], haploid_genotypes_b: list[int]) -> float:
-    """Calcule la probabilité d'identité par état inter-populations.
+    """Calcule la probabilité d'identité par état inter-échantillons.
 
     Formule exacte de sumstat.cpp::q2 (cas SNP) :
     `q2 = (y11*y21 + y12*y22) / (n1*n2)`.
 
     Args:
-        haploid_genotypes_a: Les génotypes (0/1) de la population A, un
+        haploid_genotypes_a: Les génotypes (0/1) de l'échantillon A, un
             locus.
-        haploid_genotypes_b: Les génotypes (0/1) de la population B,
+        haploid_genotypes_b: Les génotypes (0/1) de l'échantillon B,
             même locus.
 
     Returns:
-        q2 (nan si l'une des deux populations est vide).
+        q2 (nan si l'une des deux échantillons est vide).
     """
     n1 = len(haploid_genotypes_a)
     n2 = len(haploid_genotypes_b)
@@ -116,18 +116,18 @@ def _q2(haploid_genotypes_a: list[int], haploid_genotypes_b: list[int]) -> float
 
 def _prepare_matrices(
     genotypes_per_locus: list[dict[str, list[int]]],
-    population_names: list[str],
+    sample_names: list[str],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Construit les matrices (npop, nloci) de comptes et fréquences.
+    """Construit les matrices (n_sample, n_loci) de comptes et fréquences.
 
     Appelé UNE SEULE FOIS dans compute_all_statistics et transmis via
     _mats à toutes les familles de statistiques -- évite de reconstruire
-    les matrices (npop × nloci) une fois par famille.
+    les matrices (n_sample x n_loci) une fois par famille.
 
     Args:
-        genotypes_per_locus: Liste de dicts {nom_population:
+        genotypes_per_locus: Liste de dicts {nom_echantillon:
             [génotype, ...]}, un dict par locus.
-        population_names: Les noms de population, dans l'ordre voulu
+        sample_names: Les noms d'échantillon, dans l'ordre voulu
             pour les lignes des matrices.
 
     Returns:
@@ -137,11 +137,11 @@ def _prepare_matrices(
         freq1 = counts / ns, freq0 = 1 - freq1.
     """
     counts = np.array(
-        [[sum(lg[p]) for lg in genotypes_per_locus] for p in population_names],
+        [[sum(lg[p]) for lg in genotypes_per_locus] for p in sample_names],
         dtype=float,
     )
     ns = np.array(
-        [[len(lg[p]) for lg in genotypes_per_locus] for p in population_names],
+        [[len(lg[p]) for lg in genotypes_per_locus] for p in sample_names],
         dtype=float,
     )
     freq1 = counts / ns
@@ -150,18 +150,18 @@ def _prepare_matrices(
 
 
 def _prepare_matrices_poolseq(
-    reads_per_locus: list[dict[str, tuple[int, int]]], population_names: list[str]
+    reads_per_locus: list[dict[str, tuple[int, int]]], sample_names: list[str]
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Construit les matrices (npop, nloci) de comptes et fréquences pour POOLSEQ.
+    """Construit les matrices (n_sample, n_loci) de comptes et fréquences pour POOLSEQ.
 
     Équivalent PoolSeq de _prepare_matrices -- même Returns, mais
     `counts`/`ns` viennent des lectures observées (reads), pas de
     génotypes individuels.
 
     Args:
-        reads_per_locus: Liste de dicts {nom_population: (nreads_dérivé,
+        reads_per_locus: Liste de dicts {nom_echantillon: (nreads_dérivé,
             nreads_total)}, un dict par locus.
-        population_names: Les noms de population, dans l'ordre voulu
+        sample_names: Les noms d'échantillon, dans l'ordre voulu
             pour les lignes des matrices.
 
     Returns:
@@ -173,14 +173,14 @@ def _prepare_matrices_poolseq(
     counts = np.array(
         [
             [reads_per_locus[loc][p][0] for loc in range(len(reads_per_locus))]
-            for p in population_names
+            for p in sample_names
         ],
         dtype=float,
     )
     ns = np.array(
         [
             [reads_per_locus[loc][p][1] for loc in range(len(reads_per_locus))]
-            for p in population_names
+            for p in sample_names
         ],
         dtype=float,
     )
@@ -259,24 +259,24 @@ def _half_arrangements(n: int, r: int) -> list[list[int]]:
 
 
 # ---------------------------------------------------------------------------
-# ML1 : proportion de loci monomorphes par population (cal_snfl, npop=1)
+# ML1 : proportion de loci monomorphes par échantillon (cal_snfl, n_sample=1)
 # ---------------------------------------------------------------------------
 
 
 def compute_ML1(
     genotypes_per_locus: list[dict[str, list[int]]],
-    population_names: list[str],
+    sample_names: list[str],
     _mats=None,
 ) -> dict[str, float]:
-    """ML1p_i : proportion de loci monomorphes dans la population i.
+    """ML1p_i : proportion de loci monomorphes dans l'échantillon i.
 
     Un locus est monomorphe si sum==0 (fixé ancestral) ou sum==n (fixé
     dérivé).
 
     Args:
-        genotypes_per_locus: Liste de dicts {nom_population:
+        genotypes_per_locus: Liste de dicts {nom_echantillon:
             [génotype, ...]}, un dict par locus.
-        population_names: Les noms de population.
+        sample_names: Les noms d'échantillon.
         _mats: Matrices (counts, ns, freq0, freq1) déjà calculées par
             _prepare_matrices (voir compute_all_statistics). Si None,
             calculées ici.
@@ -284,39 +284,36 @@ def compute_ML1(
     Returns:
         Un dict {"ML1p_i": valeur}.
     """
-    counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, population_names)
-    mono = (counts == 0) | (counts == ns)  # (npop, nloci) booléen
-    return {
-        f"ML1p_{i + 1}": float(mono[i].mean()) for i in range(len(population_names))
-    }
+    counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, sample_names)
+    mono = (counts == 0) | (counts == ns)  # (n_sample, n_loci) booléen
+    return {f"ML1p_{i + 1}": float(mono[i].mean()) for i in range(len(sample_names))}
 
 
 # ---------------------------------------------------------------------------
-# ML2 : proportion de loci fixés identiquement sur les paires (cal_snfl, npop=2)
+# ML2 : proportion de loci fixés identiquement sur les paires (cal_snfl, n_sample=2)
 # ---------------------------------------------------------------------------
 
 
 def compute_ML2(
     genotypes_per_locus: list[dict[str, list[int]]],
-    population_names: list[str],
+    sample_names: list[str],
     _mats=None,
 ) -> dict[str, float]:
     """ML2p_i.j : proportion de loci fixés au même allèle dans la paire (i, j).
 
-    Référence : cal_snfl(npop=2) -- freq_a == freq_b ∈ {0, 1}.
+    Référence : cal_snfl(n_sample=2) -- freq_a == freq_b ∈ {0, 1}.
 
     Args:
-        genotypes_per_locus: Liste de dicts {nom_population:
+        genotypes_per_locus: Liste de dicts {nom_echantillon:
             [génotype, ...]}, un dict par locus.
-        population_names: Les noms de population.
+        sample_names: Les noms d'échantillon.
         _mats: Voir compute_ML1.
 
     Returns:
-        Un dict {"ML2p_i.j": valeur}, une entrée par paire de
-        populations.
+        Un dict {"ML2p_i.j": valeur}, une entrée par paire d'échantillons.
     """
-    counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, population_names)
-    n = len(population_names)
+    counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, sample_names)
+    n = len(sample_names)
     results = {}
     for i in range(n):
         for j in range(i + 1, n):
@@ -327,31 +324,30 @@ def compute_ML2(
 
 
 # ---------------------------------------------------------------------------
-# ML3 : proportion de loci fixés identiquement sur les triplets (cal_snfl, npop=3)
+# ML3 : proportion de loci fixés identiquement sur les triplets (cal_snfl, n_sample=3)
 # ---------------------------------------------------------------------------
 
 
 def compute_ML3(
     genotypes_per_locus: list[dict[str, list[int]]],
-    population_names: list[str],
+    sample_names: list[str],
     _mats=None,
 ) -> dict[str, float]:
-    """ML3p_i.j.k : même logique que ML2, sur les triplets de populations.
+    """ML3p_i.j.k : même logique que ML2, sur les triplets d'échantillons.
 
-    Référence : cal_snfl(npop=3).
+    Référence : cal_snfl(n_sample=3).
 
     Args:
-        genotypes_per_locus: Liste de dicts {nom_population:
+        genotypes_per_locus: Liste de dicts {nom_echantillon:
             [génotype, ...]}, un dict par locus.
-        population_names: Les noms de population.
+        sample_names: Les noms d'échantillon.
         _mats: Voir compute_ML1.
 
     Returns:
-        Un dict {"ML3p_i.j.k": valeur}, une entrée par triplet de
-        populations.
+        Un dict {"ML3p_i.j.k": valeur}, une entrée par triplet d'échantillons.
     """
-    counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, population_names)
-    n = len(population_names)
+    counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, sample_names)
+    n = len(sample_names)
     results = {}
     for i in range(n):
         for j in range(i + 1, n):
@@ -367,13 +363,13 @@ def compute_ML3(
 
 
 # ---------------------------------------------------------------------------
-# HW / HB : hétérozygotie intra- et inter-population (cal_snhw, cal_snhb)
+# HW / HB : hétérozygotie intra- et inter-échantillon (cal_snhw, cal_snhb)
 # ---------------------------------------------------------------------------
 
 
 def compute_HW_HB(
     genotypes_per_locus: list[dict[str, list[int]]],
-    population_names: list[str],
+    sample_names: list[str],
     _mats=None,
 ) -> dict[str, float]:
     """HWm_i/HWv_i (intra-pop) et HBm_i.j/HBv_i.j (inter-pop).
@@ -384,28 +380,28 @@ def compute_HW_HB(
     utilisent ddof=1 (validé contre le C++).
 
     Args:
-        genotypes_per_locus: Liste de dicts {nom_population:
+        genotypes_per_locus: Liste de dicts {nom_echantillon:
             [génotype, ...]}, un dict par locus.
-        population_names: Les noms de population.
+        sample_names: Les noms d'échantillon.
         _mats: Voir compute_ML1.
 
     Returns:
         Un dict {"HWm_i": ..., "HWv_i": ..., "HBm_i.j": ...,
         "HBv_i.j": ...}.
     """
-    counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, population_names)
+    counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, sample_names)
     y1, y2 = ns - counts, counts
 
-    hw = 1.0 - (y1 * (y1 - 1) + y2 * (y2 - 1)) / (ns * (ns - 1))  # (npop, nloci)
+    hw = 1.0 - (y1 * (y1 - 1) + y2 * (y2 - 1)) / (ns * (ns - 1))  # (n_sample, n_loci)
 
-    npop = len(population_names)
+    n_sample = len(sample_names)
     results = {}
-    for i in range(npop):
+    for i in range(n_sample):
         results[f"HWm_{i + 1}"] = float(hw[i].mean())
         results[f"HWv_{i + 1}"] = float(hw[i].var(ddof=1))
 
-    for i in range(npop):
-        for j in range(i + 1, npop):
+    for i in range(n_sample):
+        for j in range(i + 1, n_sample):
             hb = 1.0 - (y1[i] * y1[j] + y2[i] * y2[j]) / (ns[i] * ns[j])
             key = f"{i + 1}.{j + 1}"
             results[f"HBm_{key}"] = float(hb.mean())
@@ -416,7 +412,7 @@ def compute_HW_HB(
 
 def compute_HW_HB_poolseq(
     reads_per_locus: list[dict[str, tuple[int, int]]],
-    population_names: list[str],
+    sample_names: list[str],
     pool_sizes: dict[str, int],
     _mats=None,
 ) -> dict[str, float]:
@@ -428,10 +424,10 @@ def compute_HW_HB_poolseq(
     absente du chemin IndSeq.
 
     Args:
-        reads_per_locus: Liste de dicts {nom_population: (nreads_dérivé,
+        reads_per_locus: Liste de dicts {nom_echantillon: (nreads_dérivé,
             nreads_total)}, un dict par locus.
-        population_names: Les noms de population.
-        pool_sizes: Dict {nom_population: taille_haploïde du pool},
+        sample_names: Les noms d'échantillon.
+        pool_sizes: Dict {nom_echantillon: taille_haploïde du pool},
             voir observed_data._parse_pool_header_line.
         _mats: Matrices (counts, ns, freq0, freq1) déjà calculées par
             _prepare_matrices_poolseq. Si None, calculées ici.
@@ -446,24 +442,24 @@ def compute_HW_HB_poolseq(
         ns,
         _,
         _,
-    ) = _mats or _prepare_matrices_poolseq(reads_per_locus, population_names)
-    npop = len(population_names)
-    ## Calcul de HWm et HWv pour chaque population
-    for i in range(npop):
+    ) = _mats or _prepare_matrices_poolseq(reads_per_locus, sample_names)
+    n_sample = len(sample_names)
+    ## Calcul de HWm et HWv pour chaque échantillon
+    for i in range(n_sample):
         r1 = counts[i]
         c1 = ns[i]
         r2 = c1 - r1
         s1 = r1 * (r1 - 1)
         s2 = r2 * (r2 - 1)
-        np_i = pool_sizes[population_names[i]]
+        np_i = pool_sizes[sample_names[i]]
         q1 = ((np_i / (c1 * (c1 - 1))) * (s1 + s2) - 1) / (np_i - 1)
         hw = 1 - q1
         results[f"HWm_{i + 1}"] = float(hw.mean())
         results[f"HWv_{i + 1}"] = float(hw.var(ddof=1))
 
-    # Calcul de HBm et HBv pour chaque paire de populations
-    for i in range(npop):
-        for j in range(i + 1, npop):
+    # Calcul de HBm et HBv pour chaque paire d'échantillons
+    for i in range(n_sample):
+        for j in range(i + 1, n_sample):
             r11 = counts[i]
             c1 = ns[i]
             r12 = c1 - r11
@@ -481,47 +477,47 @@ def compute_HW_HB_poolseq(
 
 
 # ---------------------------------------------------------------------------
-# FST1 : FST population-spécifique (cal_snfsti)
+# FST1 : FST échantillon-spécifique (cal_snfsti)
 # ---------------------------------------------------------------------------
 
 
 def compute_FST1(
     genotypes_per_locus: list[dict[str, list[int]]],
-    population_names: list[str],
+    sample_names: list[str],
     _mats=None,
 ) -> dict[str, float]:
     """FST1m_i = 1 - HWm_i / HBmoy_global, FST1v_i = HWv_i / HBmoy_global².
 
     HBmoy_global = moyenne de TOUS les HBm (toutes paires confondues) --
     confirmé dans cal_snfsti (sumstat.cpp), pas seulement les paires de
-    pop_i. FST1v est une propagation d'erreur analytique, pas une
+    samp_i. FST1v est une propagation d'erreur analytique, pas une
     variance empirique.
 
     Args:
-        genotypes_per_locus: Liste de dicts {nom_population:
+        genotypes_per_locus: Liste de dicts {nom_echantillon:
             [génotype, ...]}, un dict par locus.
-        population_names: Les noms de population.
+        sample_names: Les noms d'échantillon.
         _mats: Voir compute_ML1.
 
     Returns:
         Un dict {"FST1m_i": ..., "FST1v_i": ...}.
     """
-    counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, population_names)
+    counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, sample_names)
     y1, y2 = ns - counts, counts
 
-    hw = 1.0 - (y1 * (y1 - 1) + y2 * (y2 - 1)) / (ns * (ns - 1))  # (npop, nloci)
+    hw = 1.0 - (y1 * (y1 - 1) + y2 * (y2 - 1)) / (ns * (ns - 1))  # (n_sample, n_loci)
 
-    npop = len(population_names)
+    n_sample = len(sample_names)
     all_hbm = []
-    for i in range(npop):
-        for j in range(i + 1, npop):
+    for i in range(n_sample):
+        for j in range(i + 1, n_sample):
             hb = 1.0 - (y1[i] * y1[j] + y2[i] * y2[j]) / (ns[i] * ns[j])
             all_hbm.append(float(hb.mean()))
 
     hbmoy = float(np.mean(all_hbm)) if all_hbm else float("nan")
 
     results = {}
-    for i in range(npop):
+    for i in range(n_sample):
         hwm = float(hw[i].mean())
         hwv = float(hw[i].var(ddof=1))
         if hbmoy != 0:
@@ -536,7 +532,7 @@ def compute_FST1(
 
 def compute_FST1_poolseq(
     reads_per_locus: list[dict[str, tuple[int, int]]],
-    population_names: list[str],
+    sample_names: list[str],
     pool_sizes: dict[str, int],
     _mats=None,
 ) -> dict[str, float]:
@@ -549,32 +545,30 @@ def compute_FST1_poolseq(
     style que l'existant.
 
     Args:
-        reads_per_locus: Liste de dicts {nom_population: (nreads_dérivé,
+        reads_per_locus: Liste de dicts {nom_echantillon: (nreads_dérivé,
             nreads_total)}, un dict par locus.
-        population_names: Les noms de population.
-        pool_sizes: Dict {nom_population: taille_haploïde du pool}.
+        sample_names: Les noms d'échantillon.
+        pool_sizes: Dict {nom_echantillon: taille_haploïde du pool}.
         _mats: Voir compute_HW_HB_poolseq.
 
     Returns:
         Un dict {"FST1m_i": ..., "FST1v_i": ...}.
     """
-    counts, ns, _, _ = _mats or _prepare_matrices_poolseq(
-        reads_per_locus, population_names
-    )
-    npop = len(population_names)
+    counts, ns, _, _ = _mats or _prepare_matrices_poolseq(reads_per_locus, sample_names)
+    n_sample = len(sample_names)
 
-    hw_by_pop = []
-    for i in range(npop):
-        np_i = pool_sizes[population_names[i]]
+    hw_by_sample = []
+    for i in range(n_sample):
+        np_i = pool_sizes[sample_names[i]]
         r1, c1 = counts[i], ns[i]
         r2 = c1 - r1
         s1, s2 = r1 * (r1 - 1), r2 * (r2 - 1)
         q1 = ((np_i / (c1 * (c1 - 1))) * (s1 + s2) - 1) / (np_i - 1)
-        hw_by_pop.append(1.0 - q1)
+        hw_by_sample.append(1.0 - q1)
 
     all_hbm = []
-    for i in range(npop):
-        for j in range(i + 1, npop):
+    for i in range(n_sample):
+        for j in range(i + 1, n_sample):
             r11, c1 = counts[i], ns[i]
             r12 = c1 - r11
             r21, c2 = counts[j], ns[j]
@@ -586,9 +580,9 @@ def compute_FST1_poolseq(
     hbmoy = float(np.mean(all_hbm)) if all_hbm else float("nan")
 
     results = {}
-    for i in range(npop):
-        hwm = float(hw_by_pop[i].mean())
-        hwv = float(hw_by_pop[i].var(ddof=1))
+    for i in range(n_sample):
+        hwm = float(hw_by_sample[i].mean())
+        hwv = float(hw_by_sample[i].var(ddof=1))
         if hbmoy != 0:
             results[f"FST1m_{i + 1}"] = 1.0 - hwm / hbmoy
             results[f"FST1v_{i + 1}"] = hwv / (hbmoy**2)
@@ -604,42 +598,42 @@ def compute_FST1_poolseq(
 # ---------------------------------------------------------------------------
 
 
-def _fst_wc(loci, pops, _counts=None, _ns=None):
+def _fst_wc(loci, samples, _counts=None, _ns=None):
     """Calcule le FST de Weir & Cockerham, vectorisé sur tous les loci.
 
     Formule identique à cal_snfstd, toutes les opérations par-locus
-    faites en numpy sur des vecteurs de longueur nloci.
+    faites en numpy sur des vecteurs de longueur n_loci.
 
     Args:
-        loci: Liste de dicts {nom_population: [génotype, ...]}, un
+        loci: Liste de dicts {nom_echantillon: [génotype, ...]}, un
             dict par locus.
-        pops: Les noms de population à inclure dans ce calcul.
-        _counts: Matrice (len(pops), nloci) de comptes d'allèles
+        samples: Les noms d'échantillon à inclure dans ce calcul.
+        _counts: Matrice (len(samples), n_loci) de comptes d'allèles
             dérivés, déjà calculée -- passée comme slice de la matrice
             globale depuis compute_FST2/3/4 pour éviter de reconstruire
             les comptes locus par locus pour chaque sous-ensemble. Si
             None, calculée ici.
-        _ns: Matrice (len(pops), nloci) de tailles d'échantillon,
+        _ns: Matrice (len(samples), n_loci) de tailles d'échantillon,
             même principe que _counts.
 
     Returns:
         Le tuple (FSTm, FSTv).
     """
-    nloci = len(loci)
-    npop = len(pops)
+    n_loci = len(loci)
+    n_sample = len(samples)
 
     if _counts is not None and _ns is not None:
         counts, ns = _counts, _ns
     else:
-        counts = np.array([[sum(lg[p]) for lg in loci] for p in pops], dtype=float)
-        ns = np.array([[len(lg[p]) for lg in loci] for p in pops], dtype=float)
+        counts = np.array([[sum(lg[p]) for lg in loci] for p in samples], dtype=float)
+        ns = np.array([[len(lg[p]) for lg in loci] for p in samples], dtype=float)
 
     p1 = counts / ns
     p0 = 1.0 - p1
 
     S_1 = ns.sum(axis=0)
     S_2 = (ns**2).sum(axis=0)
-    n_d = float(npop)
+    n_d = float(n_sample)
 
     pi0 = (ns * p0).sum(axis=0) / S_1
     pi1 = (ns * p1).sum(axis=0) / S_1
@@ -661,38 +655,38 @@ def _fst_wc(loci, pops, _counts=None, _ns=None):
     dent = den.sum()
     fstm = numt / dent if abs(dent) > 0 else 0.0
 
-    sw2diff = nloci * (nloci - 1)
+    sw2diff = n_loci * (n_loci - 1)
     mean = xs.mean()
-    fstv = ((xs - mean) ** 2).sum() * nloci / sw2diff if sw2diff > 0 else 0.0
+    fstv = ((xs - mean) ** 2).sum() * n_loci / sw2diff if sw2diff > 0 else 0.0
 
     return float(fstm), float(fstv)
 
 
 def compute_FST2(
     genotypes_per_locus: list[dict[str, list[int]]],
-    population_names: list[str],
+    sample_names: list[str],
     _mats=None,
 ) -> dict[str, float]:
     """FST2m_i.j / FST2v_i.j : Weir & Cockerham par paire.
 
     Args:
-        genotypes_per_locus: Liste de dicts {nom_population:
+        genotypes_per_locus: Liste de dicts {nom_echantillon:
             [génotype, ...]}, un dict par locus.
-        population_names: Les noms de population.
+        sample_names: Les noms d'échantillon.
         _mats: Voir compute_ML1.
 
     Returns:
         Un dict {"FST2m_i.j": ..., "FST2v_i.j": ...}.
     """
-    counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, population_names)
-    npop = len(population_names)
+    counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, sample_names)
+    n_sample = len(sample_names)
     results = {}
-    for i in range(npop):
-        for j in range(i + 1, npop):
+    for i in range(n_sample):
+        for j in range(i + 1, n_sample):
             key = f"{i + 1}.{j + 1}"
             m, v = _fst_wc(
                 genotypes_per_locus,
-                [population_names[i], population_names[j]],
+                [sample_names[i], sample_names[j]],
                 _counts=counts[[i, j]],
                 _ns=ns[[i, j]],
             )
@@ -701,41 +695,41 @@ def compute_FST2(
     return results
 
 
-def _fst_wc_poolseq(pops, pool_sizes, _counts, _ns):
+def _fst_wc_poolseq(samples, pool_sizes, _counts, _ns):
     """Variante PoolSeq de _fst_wc (cal_snfstd, branche grouplist[gr].type==3).
 
     Calcul en DEUX passes (contrairement à l'IndSeq) : pi1/pi2 (moyennes
     pondérées par la profondeur de lecture) doivent être connues avant de
     calculer SSP. C_1/C_1_star mélangent la profondeur de lecture (`n`,
     variable par locus) et la VRAIE taille du pool (`c`, constante par
-    population) -- c'est ce mélange qui constitue la correction propre à
+    échantillon) -- c'est ce mélange qui constitue la correction propre à
     PoolSeq (le terme de variance intra-pool supplémentaire).
 
     L'agrégation finale (ratio de sommes num/den + variance via
     _forward_fill) est IDENTIQUE à _fst_wc -- confirmé par l'exploration
-    C++, même code d'agrégation pour les deux types de population.
+    C++, même code d'agrégation pour les deux types d'échantillon.
 
     Args:
-        pops: Les noms de population à inclure dans ce calcul.
-        pool_sizes: Dict {nom_population: taille_haploïde du pool}.
-        _counts: Matrice (len(pops), nloci) de lectures dérivées
+        samples: Les noms d'échantillon à inclure dans ce calcul.
+        pool_sizes: Dict {nom_echantillon: taille_haploïde du pool}.
+        _counts: Matrice (len(samples), n_loci) de lectures dérivées
             (nreads1), slice de la matrice globale -- même contrat que
             _fst_wc.
-        _ns: Matrice (len(pops), nloci) de profondeur de lecture
+        _ns: Matrice (len(samples), n_loci) de profondeur de lecture
             (nreads_total), même principe que _counts.
 
     Returns:
         Le tuple (FSTm, FSTv).
     """
-    x1, n = _counts, _ns  # (npop, nloci) : reads allèle1, profondeur de lecture
+    x1, n = _counts, _ns  # (n_sample, n_loci) : reads allèle1, profondeur de lecture
     x2 = n - x1
-    nloci = n.shape[1]
-    c = np.array([pool_sizes[p] for p in pops], dtype=float).reshape(-1, 1)
+    n_loci = n.shape[1]
+    c = np.array([pool_sizes[p] for p in samples], dtype=float).reshape(-1, 1)
 
     # --- Passe 1 ---
-    term = n / c + (c - 1) / c  # (npop, nloci)
-    C_1 = term.sum(axis=0)  # (nloci,)
-    C_1_star = (n * term).sum(axis=0)  # (nloci,)
+    term = n / c + (c - 1) / c  # (n_sample, n_loci)
+    C_1 = term.sum(axis=0)  # (n_loci,)
+    C_1_star = (n * term).sum(axis=0)  # (n_loci,)
     R_1 = n.sum(axis=0)
     R_2 = (n * n).sum(axis=0)
     SSI = (x1 - x1 * x1 / n + x2 - x2 * x2 / n).sum(axis=0)
@@ -764,42 +758,40 @@ def _fst_wc_poolseq(pops, pool_sizes, _counts, _ns):
     dent = den.sum()
     fstm = numt / dent if abs(dent) > 0 else 0.0
 
-    sw2diff = nloci * (nloci - 1)
+    sw2diff = n_loci * (n_loci - 1)
     mean = xs.mean()
-    fstv = ((xs - mean) ** 2).sum() * nloci / sw2diff if sw2diff > 0 else 0.0
+    fstv = ((xs - mean) ** 2).sum() * n_loci / sw2diff if sw2diff > 0 else 0.0
 
     return float(fstm), float(fstv)
 
 
 def compute_FST2_poolseq(
     reads_per_locus: list[dict[str, tuple[int, int]]],
-    population_names: list[str],
+    sample_names: list[str],
     pool_sizes: dict[str, int],
     _mats=None,
 ) -> dict[str, float]:
     """Variante PoolSeq de compute_FST2 : FST2m_i.j / FST2v_i.j par paire.
 
     Args:
-        reads_per_locus: Liste de dicts {nom_population: (nreads_dérivé,
+        reads_per_locus: Liste de dicts {nom_echantillon: (nreads_dérivé,
             nreads_total)}, un dict par locus.
-        population_names: Les noms de population.
-        pool_sizes: Dict {nom_population: taille_haploïde du pool}.
+        sample_names: Les noms d'échantillon.
+        pool_sizes: Dict {nom_echantillon: taille_haploïde du pool}.
         _mats: Voir compute_HW_HB_poolseq.
 
     Returns:
         Un dict {"FST2m_i.j": ..., "FST2v_i.j": ...}.
     """
-    counts, ns, _, _ = _mats or _prepare_matrices_poolseq(
-        reads_per_locus, population_names
-    )
-    npop = len(population_names)
+    counts, ns, _, _ = _mats or _prepare_matrices_poolseq(reads_per_locus, sample_names)
+    n_sample = len(sample_names)
     results = {}
-    for i in range(npop):
-        for j in range(i + 1, npop):
+    for i in range(n_sample):
+        for j in range(i + 1, n_sample):
             key = f"{i + 1}.{j + 1}"
-            pops = [population_names[i], population_names[j]]
+            samples = [sample_names[i], sample_names[j]]
             m, v = _fst_wc_poolseq(
-                pops, pool_sizes, _counts=counts[[i, j]], _ns=ns[[i, j]]
+                samples, pool_sizes, _counts=counts[[i, j]], _ns=ns[[i, j]]
             )
             results[f"FST2m_{key}"] = m
             results[f"FST2v_{key}"] = v
@@ -808,43 +800,41 @@ def compute_FST2_poolseq(
 
 def compute_FST3_FST4_poolseq(
     reads_per_locus: list[dict[str, tuple[int, int]]],
-    population_names: list[str],
+    sample_names: list[str],
     pool_sizes: dict[str, int],
     _mats=None,
 ) -> dict[str, float]:
     """Variante PoolSeq de compute_FST3_FST4_FSTG : FST3/FST4 sur triplets/quadruplets (COMB).
 
     Args:
-        reads_per_locus: Liste de dicts {nom_population: (nreads_dérivé,
+        reads_per_locus: Liste de dicts {nom_echantillon: (nreads_dérivé,
             nreads_total)}, un dict par locus.
-        population_names: Les noms de population.
-        pool_sizes: Dict {nom_population: taille_haploïde du pool}.
+        sample_names: Les noms d'échantillon.
+        pool_sizes: Dict {nom_echantillon: taille_haploïde du pool}.
         _mats: Voir compute_HW_HB_poolseq.
 
     Returns:
         Un dict {"FST3m_i.j.k": ..., "FST3v_i.j.k": ...} et, s'il y a
-        au moins 4 populations, {"FST4m_i.j.k.l": ...,
+        au moins 4 échantillons, {"FST4m_i.j.k.l": ...,
         "FST4v_i.j.k.l": ...}.
     """
-    counts, ns, _, _ = _mats or _prepare_matrices_poolseq(
-        reads_per_locus, population_names
-    )
-    npop = len(population_names)
+    counts, ns, _, _ = _mats or _prepare_matrices_poolseq(reads_per_locus, sample_names)
+    n_sample = len(sample_names)
     results = {}
 
-    for combo in combinations(range(npop), 3):
+    for combo in combinations(range(n_sample), 3):
         idx = list(combo)
         key = ".".join(str(i + 1) for i in idx)
-        pops = [population_names[i] for i in idx]
-        m, v = _fst_wc_poolseq(pops, pool_sizes, _counts=counts[idx], _ns=ns[idx])
+        samples = [sample_names[i] for i in idx]
+        m, v = _fst_wc_poolseq(samples, pool_sizes, _counts=counts[idx], _ns=ns[idx])
         results[f"FST3m_{key}"] = m
         results[f"FST3v_{key}"] = v
 
-    for combo in combinations(range(npop), 4):
+    for combo in combinations(range(n_sample), 4):
         idx = list(combo)
         key = ".".join(str(i + 1) for i in idx)
-        pops = [population_names[i] for i in idx]
-        m, v = _fst_wc_poolseq(pops, pool_sizes, _counts=counts[idx], _ns=ns[idx])
+        samples = [sample_names[i] for i in idx]
+        m, v = _fst_wc_poolseq(samples, pool_sizes, _counts=counts[idx], _ns=ns[idx])
         results[f"FST4m_{key}"] = m
         results[f"FST4v_{key}"] = v
 
@@ -853,52 +843,52 @@ def compute_FST3_FST4_poolseq(
 
 def compute_FST3_FST4_FSTG(
     genotypes_per_locus: list[dict[str, list[int]]],
-    population_names: list[str],
+    sample_names: list[str],
     _mats=None,
 ) -> dict[str, float]:
     """FST3/FST4 : Weir & Cockerham sur triplets et quadruplets (COMB).
 
     Ne calcule PAS `FSTG` malgré son nom, seulement FST3/FST4 --
-    `FSTG` (FST global, toutes populations combinées d'un coup, même
-    `cal_snfstd` que FST2/3/4 avec npop=0, voir statdefs.cpp:184) n'est
+    `FSTG` (FST global, tous échantillons combinés d'un coup, même
+    `cal_snfstd` que FST2/3/4 avec n_sample=0, voir statdefs.cpp:184) n'est
     implémenté nulle part dans ce module. Non bloquant en pratique :
     aucun header.txt de ce dépôt ne le déclare dans sa section 'group
     summary statistics', donc `stats_filter="HEADER"` ne le demande
     jamais.
 
     Args:
-        genotypes_per_locus: Liste de dicts {nom_population:
+        genotypes_per_locus: Liste de dicts {nom_echantillon:
             [génotype, ...]}, un dict par locus.
-        population_names: Les noms de population.
+        sample_names: Les noms d'échantillon.
         _mats: Voir compute_ML1.
 
     Returns:
         Un dict {"FST3m_i.j.k": ..., "FST3v_i.j.k": ...} et, s'il y a
-        au moins 4 populations, {"FST4m_i.j.k.l": ...,
+        au moins 4 échantillons, {"FST4m_i.j.k.l": ...,
         "FST4v_i.j.k.l": ...}.
     """
-    counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, population_names)
-    npop = len(population_names)
+    counts, ns, _, _ = _mats or _prepare_matrices(genotypes_per_locus, sample_names)
+    n_sample = len(sample_names)
     results = {}
 
-    for combo in combinations(range(npop), 3):
+    for combo in combinations(range(n_sample), 3):
         idx = list(combo)
         key = ".".join(str(i + 1) for i in idx)
         m, v = _fst_wc(
             genotypes_per_locus,
-            [population_names[i] for i in idx],
+            [sample_names[i] for i in idx],
             _counts=counts[idx],
             _ns=ns[idx],
         )
         results[f"FST3m_{key}"] = m
         results[f"FST3v_{key}"] = v
 
-    for combo in combinations(range(npop), 4):
+    for combo in combinations(range(n_sample), 4):
         idx = list(combo)
         key = ".".join(str(i + 1) for i in idx)
         m, v = _fst_wc(
             genotypes_per_locus,
-            [population_names[i] for i in idx],
+            [sample_names[i] for i in idx],
             _counts=counts[idx],
             _ns=ns[idx],
         )
@@ -915,7 +905,7 @@ def compute_FST3_FST4_FSTG(
 
 def compute_NEI(
     genotypes_per_locus: list[dict[str, list[int]]],
-    population_names: list[str],
+    sample_names: list[str],
     _mats=None,
 ) -> dict[str, float]:
     """NEIm_i.j et NEIv_i.j : distance de Nei (1972) par paire, vectorisée.
@@ -925,25 +915,25 @@ def compute_NEI(
     reproduit via _forward_fill.
 
     Args:
-        genotypes_per_locus: Liste de dicts {nom_population:
+        genotypes_per_locus: Liste de dicts {nom_echantillon:
             [génotype, ...]}, un dict par locus.
-        population_names: Les noms de population.
+        sample_names: Les noms d'échantillon.
         _mats: Voir compute_ML1.
 
     Returns:
         Un dict {"NEIm_i.j": ..., "NEIv_i.j": ...}.
     """
     counts, ns, freq0, freq1 = _mats or _prepare_matrices(
-        genotypes_per_locus, population_names
+        genotypes_per_locus, sample_names
     )
-    nloci = len(genotypes_per_locus)
+    n_loci = len(genotypes_per_locus)
     f, g = freq0, freq1
-    norm = np.sqrt(f * f + g * g)  # (npop, nloci)
-    npop = len(population_names)
+    norm = np.sqrt(f * f + g * g)  # (n_sample, n_loci)
+    n_sample = len(sample_names)
     results = {}
 
-    for i in range(npop):
-        for j in range(i + 1, npop):
+    for i in range(n_sample):
+        for j in range(i + 1, n_sample):
             denom = norm[i] * norm[j]
             valid = denom > 0
             nei = np.where(
@@ -954,11 +944,11 @@ def compute_NEI(
             xs = _forward_fill(nei, valid, fill=0.0)
 
             key = f"{i + 1}.{j + 1}"
-            sw2diff = nloci * (nloci - 1)
+            sw2diff = n_loci * (n_loci - 1)
             mean = xs.mean()
             results[f"NEIm_{key}"] = float(mean)
             results[f"NEIv_{key}"] = (
-                float(((xs - mean) ** 2).sum() * nloci / sw2diff)
+                float(((xs - mean) ** 2).sum() * n_loci / sw2diff)
                 if sw2diff > 0
                 else 0.0
             )
@@ -973,7 +963,7 @@ def compute_NEI(
 
 def compute_AML(
     genotypes_per_locus: list[dict[str, list[int]]],
-    population_names: list[str],
+    sample_names: list[str],
     _mats=None,
 ) -> dict[str, float]:
     """AMLm / AMLv : coefficient d'admixture ML sur triplets HALF.
@@ -984,26 +974,24 @@ def compute_AML(
     sous-ensemble informatif.
 
     Args:
-        genotypes_per_locus: Liste de dicts {nom_population:
+        genotypes_per_locus: Liste de dicts {nom_echantillon:
             [génotype, ...]}, un dict par locus.
-        population_names: Les noms de population.
+        sample_names: Les noms d'échantillon.
         _mats: Voir compute_ML1.
 
     Returns:
         Un dict {"AMLm_h.p1.p2": ..., "AMLv_h.p1.p2": ...}, une entrée
-        par arrangement HALF de 3 populations.
+        par arrangement HALF de 3 échantillons.
     """
-    counts, ns, freq0, _ = _mats or _prepare_matrices(
-        genotypes_per_locus, population_names
-    )
-    npop = len(population_names)
+    counts, ns, freq0, _ = _mats or _prepare_matrices(genotypes_per_locus, sample_names)
+    n_sample = len(sample_names)
     results = {}
 
-    for t in _half_arrangements(npop, 3):
+    for t in _half_arrangements(n_sample, 3):
         h, p1, p2 = t[0], t[1], t[2]
         key = f"{h + 1}.{p1 + 1}.{p2 + 1}"
 
-        f1 = freq0[p1]  # freq allèle 0 dans parent 1  (nloci,)
+        f1 = freq0[p1]  # freq allèle 0 dans parent 1  (n_loci,)
         f2 = freq0[p2]  # freq allèle 0 dans parent 2
         f3 = freq0[h]  # freq allèle 0 dans l'hybride
 
@@ -1028,7 +1016,7 @@ def compute_AML(
 
 def compute_F3(
     genotypes_per_locus: list[dict[str, list[int]]],
-    population_names: list[str],
+    sample_names: list[str],
     _mats=None,
 ) -> dict[str, float]:
     """F3m/F3v sur triplets HALF.
@@ -1038,27 +1026,25 @@ def compute_F3(
     directement.
 
     Args:
-        genotypes_per_locus: Liste de dicts {nom_population:
+        genotypes_per_locus: Liste de dicts {nom_echantillon:
             [génotype, ...]}, un dict par locus.
-        population_names: Les noms de population.
+        sample_names: Les noms d'échantillon.
         _mats: Voir compute_ML1.
 
     Returns:
         Un dict {"F3m_i0.i1.i2": ..., "F3v_i0.i1.i2": ...}, une entrée
-        par arrangement HALF de 3 populations.
+        par arrangement HALF de 3 échantillons.
     """
-    counts, ns, freq0, _ = _mats or _prepare_matrices(
-        genotypes_per_locus, population_names
-    )
-    npop = len(population_names)
+    counts, ns, freq0, _ = _mats or _prepare_matrices(genotypes_per_locus, sample_names)
+    n_sample = len(sample_names)
     results = {}
 
     # --- F3 ---
-    for t in _half_arrangements(npop, 3):
+    for t in _half_arrangements(n_sample, 3):
         i0, i1, i2 = t[0], t[1], t[2]
         key = f"{i0 + 1}.{i1 + 1}.{i2 + 1}"
 
-        np_ = ns[i0]  # nb lignées dans l'hybride  (nloci,)
+        np_ = ns[i0]  # nb lignées dans l'hybride  (n_loci,)
         f1 = freq0[i0]  # freq allèle 0 dans l'hybride
         f2 = freq0[i1]  # freq allèle 0 dans parent 1
         f3 = freq0[i2]  # freq allèle 0 dans parent 2
@@ -1074,7 +1060,7 @@ def compute_F3(
 
 def compute_F3_poolseq(
     reads_per_locus: list[dict[str, tuple[int, int]]],
-    population_names: list[str],
+    sample_names: list[str],
     pool_sizes: dict[str, int],
     _mats=None,
 ) -> dict[str, float]:
@@ -1085,32 +1071,30 @@ def compute_F3_poolseq(
     `beta_XY = (aXp*aYp)/(cXp*cYp)`.
 
     `np` = taille du pool (VRAIE, pas la profondeur de lecture) de la
-    population hybride -- vient de pool_sizes, pas de `ns`/`_mats`
+    échantillon hybride -- vient de pool_sizes, pas de `ns`/`_mats`
     (contrairement à ns, qui est la profondeur de lecture, variable par
     locus). Agrégation identique à compute_F3 (mean/var(ddof=1) simples
     sur les loci, pas de ratio de sommes).
 
     Args:
-        reads_per_locus: Liste de dicts {nom_population: (nreads_dérivé,
+        reads_per_locus: Liste de dicts {nom_echantillon: (nreads_dérivé,
             nreads_total)}, un dict par locus.
-        population_names: Les noms de population.
-        pool_sizes: Dict {nom_population: taille_haploïde du pool}.
+        sample_names: Les noms d'échantillon.
+        pool_sizes: Dict {nom_echantillon: taille_haploïde du pool}.
         _mats: Voir compute_HW_HB_poolseq.
 
     Returns:
         Un dict {"F3m_i0.i1.i2": ..., "F3v_i0.i1.i2": ...}.
     """
-    counts, ns, _, _ = _mats or _prepare_matrices_poolseq(
-        reads_per_locus, population_names
-    )
-    npop = len(population_names)
+    counts, ns, _, _ = _mats or _prepare_matrices_poolseq(reads_per_locus, sample_names)
+    n_sample = len(sample_names)
     results = {}
 
-    for t in _half_arrangements(npop, 3):
+    for t in _half_arrangements(n_sample, 3):
         i0, i1, i2 = t[0], t[1], t[2]
         key = f"{i0 + 1}.{i1 + 1}.{i2 + 1}"
 
-        np_i0 = pool_sizes[population_names[i0]]
+        np_i0 = pool_sizes[sample_names[i0]]
 
         a1p, c1p = counts[i0], ns[i0]
         a2p, c2p = counts[i1], ns[i1]
@@ -1132,7 +1116,7 @@ def compute_F3_poolseq(
 
 def compute_F4(
     genotypes_per_locus: list[dict[str, list[int]]],
-    population_names: list[str],
+    sample_names: list[str],
     _mats=None,
 ) -> dict[str, float]:
     """F4m/F4v sur quadruplets HALF.
@@ -1141,23 +1125,21 @@ def compute_F4(
     directement.
 
     Args:
-        genotypes_per_locus: Liste de dicts {nom_population:
+        genotypes_per_locus: Liste de dicts {nom_echantillon:
             [génotype, ...]}, un dict par locus.
-        population_names: Les noms de population.
+        sample_names: Les noms d'échantillon.
         _mats: Voir compute_ML1.
 
     Returns:
         Un dict {"F4m_ia.ib.ic.id": ..., "F4v_ia.ib.ic.id": ...}, une
-        entrée par arrangement HALF de 4 populations.
+        entrée par arrangement HALF de 4 échantillons.
     """
-    counts, ns, freq0, _ = _mats or _prepare_matrices(
-        genotypes_per_locus, population_names
-    )
-    npop = len(population_names)
+    counts, ns, freq0, _ = _mats or _prepare_matrices(genotypes_per_locus, sample_names)
+    n_sample = len(sample_names)
     results = {}
 
     # --- F4 ---
-    for t in _half_arrangements(npop, 4):
+    for t in _half_arrangements(n_sample, 4):
         ia, ib, ic, id_ = t[0], t[1], t[2], t[3]
         key = f"{ia + 1}.{ib + 1}.{ic + 1}.{id_ + 1}"
 
@@ -1183,29 +1165,31 @@ def _genotype_matrix_by_population(
     *,
     layout: list[tuple[str, np.ndarray]] | None = None,
 ) -> dict[str, np.ndarray]:
-    """Découpe la matrice de génotypes d'un locus ADN par population.
+    """Découpe la matrice de génotypes d'un locus ADN par échantillon.
 
     genotype_matrix() n'est appelé qu'UNE FOIS pour toute la
-    TreeSequence, puis tranché par population via fancy indexing (pas
+    TreeSequence, puis tranché par échantillon via fancy indexing (pas
     de reconstruction par sample).
 
     Args:
         tree_sequence: La TreeSequence mutée d'un locus.
-        layout: [(nom_population, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par population à utilisé par le chemin sériel, où un échantillon n'est plus sa propre population
+        layout: [(nom_echantillon, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par échantillon à utilisé par le chemin sériel, où un échantillon n'est plus sa propre échantillon
 
     Returns:
-        Un dict {nom_pop: matrice (n_sites, n_samples_pop)} --
+        Un dict {nom_echantillon: matrice (n_sites, n_samples_pop)} --
         convention native de tskit (genotype_matrix() est déjà (sites,
         samples)), pas de transposition.
     """
     genotype_matrix = tree_sequence.genotype_matrix()
     if layout is None:
         layout = compute_population_layout(tree_sequence)
-    return {pop_name: genotype_matrix[:, sample_ids] for pop_name, sample_ids in layout}
+    return {
+        samp_name: genotype_matrix[:, sample_ids] for samp_name, sample_ids in layout
+    }
 
 
 # ---------------------------------------------------------------------------
-# NSS : nombre de sites ségrégeants par population
+# NSS : nombre de sites ségrégeants par échantillon
 # ---------------------------------------------------------------------------
 
 
@@ -1238,31 +1222,31 @@ def _count_segregating_sites(matrix: np.ndarray) -> int:
         Le nombre de sites ségrégeants.
 
     Raises:
-        ValueError: Si matrix.shape[1] == 0 (population sans échantillon).
+        ValueError: Si matrix.shape[1] == 0 (échantillon sans échantillon).
     """
     return int(np.sum(_segregating_sites_mask(matrix)))
 
 
 def compute_NSS(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule NSS_i (cal_nss1p) : pour chaque population, la moyenne du
+    """Calcule NSS_i (cal_nss1p) : pour chaque échantillon, la moyenne du
     nombre de sites ségrégeants sur tous les loci du groupe passé en
     argument (un groupe = les TreeSequences des loci séquence d'un même
     `group Gx` du header, ex. les 5 loci <A> de G2).
 
-    `population_names` fixe explicitement les clés du dict retourné (comme
-    compute_ML1/compute_HW_HB) -- chaque population attendue a toujours une
+    `sample_names` fixe explicitement les clés du dict retourné (comme
+    compute_ML1/compute_HW_HB) -- chaque échantillon attendu a toujours une
     valeur (0.0 par défaut, comme le `res = 0.0` du C++), même si
     `tree_sequences` est vide, plutôt que d'être silencieusement absente du
     résultat.
 
-    Suppose que toutes les populations de `population_names` sont présentes
+    Suppose que toutes les échantillons de `sample_names` sont présentes
     sur tous les loci du groupe (divise par `len(tree_sequences)`, pas par
-    un décompte par population comme le `nl` du C++ -- lève un KeyError si
+    un décompte par échantillon comme le `nl` du C++ -- lève un KeyError si
     ce n'est pas le cas plutôt que d'exclure silencieusement ce locus,
     contrairement au C++) -- vérifié vrai sur toy_example2_ms_dna, pas
     garanti en général.
@@ -1270,14 +1254,14 @@ def compute_NSS(
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
-        population_names: Les populations attendues.
+        sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Un dict {nom_population: valeur_moyenne}.
+        Un dict {nom_echantillon: valeur_moyenne}.
     """
     num_loci = len(tree_sequences)
-    mean_segregating_sites = {pop_name: 0.0 for pop_name in population_names}
+    mean_segregating_sites = {samp_name: 0.0 for samp_name in sample_names}
 
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
@@ -1285,19 +1269,19 @@ def compute_NSS(
 
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
-        for pop_name in population_names:
-            matrix = genotype_matrices[pop_name]
-            mean_segregating_sites[pop_name] += _count_segregating_sites(matrix)
+        for samp_name in sample_names:
+            matrix = genotype_matrices[samp_name]
+            mean_segregating_sites[samp_name] += _count_segregating_sites(matrix)
 
     if num_loci > 0:
-        for pop_name in population_names:
-            mean_segregating_sites[pop_name] /= num_loci
+        for samp_name in sample_names:
+            mean_segregating_sites[samp_name] /= num_loci
 
     return mean_segregating_sites
 
 
 # ---------------------------------------------------------------------------
-# NDH : nombre d'haplotypes distincts par population
+# NDH : nombre d'haplotypes distincts par échantillon
 # ---------------------------------------------------------------------------
 
 
@@ -1311,7 +1295,7 @@ def _count_distinct_haplotypes(matrix: np.ndarray) -> int:
         Le nombre d'haplotypes distincts (colonnes uniques).
 
     Raises:
-        ValueError: Si matrix.shape[1] == 0 (population sans échantillon).
+        ValueError: Si matrix.shape[1] == 0 (échantillon sans échantillon).
     """
     if matrix.shape[1] == 0:
         raise ValueError("La matrice de génotypes est vide.")
@@ -1323,42 +1307,42 @@ def _count_distinct_haplotypes(matrix: np.ndarray) -> int:
 
 def compute_NHA(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule le nombre moyen d'haplotypes distincts par population sur un groupe de loci.
+    """Calcule le nombre moyen d'haplotypes distincts par échantillon sur un groupe de loci.
 
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
-        population_names: Les populations attendues.
+        sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Un dict {nom_population: valeur_moyenne}.
+        Un dict {nom_echantillon: valeur_moyenne}.
     """
     num_loci = len(tree_sequences)
-    mean_distinct_haplotypes = {pop_name: 0.0 for pop_name in population_names}
+    mean_distinct_haplotypes = {samp_name: 0.0 for samp_name in sample_names}
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
 
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
-        for pop_name in population_names:
-            matrix = genotype_matrices[pop_name]
-            mean_distinct_haplotypes[pop_name] += _count_distinct_haplotypes(matrix)
+        for samp_name in sample_names:
+            matrix = genotype_matrices[samp_name]
+            mean_distinct_haplotypes[samp_name] += _count_distinct_haplotypes(matrix)
 
     if num_loci > 0:
-        for pop_name in population_names:
-            mean_distinct_haplotypes[pop_name] /= num_loci
+        for samp_name in sample_names:
+            mean_distinct_haplotypes[samp_name] /= num_loci
 
     return mean_distinct_haplotypes
 
 
 # ---------------------------------------------------------------------------
-# MDP/VDP : moyenne et variance de différences de paires (pairwise differences) par population
+# MDP/VDP : moyenne et variance de différences de paires (pairwise differences) par échantillon
 # ---------------------------------------------------------------------------
 
 
@@ -1374,7 +1358,7 @@ def _pairwise_hamming_distances(matrix: np.ndarray) -> np.ndarray:
         (n_samples, n_samples) complète.
 
     Raises:
-        ValueError: Si matrix.shape[1] == 0 (population sans échantillon).
+        ValueError: Si matrix.shape[1] == 0 (échantillon sans échantillon).
     """
 
     if matrix.shape[1] == 0:
@@ -1387,29 +1371,29 @@ def _pairwise_hamming_distances(matrix: np.ndarray) -> np.ndarray:
 
 def compute_MPD(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule MPD_i (cal_mpd1p) : pour chaque population, la moyenne du
+    """Calcule MPD_i (cal_mpd1p) : pour chaque échantillon, la moyenne du
     nombre de différences par paire (distance de Hamming) sur tous les
     loci du groupe passé en argument (un groupe = les TreeSequences des
     loci séquence d'un même `group Gx` du header).
 
-    `population_names` fixe explicitement les clés du dict retourné --
-    chaque population attendue a toujours une valeur (0.0 par défaut,
+    `sample_names` fixe explicitement les clés du dict retourné --
+    chaque échantillon attendu a toujours une valeur (0.0 par défaut,
     comme le `res = 0.0` du C++), même si `tree_sequences` est vide.
 
     Contrairement à compute_NSS/compute_NHA
     (qui divisent par `len(tree_sequences)`), le
-    dénominateur ici est un compteur PAR POPULATION (comme le `nl` de
-    cal_mpd1p) : un locus où une population a moins de 2 échantillons
+    dénominateur ici est un compteur PAR ECHANTILLON (comme le `nl` de
+    cal_mpd1p) : un locus où un échantillon compte moins de deux séquences
     donne 0 paire (`_pairwise_hamming_distances` retourne un vecteur
-    vide), auquel cas ce locus est exclu du calcul pour cette population
+    vide), auquel cas ce locus est exclu du calcul pour cet échantillon
     -- ni ajouté à la somme, ni compté au dénominateur -- plutôt que de
     laisser un `nan` (moyenne d'un vecteur vide) empoisonner le résultat.
 
-    Suppose quand même que toutes les populations de `population_names`
+    Suppose quand même que toutes les échantillons de `sample_names`
     sont présentes (au moins 1 échantillon) sur tous les loci du groupe
     -- lève un KeyError si ce n'est pas le cas, comme les autres
     fonctions `compute_*` de ce module.
@@ -1417,58 +1401,58 @@ def compute_MPD(
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
-        population_names: Les populations attendues.
+        sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Un dict {nom_population: valeur_moyenne}.
+        Un dict {nom_echantillon: valeur_moyenne}.
     """
-    mean_pairwise_differences = {pop_name: 0.0 for pop_name in population_names}
-    valid_loci_count = {pop_name: 0 for pop_name in population_names}
+    mean_pairwise_differences = {samp_name: 0.0 for samp_name in sample_names}
+    valid_loci_count = {samp_name: 0 for samp_name in sample_names}
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
-        for pop_name in population_names:
-            matrix = genotype_matrices[pop_name]
+        for samp_name in sample_names:
+            matrix = genotype_matrices[samp_name]
             pairwise_distances = _pairwise_hamming_distances(matrix)
             if len(pairwise_distances) > 0:
-                mean_pairwise_differences[pop_name] += pairwise_distances.mean()
-                valid_loci_count[pop_name] += 1
+                mean_pairwise_differences[samp_name] += pairwise_distances.mean()
+                valid_loci_count[samp_name] += 1
 
-    for pop_name in population_names:
-        if valid_loci_count[pop_name] > 0:
-            mean_pairwise_differences[pop_name] /= valid_loci_count[pop_name]
+    for samp_name in sample_names:
+        if valid_loci_count[samp_name] > 0:
+            mean_pairwise_differences[samp_name] /= valid_loci_count[samp_name]
 
     return mean_pairwise_differences
 
 
 def compute_VPD(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule VPD_i (cal_vpd1p) : pour chaque population, la variance du
+    """Calcule VPD_i (cal_vpd1p) : pour chaque échantillon, la variance du
     nombre de différences par paire (distance de Hamming) sur tous les
     loci du groupe passé en argument (un groupe = les TreeSequences des
     loci séquence d'un même `group Gx` du header).
 
-    `population_names` fixe explicitement les clés du dict retourné --
-    chaque population attendue a toujours une valeur (0.0 par défaut,
+    `sample_names` fixe explicitement les clés du dict retourné --
+    chaque échantillon attendu a toujours une valeur (0.0 par défaut,
     comme le `res = 0.0` du C++), même si `tree_sequences` est vide.
 
     Contrairement à compute_NSS/compute_NHA
     (qui divisent par `len(tree_sequences)`), le
-    dénominateur ici est un compteur PAR POPULATION (comme le `nl` de
-    cal_vpd1p) : un locus où une population a moins de 2 échantillons
+    dénominateur ici est un compteur PAR ECHANTILLON (comme le `nl` de
+    cal_vpd1p) : un locus où un échantillon compte moins de deux séquences
     donne 0 paire (`_pairwise_hamming_distances` retourne un vecteur
-    vide), auquel cas ce locus est exclu du calcul pour cette population
+    vide), auquel cas ce locus est exclu du calcul pour cet échantillon
     -- ni ajouté à la somme, ni compté au dénominateur -- plutôt que de
     laisser un `nan` (variance d'un vecteur vide) empoisonner le résultat.
 
-    Suppose quand même que toutes les populations de `population_names`
+    Suppose quand même que toutes les échantillons de `sample_names`
     sont présentes (au moins 1 échantillon) sur tous les loci du groupe
     -- lève un KeyError si ce n'est pas le cas, comme les autres
     fonctions `compute_*` de ce module.
@@ -1476,37 +1460,37 @@ def compute_VPD(
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
-        population_names: Les populations attendues.
+        sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Un dict {nom_population: valeur_variance}.
+        Un dict {nom_echantillon: valeur_variance}.
     """
-    variance_pairwise_differences = {pop_name: 0.0 for pop_name in population_names}
-    valid_loci_count = {pop_name: 0 for pop_name in population_names}
+    variance_pairwise_differences = {samp_name: 0.0 for samp_name in sample_names}
+    valid_loci_count = {samp_name: 0 for samp_name in sample_names}
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
-        for pop_name in population_names:
-            matrix = genotype_matrices[pop_name]
+        for samp_name in sample_names:
+            matrix = genotype_matrices[samp_name]
             pairwise_distances = _pairwise_hamming_distances(matrix)
             if len(pairwise_distances) > 1:
-                variance_pairwise_differences[pop_name] += pairwise_distances.var(
+                variance_pairwise_differences[samp_name] += pairwise_distances.var(
                     ddof=1
                 )
-                valid_loci_count[pop_name] += 1
+                valid_loci_count[samp_name] += 1
 
-    for pop_name in population_names:
-        if valid_loci_count[pop_name] > 0:
-            variance_pairwise_differences[pop_name] /= valid_loci_count[pop_name]
+    for samp_name in sample_names:
+        if valid_loci_count[samp_name] > 0:
+            variance_pairwise_differences[samp_name] /= valid_loci_count[samp_name]
 
     return variance_pairwise_differences
 
 
 # ---------------------------------------------------------------------------
-# DTA : distance de Tajima par population
+# DTA : distance de Tajima par échantillon
 # ---------------------------------------------------------------------------
 
 
@@ -1536,7 +1520,7 @@ def _tajima_constants(n_samples: int) -> tuple[float, float, float]:
 
 
 def _tajima_d_per_locus(matrix: np.ndarray) -> float | None:
-    """D de Tajima (cal_dta1pl) pour UNE population sur UN locus.
+    """D de Tajima (cal_dta1pl) pour UN échantillon sur UN locus.
 
     `D = (pi - S/a1) / sqrt(e1*S + e2*S*(S-1))` -- pi = MPD (moyenne des
     différences par paire), S = NSS (nombre de sites ségrégeants),
@@ -1573,28 +1557,28 @@ def _tajima_d_per_locus(matrix: np.ndarray) -> float | None:
 
 def compute_DTA(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule DTA_i (cal_dta1p) : pour chaque population, la moyenne du
+    """Calcule DTA_i (cal_dta1p) : pour chaque échantillon, la moyenne du
     D de Tajima (_tajima_d_per_locus) sur tous les loci du groupe passé
     en argument (un groupe = les TreeSequences des loci séquence d'un
     même `group Gx` du header).
 
-    `population_names` fixe explicitement les clés du dict retourné --
-    chaque population attendue a toujours une valeur (0.0 par défaut,
+    `sample_names` fixe explicitement les clés du dict retourné --
+    chaque échantillon attendu a toujours une valeur (0.0 par défaut,
     comme le `res = 0.0` du C++), même si `tree_sequences` est vide.
 
     Comme compute_MPD/variance_pairwise_
     differences_per_group, le dénominateur est un compteur PAR
-    POPULATION (le `nl` de cal_dta1p) : un locus où `_tajima_d_per_locus`
+    SAMPLE (le `nl` de cal_dta1p) : un locus où `_tajima_d_per_locus`
     retourne `None` (moins de 2 échantillons) est exclu -- ni ajouté à la
     somme, ni compté. Un locus où `_tajima_d_per_locus` retourne `0.0`
     (0 site ségrégeant) reste, lui, INCLUS dans le compte (voir
     _tajima_d_per_locus pour la distinction).
 
-    Suppose quand même que toutes les populations de `population_names`
+    Suppose quand même que toutes les échantillons de `sample_names`
     sont présentes (au moins 1 échantillon) sur tous les loci du groupe
     -- lève un KeyError si ce n'est pas le cas, comme les autres
     fonctions `compute_*` de ce module.
@@ -1602,72 +1586,72 @@ def compute_DTA(
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
-        population_names: Les populations attendues.
+        sample_names: Le nom des échantillons attendus.
         layouts: Les layouts à utiliser pour chaque locus, ou None si aucun n'est fourni.
 
     Returns:
-        Un dict {nom_population: valeur_moyenne}.
+        Un dict {nom_echantillon: valeur_moyenne}.
     """
-    mean_tajima_d = {pop_name: 0.0 for pop_name in population_names}
-    valid_loci_count = {pop_name: 0 for pop_name in population_names}
+    mean_tajima_d = {samp_name: 0.0 for samp_name in sample_names}
+    valid_loci_count = {samp_name: 0 for samp_name in sample_names}
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
-        for pop_name in population_names:
-            matrix = genotype_matrices[pop_name]
+        for samp_name in sample_names:
+            matrix = genotype_matrices[samp_name]
             tajima_d = _tajima_d_per_locus(matrix)
             if tajima_d is not None:
-                mean_tajima_d[pop_name] += tajima_d
-                valid_loci_count[pop_name] += 1
+                mean_tajima_d[samp_name] += tajima_d
+                valid_loci_count[samp_name] += 1
 
-    for pop_name in population_names:
-        if valid_loci_count[pop_name] > 0:
-            mean_tajima_d[pop_name] /= valid_loci_count[pop_name]
+    for samp_name in sample_names:
+        if valid_loci_count[samp_name] > 0:
+            mean_tajima_d[samp_name] /= valid_loci_count[samp_name]
 
     return mean_tajima_d
 
 
 # ---------------------------------------------------------------------------
-# PSS : sites ségrégeants "privés" par population (cal_pss1p)
+# PSS : sites ségrégeants "privés" par échantillon (cal_pss1p)
 # ---------------------------------------------------------------------------
 
 
 def _private_segregating_sites_per_locus(
-    genotype_matrices: dict[str, np.ndarray], target_pop: str
+    genotype_matrices: dict[str, np.ndarray], target_sample: str
 ) -> int:
-    """Compte les sites ségrégeants "privés" de `target_pop` sur UN locus (cal_pss1p).
+    """Compte les sites ségrégeants "privés" de `target_sample` sur UN locus (cal_pss1p).
 
-    Un site ségrégeant privé est ségrégeant dans `target_pop` mais
-    NULLE PART ailleurs, parmi TOUTES les populations de
-    `genotype_matrices` (pas seulement celles d'un même groupe -- le
-    C++ compare à `this->nsample`, le nombre total de populations du
+    Un site ségrégeant privé est ségrégeant dans `target_sample` mais
+    NULLE PART ailleurs, parmi TOUTES les échantillons de
+    `genotype_matrices` (pas seulement ceux d'un même groupe -- le
+    C++ compare à `this->nsample`, le nombre total d'échantillons du
     dataset).
 
     Toutes les matrices de `genotype_matrices` viennent du même
     `genotype_matrix()` (juste tranchées par colonnes, voir
     _genotype_matrix_by_population) -- la ligne `i` désigne donc le MÊME
-    site physique pour toutes les populations. Contrairement au C++, qui
+    site physique pour toutes les échantillons. Contrairement au C++, qui
     compare des listes d'indices de sites variables de longueurs
     différentes par une recherche imbriquée (`ssa[sample][j] ==
     ssa[sa][k]`), on peut donc comparer les masques booléens position par
     position directement -- pas de recherche d'égalité nécessaire.
 
     Args:
-        genotype_matrices: Dict {nom_population: matrice} pour TOUTES
-            les populations du dataset (voir _genotype_matrix_by_population).
-        target_pop: La population pour laquelle compter les sites
+        genotype_matrices: Dict {nom_echantillon: matrice} pour TOUTES
+            les échantillons du dataset (voir _genotype_matrix_by_population).
+        target_sample: L'échantillon pour lequel compter les sites
             privés.
 
     Returns:
-        Le nombre de sites ségrégeants privés de target_pop.
+        Le nombre de sites ségrégeants privés de target_sample.
     """
-    target_mask = _segregating_sites_mask(genotype_matrices[target_pop])
+    target_mask = _segregating_sites_mask(genotype_matrices[target_sample])
     other_masks = [
         _segregating_sites_mask(matrix)
-        for pop_name, matrix in genotype_matrices.items()
-        if pop_name != target_pop
+        for samp_name, matrix in genotype_matrices.items()
+        if samp_name != target_sample
     ]
     segregating_elsewhere = (
         np.logical_or.reduce(other_masks) if other_masks else np.zeros_like(target_mask)
@@ -1677,20 +1661,20 @@ def _private_segregating_sites_per_locus(
 
 def compute_PSS(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule PSS_i (cal_pss1p) : pour chaque population, la moyenne du
+    """Calcule PSS_i (cal_pss1p) : pour chaque échantillon, la moyenne du
     nombre de sites ségrégeants privés (_private_segregating_sites_per_
     locus) sur tous les loci du groupe passé en argument.
 
-    `population_names` fixe explicitement les clés du dict retourné --
-    chaque population attendue a toujours une valeur (0.0 par défaut),
-    même si `tree_sequences` est vide. `population_names` DOIT couvrir
-    TOUTES les populations du dataset (pas seulement celles d'un groupe),
-    puisque `_private_segregating_sites_per_locus` compare `target_pop` à
-    toutes les autres populations présentes dans `genotype_matrices`.
+    `sample_names` fixe explicitement les clés du dict retourné --
+    chaque échantillon attendu a toujours une valeur (0.0 par défaut),
+    même si `tree_sequences` est vide. `sample_names` DOIT couvrir
+    TOUTES les échantillons du dataset (pas seulement ceux d'un groupe),
+    puisque `_private_segregating_sites_per_locus` compare `target_sample` à
+    toutes les autres échantillons présents dans `genotype_matrices`.
 
     Contrairement à compute_NSS et aux autres
     fonctions `compute_*` de ce module, le dénominateur ici est
@@ -1698,34 +1682,34 @@ def compute_PSS(
     condition dans cal_pss1p, ligne 1624 -- pas de garde-fou du tout,
     même pas le `samplesize > 0` de NSS/NHA).
 
-    Suppose que toutes les populations de `population_names` sont
+    Suppose que toutes les échantillons de `sample_names` sont
     présentes sur tous les loci du groupe -- lève un KeyError sinon.
 
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
-        population_names: Les populations attendues (toutes celles du
+        sample_names: Le nom des échantillons attendus (tous ceux du
             dataset).
         layouts: Les layouts à utiliser pour chaque locus, ou None si aucun n'est fourni.
 
     Returns:
-        Un dict {nom_population: valeur_moyenne}.
+        Un dict {nom_echantillon: valeur_moyenne}.
     """
-    mean_pss = {pop_name: 0.0 for pop_name in population_names}
+    mean_pss = {samp_name: 0.0 for samp_name in sample_names}
     num_loci = len(tree_sequences)
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
-        for pop_name in population_names:
-            mean_pss[pop_name] += _private_segregating_sites_per_locus(
-                genotype_matrices, pop_name
+        for samp_name in sample_names:
+            mean_pss[samp_name] += _private_segregating_sites_per_locus(
+                genotype_matrices, samp_name
             )
 
     if num_loci > 0:
-        for pop_name in population_names:
-            mean_pss[pop_name] /= num_loci
+        for samp_name in sample_names:
+            mean_pss[samp_name] /= num_loci
 
     return mean_pss
 
@@ -1756,7 +1740,7 @@ def _minor_allele_counts_at_segregating_sites(matrix: np.ndarray) -> np.ndarray:
         dans `t_afs` quand `jj >= 3` (une seule base présente).
 
     Raises:
-        ValueError: Si matrix.shape[1] == 0 (population sans échantillon).
+        ValueError: Si matrix.shape[1] == 0 (échantillon sans échantillon).
     """
     if matrix.shape[1] == 0:
         raise ValueError("La matrice de génotypes est vide.")
@@ -1770,11 +1754,11 @@ def _minor_allele_counts_at_segregating_sites(matrix: np.ndarray) -> np.ndarray:
 
 def compute_MNS(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule MNS_i (cal_mns1p) : pour chaque population, la moyenne,
+    """Calcule MNS_i (cal_mns1p) : pour chaque échantillon, la moyenne,
     sur les loci du groupe, de la moyenne (par locus) des comptes
     d'allèle minoritaire aux sites ségrégeants
     (_minor_allele_counts_at_segregating_sites).
@@ -1784,51 +1768,51 @@ def compute_MNS(
     vide ici). Comme PSS (et contrairement à MPD/VPD/DTA), AUCUNE
     exclusion de locus : `nl` = `len(tree_sequences)` sans condition
     (cal_mns1p, `nl++` inconditionnel, ligne 1705) -- pas besoin de
-    compteur par population.
+    compteur par échantillon.
 
-    `population_names` fixe explicitement les clés du dict retourné --
-    chaque population attendue a toujours une valeur (0.0 par défaut),
+    `sample_names` fixe explicitement les clés du dict retourné --
+    chaque échantillon attendu a toujours une valeur (0.0 par défaut),
     même si `tree_sequences` est vide. Suppose que toutes les
-    populations de `population_names` sont présentes sur tous les loci
+    échantillons de `sample_names` sont présentes sur tous les loci
     du groupe -- lève un KeyError sinon.
 
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
-        population_names: Les populations attendues.
+        sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Un dict {nom_population: valeur_moyenne}.
+        Un dict {nom_echantillon: valeur_moyenne}.
     """
-    mean_mns = {pop_name: 0.0 for pop_name in population_names}
+    mean_mns = {samp_name: 0.0 for samp_name in sample_names}
     num_loci = len(tree_sequences)
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
-        for pop_name in population_names:
+        for samp_name in sample_names:
             minor_counts = _minor_allele_counts_at_segregating_sites(
-                genotype_matrices[pop_name]
+                genotype_matrices[samp_name]
             )
             if len(minor_counts) > 0:
-                mean_mns[pop_name] += minor_counts.mean()
+                mean_mns[samp_name] += minor_counts.mean()
 
     if num_loci > 0:
-        for pop_name in population_names:
-            mean_mns[pop_name] /= num_loci
+        for samp_name in sample_names:
+            mean_mns[samp_name] /= num_loci
 
     return mean_mns
 
 
 def compute_VNS(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule VNS_i (cal_vns1p) : pour chaque population, la moyenne,
+    """Calcule VNS_i (cal_vns1p) : pour chaque échantillon, la moyenne,
     sur les loci du groupe, de la variance (par locus) des comptes
     d'allèle minoritaire aux sites ségrégeants.
 
@@ -1846,80 +1830,79 @@ def compute_VNS(
     pas arriver pour une vraie variance (`v >= 0` toujours), donc ce
     garde-fou n'a aucun effet observable et n'est pas reproduit ici.
 
-    `population_names` fixe explicitement les clés du dict retourné --
-    chaque population attendue a toujours une valeur (0.0 par défaut),
+    `sample_names` fixe explicitement les clés du dict retourné --
+    chaque échantillon attendu a toujours une valeur (0.0 par défaut),
     même si `tree_sequences` est vide. Suppose que toutes les
-    populations de `population_names` sont présentes sur tous les loci
+    échantillons de `sample_names` sont présentes sur tous les loci
     du groupe -- lève un KeyError sinon.
 
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
-        population_names: Les populations attendues.
+        sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Un dict {nom_population: valeur_moyenne}.
+        Un dict {nom_echantillon: valeur_moyenne}.
     """
-    variance_vns = {pop_name: 0.0 for pop_name in population_names}
+    variance_vns = {samp_name: 0.0 for samp_name in sample_names}
     num_loci = len(tree_sequences)
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
-        for pop_name in population_names:
+        for samp_name in sample_names:
             minor_counts = _minor_allele_counts_at_segregating_sites(
-                genotype_matrices[pop_name]
+                genotype_matrices[samp_name]
             )
             if len(minor_counts) > 1:
-                variance_vns[pop_name] += minor_counts.var()
+                variance_vns[samp_name] += minor_counts.var()
 
     if num_loci > 0:
-        for pop_name in population_names:
-            variance_vns[pop_name] /= num_loci
+        for samp_name in sample_names:
+            variance_vns[samp_name] /= num_loci
 
     return variance_vns
 
 
 # --------------------------------------------------------------------------
-# NH2 : Nombre d'ahplotypes distincts pour un regroupement de deux populations
+# NH2 : Nombre d'ahplotypes distincts pour un regroupement de deux échantillons
 # --------------------------------------------------------------------------
 
 
 def compute_NH2(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule NH2_ij (cal_nh2p) : pour chaque paire de populations, la
+    """Calcule NH2_ij (cal_nh2p) : pour chaque paire d'échantillons, la
     moyenne du nombre d'haplotypes distincts sur tous les loci du groupe
     passé en argument (un groupe = les TreeSequences des loci séquence
     d'un même `group Gx` du header).
 
-    `population_names` fixe explicitement les clés du dict retourné --
-    chaque population attendue a toujours une valeur (0.0 par défaut),
+    `sample_names` fixe explicitement les clés du dict retourné --
+    chaque échantillon attendu a toujours une valeur (0.0 par défaut),
     même si `tree_sequences` est vide. Suppose que toutes les
-    populations de `population_names` sont présentes sur tous les loci
+    échantillons de `sample_names` sont présentes sur tous les loci
     du groupe -- lève un KeyError sinon.
 
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
-        population_names: Les populations attendues.
+        sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Un dict {"i.j": valeur_moyenne}, une entrée par paire de
-        populations.
+        Un dict {"i.j": valeur_moyenne}, une entrée par paire d'échantillons.
     """
     num_loci = len(tree_sequences)
 
     pairs = [
         (ia, ib)
-        for ia in range(len(population_names))
-        for ib in range(ia + 1, len(population_names))
+        for ia in range(len(sample_names))
+        for ib in range(ia + 1, len(sample_names))
     ]
     mean_distinct_haplotypes = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
 
@@ -1930,10 +1913,10 @@ def compute_NH2(
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for ia, ib in pairs:
-            pop_a = population_names[ia]
-            pop_b = population_names[ib]
+            samp_a = sample_names[ia]
+            samp_b = sample_names[ib]
             combined_matrix = np.hstack(
-                (genotype_matrices[pop_a], genotype_matrices[pop_b])
+                (genotype_matrices[samp_a], genotype_matrices[samp_b])
             )
             key = f"{ia + 1}.{ib + 1}"
             mean_distinct_haplotypes[key] += _count_distinct_haplotypes(combined_matrix)
@@ -1946,41 +1929,40 @@ def compute_NH2(
 
 
 # ---------------------------------------------------------------------------
-# NS2 : Nombre de sites ségrégeants pour un regroupement de deux populations
+# NS2 : Nombre de sites ségrégeants pour un regroupement de deux échantillons
 # ---------------------------------------------------------------------------
 
 
 def compute_NS2(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule NS2_ij (cal_ns2p) : pour chaque paire de populations, la
+    """Calcule NS2_ij (cal_ns2p) : pour chaque paire d'échantillons, la
     moyenne du nombre de sites ségrégeants sur tous les loci du groupe
     passé en argument (un groupe = les TreeSequences des loci séquence
     d'un même `group Gx` du header).
 
-    `population_names` fixe explicitement les clés du dict retourné --
-    chaque population attendue a toujours une valeur (0.0 par défaut),
+    `sample_names` fixe explicitement les clés du dict retourné --
+    chaque échantillon attendu a toujours une valeur (0.0 par défaut),
     même si `tree_sequences` est vide. Suppose que toutes les
-    populations de `population_names` sont présentes sur tous les loci
+    échantillons de `sample_names` sont présentes sur tous les loci
     du groupe -- lève un KeyError sinon.
 
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
-        population_names: Les populations attendues.
+        sample_names: Le nom des échantillons attendus.
         layouts: Un layout par locus, ou None partout si l'appelant n'en
 
     Returns:
-        Un dict {"i.j": valeur_moyenne}, une entrée par paire de
-        populations.
+        Un dict {"i.j": valeur_moyenne}, une entrée par paire d'échantillons.
     """
     pairs = [
         (ia, ib)
-        for ia in range(len(population_names))
-        for ib in range(ia + 1, len(population_names))
+        for ia in range(len(sample_names))
+        for ib in range(ia + 1, len(sample_names))
     ]
     mean_segregating_sites = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
     num_loci = len(tree_sequences)
@@ -1990,10 +1972,10 @@ def compute_NS2(
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for ia, ib in pairs:
-            pop_a = population_names[ia]
-            pop_b = population_names[ib]
+            samp_a = sample_names[ia]
+            samp_b = sample_names[ib]
             combined_matrix = np.hstack(
-                (genotype_matrices[pop_a], genotype_matrices[pop_b])
+                (genotype_matrices[samp_a], genotype_matrices[samp_b])
             )
             key = f"{ia + 1}.{ib + 1}"
             mean_segregating_sites[key] += _count_segregating_sites(combined_matrix)
@@ -2006,33 +1988,33 @@ def compute_NS2(
 
 
 # ---------------------------------------------------------------------------
-# MP2 : Moyenne de différences par paire pour un regroupement de deux populations
+# MP2 : Moyenne de différences par paire pour un regroupement de deux échantillons
 # ---------------------------------------------------------------------------
 
 
 def _mean_pairwise_differences_within_per_locus(
-    genotype_matrices: dict[str, np.ndarray], pop_a: str, pop_b: str
+    genotype_matrices: dict[str, np.ndarray], samp_a: str, samp_b: str
 ) -> float:
     """Calcule MP2 "within" pour un locus : ratio poolé des sommes, PAS la moyenne des deux MPD.
 
-    Additionne les distances de Hamming intra-population de pop_a ET
-    pop_b (jamais entre les deux), puis divise par le nombre total de
+    Additionne les distances de Hamming intra-échantillon de samp_a ET
+    samp_b (jamais entre les deux), puis divise par le nombre total de
     paires des deux côtés -- équivalent à la moyenne des deux MPD
-    seulement si pop_a et pop_b ont la même taille d'échantillon (voir
+    seulement si samp_a et samp_b ont la même taille d'échantillon (voir
     compute_MP2).
 
     Args:
-        genotype_matrices: Dict {nom_population: matrice}, au moins
-            pop_a et pop_b.
-        pop_a: Nom de la première population.
-        pop_b: Nom de la seconde population.
+        genotype_matrices: Dict {nom_echantillon: matrice}, au moins
+            samp_a et samp_b.
+        samp_a: Nom du premier échantillon.
+        samp_b: Nom du second échantillon.
 
     Returns:
         Le ratio poolé (somme des différences / somme des paires),
-        0.0 si aucune des deux populations n'a de paire.
+        0.0 si aucune des deux échantillons n'a de paire.
     """
-    distances_a = _pairwise_hamming_distances(genotype_matrices[pop_a])
-    distances_b = _pairwise_hamming_distances(genotype_matrices[pop_b])
+    distances_a = _pairwise_hamming_distances(genotype_matrices[samp_a])
+    distances_b = _pairwise_hamming_distances(genotype_matrices[samp_b])
     total_pairs = len(distances_a) + len(distances_b)
     total_differences = distances_a.sum() + distances_b.sum()
     if total_pairs > 0:
@@ -2042,35 +2024,34 @@ def _mean_pairwise_differences_within_per_locus(
 
 def compute_MP2(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule MP2_ij (cal_mp2p) : pour chaque paire de populations, la
+    """Calcule MP2_ij (cal_mp2p) : pour chaque paire d'échantillons, la
     moyenne du nombre de différences par paire (distance de Hamming)
     sur tous les loci du groupe passé en argument (un groupe = les
     TreeSequences des loci séquence d'un même `group Gx` du header).
 
-    `population_names` fixe explicitement les clés du dict retourné --
-    chaque population attendue a toujours une valeur (0.0 par défaut),
+    `sample_names` fixe explicitement les clés du dict retourné --
+    chaque échantillon attendu a toujours une valeur (0.0 par défaut),
     même si `tree_sequences` est vide. Suppose que toutes les
-    populations de `population_names` sont présentes sur tous les loci
+    échantillons de `sample_names` sont présentes sur tous les loci
     du groupe -- lève un KeyError sinon.
 
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
-        population_names: Les populations attendues.
+        sample_names: Le nom des échantillons attendus.
         layouts: Un layout par locus, ou None partout si l'appelant n'en
 
     Returns:
-        Un dict {"i.j": valeur_moyenne}, une entrée par paire de
-        populations.
+        Un dict {"i.j": valeur_moyenne}, une entrée par paire d'échantillons.
     """
     pairs = [
         (ia, ib)
-        for ia in range(len(population_names))
-        for ib in range(ia + 1, len(population_names))
+        for ia in range(len(sample_names))
+        for ib in range(ia + 1, len(sample_names))
     ]
     mean_pairwise_differences = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
     num_loci = len(tree_sequences)
@@ -2080,12 +2061,12 @@ def compute_MP2(
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for ia, ib in pairs:
-            pop_a = population_names[ia]
-            pop_b = population_names[ib]
+            samp_a = sample_names[ia]
+            samp_b = sample_names[ib]
             key = f"{ia + 1}.{ib + 1}"
             mean_pairwise_differences[key] += (
                 _mean_pairwise_differences_within_per_locus(
-                    genotype_matrices, pop_a, pop_b
+                    genotype_matrices, samp_a, samp_b
                 )
             )
 
@@ -2097,7 +2078,7 @@ def compute_MP2(
 
 
 # ---------------------------------------------------------------------------
-# MPB : Moyenne de différences par paire entre deux populations
+# MPB : Moyenne de différences par paire entre deux échantillons
 # ---------------------------------------------------------------------------
 
 
@@ -2135,65 +2116,64 @@ def _pairwise_hamming_distances_between(
 
 
 def _mean_pairwise_differences_between_per_locus(
-    genotype_matrices: dict[str, np.ndarray], pop_a: str, pop_b: str
+    genotype_matrices: dict[str, np.ndarray], samp_a: str, samp_b: str
 ) -> float:
-    """Calcule la moyenne des différences par paire (MPB) entre deux populations pour un locus.
+    """Calcule la moyenne des différences par paire (MPB) entre deux échantillons pour un locus.
 
     Args:
-        genotype_matrices: Dict {nom_population: matrice}, au moins
-            pop_a et pop_b.
-        pop_a: Nom de la première population.
-        pop_b: Nom de la seconde population.
+        genotype_matrices: Dict {nom_echantillon: matrice}, au moins
+            samp_a et samp_b.
+        samp_a: Nom du premier échantillon.
+        samp_b: Nom du second échantillon.
 
     Returns:
         La moyenne des distances de Hamming entre chaque échantillon de
-        pop_a et chaque échantillon de pop_b.
+        samp_a et chaque échantillon de samp_b.
 
     Raises:
-        KeyError: Si pop_a ou pop_b n'est pas dans genotype_matrices.
+        KeyError: Si samp_a ou samp_b n'est pas dans genotype_matrices.
     """
-    if pop_a not in genotype_matrices or pop_b not in genotype_matrices:
+    if samp_a not in genotype_matrices or samp_b not in genotype_matrices:
         raise KeyError(
-            "L'une des populations n'est pas présente dans les matrices de génotypes."
+            "L'un des échantillons n'est pas présent dans les matrices de génotypes."
         )
     return _pairwise_hamming_distances_between(
-        genotype_matrices[pop_a], genotype_matrices[pop_b]
+        genotype_matrices[samp_a], genotype_matrices[samp_b]
     ).mean()
 
 
 def compute_MPB(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule MPB_ij (cal_mpb2p) : pour chaque paire de populations, la
+    """Calcule MPB_ij (cal_mpb2p) : pour chaque paire d'échantillons, la
     moyenne du nombre de différences par paire (distance de Hamming)
-    entre les deux populations sur tous les loci du groupe passé en
+    entre les deux échantillons sur tous les loci du groupe passé en
     argument (un groupe = les TreeSequences des loci séquence d'un même
     `group Gx` du header).
 
-    `population_names` fixe explicitement les clés du dict retourné --
-    chaque population attendue a toujours une valeur (0.0 par défaut),
+    `sample_names` fixe explicitement les clés du dict retourné --
+    chaque échantillon attendu a toujours une valeur (0.0 par défaut),
     même si `tree_sequences` est vide. Suppose que toutes les
-    populations de `population_names` sont présentes sur tous les loci
+    échantillons de `sample_names` sont présentes sur tous les loci
     du groupe -- lève un KeyError sinon.
 
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
-        population_names: Les populations attendues.
+        sample_names: Le nom des échantillons attendus.
         layouts: Un layout par locus, ou None partout si l'appelant n'en
             fournit pas.
 
     Returns:
-        Un dict {"i.j": valeur_moyenne}, une entrée par paire de
-        populations.
+        Un dict {"i.j": valeur_moyenne}, une entrée par paire d'échantillons.
     """
     pairs = [
         (ia, ib)
-        for ia in range(len(population_names))
-        for ib in range(ia + 1, len(population_names))
+        for ia in range(len(sample_names))
+        for ib in range(ia + 1, len(sample_names))
     ]
     mean_pairwise_differences_between = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
     num_loci = len(tree_sequences)
@@ -2203,11 +2183,11 @@ def compute_MPB(
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for ia, ib in pairs:
-            pop_a = population_names[ia]
-            pop_b = population_names[ib]
+            samp_a = sample_names[ia]
+            samp_b = sample_names[ib]
             key = f"{ia + 1}.{ib + 1}"
             distances_between = _pairwise_hamming_distances_between(
-                genotype_matrices[pop_a], genotype_matrices[pop_b]
+                genotype_matrices[samp_a], genotype_matrices[samp_b]
             )
             mean_pairwise_differences_between[key] += distances_between.mean()
 
@@ -2219,18 +2199,18 @@ def compute_MPB(
 
 
 # ---------------------------------------------------------------------------
-# HST : Comparaison de la diversité entre deux populations à la diversité au
-# sein de ces populations
+# HST : Comparaison de la diversité entre deux échantillons à la diversité au
+# sein de ces échantillons
 # ---------------------------------------------------------------------------
 
 
 def compute_HST(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule HST_ij (cal_fst2p) : pour chaque paire de populations,
+    """Calcule HST_ij (cal_fst2p) : pour chaque paire d'échantillons,
     une mesure de différenciation type FST à partir des loci du groupe
     passé en argument (un groupe = les TreeSequences des loci séquence
     d'un même `group Gx` du header).
@@ -2242,26 +2222,26 @@ def compute_HST(
     à compute_MP2/compute_MPB) -- même schéma d'agrégation que _fst_wc
     (FST2/FST3/FST4, côté SNP).
 
-    `population_names` fixe explicitement les clés du dict retourné --
+    `sample_names` fixe explicitement les clés du dict retourné --
     chaque paire attendue a toujours une valeur (0.0 par défaut, y
     compris si `den == 0` pour cette paire), même si `tree_sequences`
-    est vide. Suppose que toutes les populations de `population_names`
+    est vide. Suppose que toutes les échantillons de `sample_names`
     sont présentes sur tous les loci du groupe -- lève un KeyError sinon.
 
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
-        population_names: Les populations attendues.
+        sample_names: Le nom des échantillons attendus.
         layouts: Un layout par locus, ou None partout si l'appelant n'en
             fournit pas.
 
     Returns:
-        Un dict {"i.j": valeur}, une entrée par paire de populations.
+        Un dict {"i.j": valeur}, une entrée par paire d'échantillons.
     """
     pairs = [
         (ia, ib)
-        for ia in range(len(population_names))
-        for ib in range(ia + 1, len(population_names))
+        for ia in range(len(sample_names))
+        for ib in range(ia + 1, len(sample_names))
     ]
     mean_hst = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
     num = {f"{ia + 1}.{ib + 1}": 0.0 for ia, ib in pairs}
@@ -2272,14 +2252,14 @@ def compute_HST(
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
         for ia, ib in pairs:
-            pop_a = population_names[ia]
-            pop_b = population_names[ib]
+            samp_a = sample_names[ia]
+            samp_b = sample_names[ib]
             key = f"{ia + 1}.{ib + 1}"
             mpb = _mean_pairwise_differences_between_per_locus(
-                genotype_matrices, pop_a, pop_b
+                genotype_matrices, samp_a, samp_b
             )
             mpw = _mean_pairwise_differences_within_per_locus(
-                genotype_matrices, pop_a, pop_b
+                genotype_matrices, samp_a, samp_b
             )
             num[key] += mpb - mpw
             den[key] += mpb
@@ -2298,102 +2278,102 @@ def compute_HST(
 # Helper nécessaire pour le reste des stattistiques
 
 
-def _length_by_population(
+def _length_by_sample(
     tree_sequence: tskit.TreeSequence,
     *,
     layout: list[tuple[str, np.ndarray]] | None = None,
 ) -> dict[str, list[tuple[int, int]]]:
-    """Construit un dict {nom_population: [(longueur, nb_sequence), ...]}.
+    """Construit un dict {nom_echantillon: [(longueur, nb_sequence), ...]}.
 
     Args:
         tree_sequence: Un TreeSequence muté du groupe (un locus [M]).
-        layout: [(nom_population, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par population à utilisé par le chemin sériel, où un échantillon n'est plus sa propre population
+        layout: [(nom_echantillon, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par échantillon à utilisé par le chemin sériel, où un échantillon n'est plus sa propre échantillon
 
     Returns:
-        Un dict {nom_population: [(longueur, compte), ...]}.
+        Un dict {nom_echantillon: [(longueur, compte), ...]}.
     """
-    length_by_pop = {}
+    length_by_sample = {}
     if layout is None:
         layout = compute_population_layout(
             tree_sequence
         )  # liste(tuple(pop,array(indice)))
     # si locus est monomorphe
     if tree_sequence.num_sites == 0:
-        for pop_name, sample_ids in layout:
-            length_by_pop[pop_name] = [(0, len(sample_ids))]
-        return length_by_pop
+        for samp_name, sample_ids in layout:
+            length_by_sample[samp_name] = [(0, len(sample_ids))]
+        return length_by_sample
     else:
         variant = next(tree_sequence.variants())
         tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
-        for pop_name, sample_ids in layout:
-            length_by_pop[pop_name] = []
+        for samp_name, sample_ids in layout:
+            length_by_sample[samp_name] = []
             for taille in variant.alleles:
                 taille_int = int(taille)
-                length_by_pop[pop_name].append(
+                length_by_sample[samp_name].append(
                     (taille_int, list(tailles[sample_ids]).count(taille_int))
                 )
 
-        return length_by_pop
+        return length_by_sample
 
 
 # NAL : mean number of alleles across loci
 
 
 def count_alleles_per_population(
-    length_by_pop: dict[str, list[tuple[int, int]]],
+    length_by_sample: dict[str, list[tuple[int, int]]],
 ) -> dict[str, int]:
     """Compte le nombre de tuples ayant un compte > 0.
 
     Args:
-        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}.
+        length_by_sample: Dict {nom_echantillon: [(longueur, nb_sequence), ...]}.
 
     Returns:
-        Dict {nom_population: nombre d'allèles distincts}.
+        Dict {nom_echantillon: nombre d'allèles distincts}.
     """
     allele_counts = {}
-    for pop_name in length_by_pop:
-        allele_counts[pop_name] = len(
-            [result for result in length_by_pop[pop_name] if result[1] > 0]
+    for samp_name in length_by_sample:
+        allele_counts[samp_name] = len(
+            [result for result in length_by_sample[samp_name] if result[1] > 0]
         )
     return allele_counts
 
 
 def compute_NAL(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule NAL_i : pour chaque population, la moyenne du nombre d'allèles distincts
+    """Calcule NAL_i : pour chaque échantillon, la moyenne du nombre d'allèles distincts
     sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
-        population_names: Liste des noms de population.
+        sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Dict {nom_population: NAL}.
+        Dict {nom_echantillon: NAL}.
     """
 
-    allele_counts = {pop_name: 0.0 for pop_name in population_names}
-    valid_loci_count = {pop_name: 0 for pop_name in population_names}
+    allele_counts = {samp_name: 0.0 for samp_name in sample_names}
+    valid_loci_count = {samp_name: 0 for samp_name in sample_names}
 
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
 
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_pop = _length_by_population(ts, layout=layout)
-        counts = count_alleles_per_population(length_by_pop)
-        for pop_name in counts:
-            allele_counts[pop_name] += counts[pop_name]
-            valid_loci_count[pop_name] += 1
+        length_by_sample = _length_by_sample(ts, layout=layout)
+        counts = count_alleles_per_population(length_by_sample)
+        for samp_name in counts:
+            allele_counts[samp_name] += counts[samp_name]
+            valid_loci_count[samp_name] += 1
 
-    # Calcul de la moyenne pour chaque population
-    for pop_name in population_names:
-        allele_counts[pop_name] /= (
-            valid_loci_count[pop_name] if valid_loci_count[pop_name] > 0 else 1
+    # Calcul de la moyenne pour chaque échantillon
+    for samp_name in sample_names:
+        allele_counts[samp_name] /= (
+            valid_loci_count[samp_name] if valid_loci_count[samp_name] > 0 else 1
         )
 
     return allele_counts
@@ -2403,33 +2383,35 @@ def compute_NAL(
 
 
 def total_genes_copies_per_population(
-    length_by_pop: dict[str, list[tuple[int, int]]],
+    length_by_sample: dict[str, list[tuple[int, int]]],
 ) -> dict[str, int]:
-    """Compte le nombre total d'allèles distincts pour chaque population.
+    """Compte le nombre total d'allèles distincts pour chaque échantillon.
 
     Args:
-        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}.
+        length_by_sample: Dict {nom_echantillon: [(longueur, nb_sequence), ...]}.
 
     Returns:
-        Dict {nom_population: nombre total d'allèles distincts}.
+        Dict {nom_echantillon: nombre total d'allèles distincts}.
     """
     total_counts = {}
-    for pop_name in length_by_pop:
-        total_counts[pop_name] = sum([result[1] for result in length_by_pop[pop_name]])
+    for samp_name in length_by_sample:
+        total_counts[samp_name] = sum(
+            [result[1] for result in length_by_sample[samp_name]]
+        )
     return total_counts
 
 
 def _compute_HET_for_one_population(
     total_count: int, _lengths_counts: list[tuple[int, int]]
 ) -> float:
-    """Calcule HET pour une population donnée à partir du nombre total d'allèles et des comptes par longueur.
+    """Calcule HET pour un échantillon donné à partir du nombre total d'allèles et des comptes par longueur.
 
     Args:
-        total_count: Nombre total d'allèles distincts pour la population.
-        _lengths_counts: Liste de tuples (longueur, nb_sequence) pour la population.
+        total_count: Nombre total d'allèles distincts pour l'échantillon.
+        _lengths_counts: Liste de tuples (longueur, nb_sequence) pour l'échantillon.
 
     Returns:
-        La diversité génétique HET pour la population.
+        La diversité génétique HET pour l'échantillon.
     """
     if total_count <= 1:
         return 0.0
@@ -2440,40 +2422,40 @@ def _compute_HET_for_one_population(
 
 def compute_HET(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule HET_i : pour chaque population, la moyenne de la diversité génétique
+    """Calcule HET_i : pour chaque échantillon, la moyenne de la diversité génétique
     sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci
     séquence d'un même `group Gx` du header).
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
-        population_names: Liste des noms de population.
+        sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Dict {nom_population: HET}.
+        Dict {nom_echantillon: HET}.
     """
-    gene_diversity = {pop_name: 0.0 for pop_name in population_names}
-    valid_loci_count = {pop_name: 0 for pop_name in population_names}
+    gene_diversity = {samp_name: 0.0 for samp_name in sample_names}
+    valid_loci_count = {samp_name: 0 for samp_name in sample_names}
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_pop = _length_by_population(ts, layout=layout)
-        total_counts = total_genes_copies_per_population(length_by_pop)
-        for pop_name in total_counts:
-            if total_counts[pop_name] > 1:
-                gene_diversity[pop_name] += _compute_HET_for_one_population(
-                    total_counts[pop_name], length_by_pop[pop_name]
+        length_by_sample = _length_by_sample(ts, layout=layout)
+        total_counts = total_genes_copies_per_population(length_by_sample)
+        for samp_name in total_counts:
+            if total_counts[samp_name] > 1:
+                gene_diversity[samp_name] += _compute_HET_for_one_population(
+                    total_counts[samp_name], length_by_sample[samp_name]
                 )
-                valid_loci_count[pop_name] += 1
-    # Calcul de la moyenne pour chaque population
-    for pop_name in population_names:
-        gene_diversity[pop_name] /= (
-            valid_loci_count[pop_name] if valid_loci_count[pop_name] > 0 else 1
+                valid_loci_count[samp_name] += 1
+    # Calcul de la moyenne pour chaque échantillon
+    for samp_name in sample_names:
+        gene_diversity[samp_name] /= (
+            valid_loci_count[samp_name] if valid_loci_count[samp_name] > 0 else 1
         )
 
     return gene_diversity
@@ -2483,47 +2465,49 @@ def compute_HET(
 
 
 def _compute_VAR_constants(
-    length_by_pop: dict[str, list[tuple[int, int]]],
+    length_by_sample: dict[str, list[tuple[int, int]]],
 ) -> tuple[dict[str, float], dict[str, int], dict[str, int]]:
     """Calcule s = somme des tailles brutes (en pb, pas les comptes par valeur distincte), v = somme des tailles brutes au carré
     et n = nombre total d'allèles.
 
     Args:
-        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}.
+        length_by_sample: Dict {nom_echantillon: [(longueur, nb_sequence), ...]}.
         motif_size: Taille du motif pour le locus.
 
     Returns:
-        Tuple de trois dictionnaires : {nom_population: s}, {nom_population: v}, {nom_population: n}.
+        Tuple de trois dictionnaires : {nom_echantillon: s}, {nom_echantillon: v}, {nom_echantillon: n}.
     """
     raw_sizes = {
-        pop_name: sum(
-            length * count for length, count in length_by_pop[pop_name] if count > 0
+        samp_name: sum(
+            length * count for length, count in length_by_sample[samp_name] if count > 0
         )
-        for pop_name in length_by_pop
+        for samp_name in length_by_sample
     }
     raw_square_sizes = {
-        pop_name: sum(
-            length**2 * count for length, count in length_by_pop[pop_name] if count > 0
+        samp_name: sum(
+            length**2 * count
+            for length, count in length_by_sample[samp_name]
+            if count > 0
         )
-        for pop_name in length_by_pop
+        for samp_name in length_by_sample
     }
-    total_counts = total_genes_copies_per_population(length_by_pop)
+    total_counts = total_genes_copies_per_population(length_by_sample)
     return raw_sizes, raw_square_sizes, total_counts
 
 
 def _compute_VAR_for_one_population(
     raw_sizes: float, raw_square_sizes: float, total_count: int, motif_size: int
 ) -> float:
-    """Calcule VAR pour une population donnée à partir des sommes brutes et du nombre total d'allèles.
+    """Calcule VAR pour un échantillon donné à partir des sommes brutes et du nombre total d'allèles.
 
     Args:
-        raw_sizes: Somme des tailles brutes (en pb) pour la population.
-        raw_square_sizes: Somme des tailles brutes au carré pour la population.
-        total_count: Nombre total d'allèles distincts pour la population.
+        raw_sizes: Somme des tailles brutes (en pb) pour l'échantillon.
+        raw_square_sizes: Somme des tailles brutes au carré pour l'échantillon.
+        total_count: Nombre total d'allèles distincts pour l'échantillon.
         motif_size: Taille du motif pour le locus.
 
     Returns:
-        La variance de la taille des allèles VAR pour la population.
+        La variance de la taille des allèles VAR pour l'échantillon.
     """
     if total_count <= 1:
         return 0.0
@@ -2536,49 +2520,49 @@ def _compute_VAR_for_one_population(
 
 def compute_VAR(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     list_motif_sizes: list[int],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule VAR_i : pour chaque population, la moyenne de la variance de la taille des allèles
+    """Calcule VAR_i : pour chaque échantillon, la moyenne de la variance de la taille des allèles
     sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
-        population_names: Liste des noms de population.
+        sample_names: Liste des noms d'échantillon.
         list_motif_sizes: Liste des tailles de motifs pour chaque locus.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Dict {nom_population: VAR}.
+        Dict {nom_echantillon: VAR}.
     """
 
-    allele_size_variance = {pop_name: 0.0 for pop_name in population_names}
-    valid_loci_count = {pop_name: 0 for pop_name in population_names}
+    allele_size_variance = {samp_name: 0.0 for samp_name in sample_names}
+    valid_loci_count = {samp_name: 0 for samp_name in sample_names}
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, motif_size, layout in zip(
         tree_sequences, list_motif_sizes, layouts, strict=True
     ):
-        length_by_pop = _length_by_population(ts, layout=layout)
+        length_by_sample = _length_by_sample(ts, layout=layout)
         raw_sizes, raw_square_sizes, total_counts = _compute_VAR_constants(
-            length_by_pop
+            length_by_sample
         )
-        for pop_name in length_by_pop:
-            if total_counts[pop_name] > 1:
-                allele_size_variance[pop_name] += _compute_VAR_for_one_population(
-                    raw_sizes[pop_name],
-                    raw_square_sizes[pop_name],
-                    total_counts[pop_name],
+        for samp_name in length_by_sample:
+            if total_counts[samp_name] > 1:
+                allele_size_variance[samp_name] += _compute_VAR_for_one_population(
+                    raw_sizes[samp_name],
+                    raw_square_sizes[samp_name],
+                    total_counts[samp_name],
                     motif_size,
                 )
-                valid_loci_count[pop_name] += 1
+                valid_loci_count[samp_name] += 1
 
-    # Calcul de la moyenne pour chaque population
-    for pop_name in population_names:
-        allele_size_variance[pop_name] /= (
-            valid_loci_count[pop_name] if valid_loci_count[pop_name] > 0 else 1
+    # Calcul de la moyenne pour chaque échantillon
+    for samp_name in sample_names:
+        allele_size_variance[samp_name] /= (
+            valid_loci_count[samp_name] if valid_loci_count[samp_name] > 0 else 1
         )
 
     return allele_size_variance
@@ -2588,9 +2572,9 @@ def compute_VAR(
 
 
 def _compute_MGW_by_locus(
-    length_by_pop: dict[str, list[tuple[int, int]]], motif_size: int
+    length_by_sample: dict[str, list[tuple[int, int]]], motif_size: int
 ) -> dict[str, tuple[float, float]]:
-    """Calcule (num, den) de MGW pour un locus, par population.
+    """Calcule (num, den) de MGW pour un locus, par échantillon.
 
     cal_mgw1p accumule num et den séparément sur tous les loci du groupe
     et ne divise qu'une seule fois à la fin (num_total/den_total) --
@@ -2599,67 +2583,67 @@ def _compute_MGW_by_locus(
     que compute_MGW puisse les accumuler correctement.
 
     Args:
-        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}.
+        length_by_sample: Dict {nom_echantillon: [(longueur, nb_sequence), ...]}.
         motif_size: Taille du motif pour ce locus.
 
     Returns:
-        Dict {nom_population: (num, den)}.
+        Dict {nom_echantillon: (num, den)}.
     """
     result = {}
-    for pop_name in length_by_pop:
+    for samp_name in length_by_sample:
         lengths_present = [
-            length for length, count in length_by_pop[pop_name] if count > 0
+            length for length, count in length_by_sample[samp_name] if count > 0
         ]
         if not lengths_present:
             continue
         num_alleles = len(lengths_present)
         den = 1 + (max(lengths_present) - min(lengths_present)) / motif_size
-        result[pop_name] = (num_alleles, den)
+        result[samp_name] = (num_alleles, den)
     return result
 
 
 def compute_MGW(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     list_motif_sizes: list[int],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule MGW_i : pour chaque population, la moyenne de l'indice M
+    """Calcule MGW_i : pour chaque échantillon, la moyenne de l'indice M
     sur tous les loci du groupe passé en argument (un groupe = les
     TreeSequences des loci séquence d'un même `group Gx` du header).
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
-        population_names: Liste des noms de population.
+        sample_names: Liste des noms d'échantillon.
         list_motif_sizes: Liste des tailles de motifs pour chaque locus.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Dict {nom_population: MGW}.
+        Dict {nom_echantillon: MGW}.
     """
-    num_sum = {pop_name: 0.0 for pop_name in population_names}
-    den_sum = {pop_name: 0.0 for pop_name in population_names}
+    num_sum = {samp_name: 0.0 for samp_name in sample_names}
+    den_sum = {samp_name: 0.0 for samp_name in sample_names}
 
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, motif_size, layout in zip(
         tree_sequences, list_motif_sizes, layouts, strict=True
     ):
-        length_by_pop = _length_by_population(ts, layout=layout)
-        for pop_name, (num, den) in _compute_MGW_by_locus(
-            length_by_pop, motif_size
+        length_by_sample = _length_by_sample(ts, layout=layout)
+        for samp_name, (num, den) in _compute_MGW_by_locus(
+            length_by_sample, motif_size
         ).items():
-            num_sum[pop_name] += num
-            den_sum[pop_name] += den
+            num_sum[samp_name] += num
+            den_sum[samp_name] += den
 
     # cal_mgw1p : un seul ratio num_total/den_total, pas une moyenne de
     # ratios par locus -- voir docstring de _compute_MGW_by_locus.
     mgw_values = {
-        pop_name: num_sum[pop_name] / den_sum[pop_name]
-        if den_sum[pop_name] > 0
+        samp_name: num_sum[samp_name] / den_sum[samp_name]
+        if den_sum[samp_name] > 0
         else 0.0
-        for pop_name in population_names
+        for samp_name in sample_names
     }
 
     return mgw_values
@@ -2669,75 +2653,72 @@ def compute_MGW(
 
 
 def _compute_N2P_for_one_pair(
-    pop_a: list[tuple[int, int]], pop_b: list[tuple[int, int]]
+    samp_a: list[tuple[int, int]], samp_b: list[tuple[int, int]]
 ) -> float:
-    """Calcule N2P_ij pour une paire de populations à partir des listes de tuples (longueur, nb_sequence).
+    """Calcule N2P_ij pour une paire d'échantillons à partir des listes de tuples (longueur, nb_sequence).
 
     Args:
-        pop_a: Liste de tuples (longueur, nb_sequence) pour la première population.
-        pop_b: Liste de tuples (longueur, nb_sequence) pour la seconde population.
+        samp_a: Liste de tuples (longueur, nb_sequence) pour la première échantillon.
+        samp_b: Liste de tuples (longueur, nb_sequence) pour la seconde échantillon.
 
     Returns:
-        La moyenne du nombre d'allèles distincts entre les deux populations.
+        La moyenne du nombre d'allèles distincts entre les deux échantillons.
     """
-    alleles_a = {length for length, count in pop_a if count > 0}
-    alleles_b = {length for length, count in pop_b if count > 0}
+    alleles_a = {length for length, count in samp_a if count > 0}
+    alleles_b = {length for length, count in samp_b if count > 0}
     combined_alleles = alleles_a.union(alleles_b)
     return len(combined_alleles)
 
 
 def _compute_N2P_for_one_locus(
-    length_by_pop: dict[str, list[tuple[int, int]]], population_names: list[str]
+    length_by_sample: dict[str, list[tuple[int, int]]], sample_names: list[str]
 ) -> dict[str, float]:
     """Calcule le nombre total d'allèles distincts pour un locus donné.
 
     Args:
-        length_by_pop: Dictionnaire {nom_population: [tuples (longueur, nb_sequence)]}.
+        length_by_sample: Dictionnaire {nom_echantillon: [tuples (longueur, nb_sequence)]}.
 
     Returns:
         Le nombre total d'allèles distincts.
     """
     pairs = pairs = [
         (i, j)
-        for i in range(len(population_names))
-        for j in range(i + 1, len(population_names))
+        for i in range(len(sample_names))
+        for j in range(i + 1, len(sample_names))
     ]
 
     combined_alleles = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
     for i, j in pairs:
         key = f"{i + 1}.{j + 1}"
-        if (
-            population_names[i] in length_by_pop
-            and population_names[j] in length_by_pop
-        ):
-            lengths_a = length_by_pop[population_names[i]]
-            lengths_b = length_by_pop[population_names[j]]
+        if sample_names[i] in length_by_sample and sample_names[j] in length_by_sample:
+            lengths_a = length_by_sample[sample_names[i]]
+            lengths_b = length_by_sample[sample_names[j]]
             combined_alleles[key] += _compute_N2P_for_one_pair(lengths_a, lengths_b)
-        elif population_names[i] in length_by_pop:
-            lengths_a = length_by_pop[population_names[i]]
-            combined_alleles[key] += count_alleles_per_population(length_by_pop)[
-                population_names[i]
+        elif sample_names[i] in length_by_sample:
+            lengths_a = length_by_sample[sample_names[i]]
+            combined_alleles[key] += count_alleles_per_population(length_by_sample)[
+                sample_names[i]
             ]
-        elif population_names[j] in length_by_pop:
-            lengths_b = length_by_pop[population_names[j]]
-            combined_alleles[key] += count_alleles_per_population(length_by_pop)[
-                population_names[j]
+        elif sample_names[j] in length_by_sample:
+            lengths_b = length_by_sample[sample_names[j]]
+            combined_alleles[key] += count_alleles_per_population(length_by_sample)[
+                sample_names[j]
             ]
     return combined_alleles
 
 
 def compute_N2P(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule N2P_i_j : pour chaque paire de populations, la moyenne du nombre d'allèles distincts
+    """Calcule N2P_i_j : pour chaque paire d'échantillons, la moyenne du nombre d'allèles distincts
     sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
-        population_names: Liste des noms de population.
+        sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
@@ -2749,8 +2730,8 @@ def compute_N2P(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_pop = _length_by_population(ts, layout=layout)
-        combined_alleles = _compute_N2P_for_one_locus(length_by_pop, population_names)
+        length_by_sample = _length_by_sample(ts, layout=layout)
+        combined_alleles = _compute_N2P_for_one_locus(length_by_sample, sample_names)
         for key in combined_alleles:
             valid_loci.setdefault(key, 0)
             valid_loci[key] += 1
@@ -2769,7 +2750,7 @@ def compute_N2P(
 def _pool_allele_counts_for_two_populations(
     pop_1: list[tuple[int, int]], pop_2: list[tuple[int, int]]
 ) -> list[tuple[int, int]]:
-    """Fusionne les comptes bruts de deux populations, allèle par allèle.
+    """Fusionne les comptes bruts de deux échantillons, allèle par allèle.
 
     Ne calcule ni H2P ni une fréquence -- juste n_i·freq_i + n_j·freq_j
     (= compte_i + compte_j, la division par n_i/n_j s'annulant avec la
@@ -2778,8 +2759,8 @@ def _pool_allele_counts_for_two_populations(
     lui-même la division par le total).
 
     Args:
-        pop_1: Liste de tuples (longueur, nb_sequence) pour la population 1.
-        pop_2: Liste de tuples (longueur, nb_sequence) pour la population 2.
+        pop_1: Liste de tuples (longueur, nb_sequence) pour l'échantillon 1.
+        pop_2: Liste de tuples (longueur, nb_sequence) pour l'échantillon 2.
 
     Returns:
         Liste de tuples (longueur, compte poolé) pour chaque allèle.
@@ -2800,24 +2781,24 @@ def _pool_allele_counts_for_two_populations(
 
 
 def _compute_H2P_for_one_pair(
-    length_by_pop: dict[str, list[tuple[int, int]]], pop_a: str, pop_b: str
+    length_by_sample: dict[str, list[tuple[int, int]]], samp_a: str, samp_b: str
 ) -> float:
-    """Calcule H2P_ij pour une paire de populations à partir des listes de tuples (longueur, nb_sequence).
+    """Calcule H2P_ij pour une paire d'échantillons à partir des listes de tuples (longueur, nb_sequence).
 
     Args:
-        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}.
-        pop_a: Nom de la première population.
-        pop_b: Nom de la seconde population.
+        length_by_sample: Dict {nom_echantillon: [(longueur, nb_sequence), ...]}.
+        samp_a: Nom du premier échantillon.
+        samp_b: Nom du second échantillon.
 
     Returns:
-        La diversité génétique H2P pour la paire de populations.
+        La diversité génétique H2P pour la paire d'échantillons.
     """
-    if pop_a not in length_by_pop or pop_b not in length_by_pop:
+    if samp_a not in length_by_sample or samp_b not in length_by_sample:
         raise KeyError(
-            "L'une des populations n'est pas présente dans les matrices de génotypes."
+            "L'un des échantillons n'est pas présent dans les matrices de génotypes."
         )
     pooled_counts = _pool_allele_counts_for_two_populations(
-        length_by_pop[pop_a], length_by_pop[pop_b]
+        length_by_sample[samp_a], length_by_sample[samp_b]
     )
     total_count = sum(count for _, count in pooled_counts)
     if total_count <= 1:
@@ -2829,26 +2810,26 @@ def _compute_H2P_for_one_pair(
 
 def compute_H2P(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """
-    Calcule la diversité génétique H2P pour toutes les paires de populations.
+    Calcule la diversité génétique H2P pour toutes les paires d'échantillons.
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
-        population_names: Liste des noms de population.
+        sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Dict {i.j: H2P} pour chaque paire de populations.
+        Dict {i.j: H2P} pour chaque paire d'échantillons.
     """
 
     pairs = [
         (i, j)
-        for i in range(len(population_names))
-        for j in range(i + 1, len(population_names))
+        for i in range(len(sample_names))
+        for j in range(i + 1, len(sample_names))
     ]
 
     H2P_values = {f"{i + 1}.{j + 1}": [] for i, j in pairs}
@@ -2858,29 +2839,29 @@ def compute_H2P(
         layouts = [None] * len(tree_sequences)
 
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_pop = _length_by_population(ts, layout=layout)
+        length_by_sample = _length_by_sample(ts, layout=layout)
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
             if (
-                population_names[i] in length_by_pop
-                and population_names[j] in length_by_pop
+                sample_names[i] in length_by_sample
+                and sample_names[j] in length_by_sample
             ):
                 H2P_value = _compute_H2P_for_one_pair(
-                    length_by_pop, population_names[i], population_names[j]
+                    length_by_sample, sample_names[i], sample_names[j]
                 )
                 H2P_values[key].append(H2P_value)
             else:
-                total_counts = total_genes_copies_per_population(length_by_pop)
-                if population_names[i] in length_by_pop:
-                    _lengths_counts = length_by_pop[population_names[i]]
+                total_counts = total_genes_copies_per_population(length_by_sample)
+                if sample_names[i] in length_by_sample:
+                    _lengths_counts = length_by_sample[sample_names[i]]
                     H2P_value = _compute_HET_for_one_population(
-                        total_counts[population_names[i]], _lengths_counts
+                        total_counts[sample_names[i]], _lengths_counts
                     )
                     H2P_values[key].append(H2P_value)
-                elif population_names[j] in length_by_pop:
-                    _lengths_counts = length_by_pop[population_names[j]]
+                elif sample_names[j] in length_by_sample:
+                    _lengths_counts = length_by_sample[sample_names[j]]
                     H2P_value = _compute_HET_for_one_population(
-                        total_counts[population_names[j]], _lengths_counts
+                        total_counts[sample_names[j]], _lengths_counts
                     )
                     H2P_values[key].append(H2P_value)
     for key in H2P_values:
@@ -2903,14 +2884,14 @@ def _compute_V2P_constants(
     total_counts: dict[str, int],
 ) -> tuple[float, float, int]:
     """
-    Calcule les constantes nécessaires pour V2P pour une paire de populations.
+    Calcule les constantes nécessaires pour V2P pour une paire d'échantillons.
 
     Args:
-        population1: Nom de la première population.
-        population2: Nom de la seconde population.
-        raw_sizes: Dict {nom_population: somme des tailles brutes}.
-        raw_square_sizes: Dict {nom_population: somme des tailles brutes au carré}.
-        total_counts: Dict {nom_population: nombre total d'allèles distincts}.
+        population1: Nom du premier échantillon.
+        population2: Nom du second échantillon.
+        raw_sizes: Dict {nom_echantillon: somme des tailles brutes}.
+        raw_square_sizes: Dict {nom_echantillon: somme des tailles brutes au carré}.
+        total_counts: Dict {nom_echantillon: nombre total d'allèles distincts}.
 
     Returns:
         Tuple (raw_size_sum, raw_square_size_sum, total_count_sum) pour la paire
@@ -2928,7 +2909,7 @@ def _compute_V2P_constants(
 
 def compute_V2P(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     list_motif_sizes: list[int],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
@@ -2938,18 +2919,18 @@ def compute_V2P(
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
-        population_names: Liste des noms de population.
+        sample_names: Liste des noms d'échantillon.
         list_motif_sizes: Liste des tailles de motifs pour chaque locus.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas
 
     Returns:
-        Dict {"i.j": V2P} pour chaque paire de populations.
+        Dict {"i.j": V2P} pour chaque paire d'échantillons.
     """
 
     pairs = [
         (i, j)
-        for i in range(len(population_names))
-        for j in range(i + 1, len(population_names))
+        for i in range(len(sample_names))
+        for j in range(i + 1, len(sample_names))
     ]
 
     V2P_values = {f"{i + 1}.{j + 1}": [] for i, j in pairs}
@@ -2960,16 +2941,16 @@ def compute_V2P(
     for ts, motif_size, layout in zip(
         tree_sequences, list_motif_sizes, layouts, strict=True
     ):
-        length_by_pop = _length_by_population(ts, layout=layout)
+        length_by_sample = _length_by_sample(ts, layout=layout)
         raw_sizes, raw_square_sizes, total_counts = _compute_VAR_constants(
-            length_by_pop
+            length_by_sample
         )
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
-            pop_a = population_names[i]
-            pop_b = population_names[j]
+            samp_a = sample_names[i]
+            samp_b = sample_names[j]
             raw_size_sum, raw_square_size_sum, total_count_sum = _compute_V2P_constants(
-                pop_a, pop_b, raw_sizes, raw_square_sizes, total_counts
+                samp_a, samp_b, raw_sizes, raw_square_sizes, total_counts
             )
             if total_count_sum > 1:
                 V2P_value = _compute_VAR_for_one_population(
@@ -2991,23 +2972,23 @@ def compute_V2P(
 
 
 def _compute_identical_pair_for_one_pair(
-    length_by_pop: dict[str, list[tuple[int, int]]], pop_a: str, pop_b: str
+    length_by_sample: dict[str, list[tuple[int, int]]], samp_a: str, samp_b: str
 ) -> tuple[int, int]:
-    """Calcule le nombre de paires d'allèles identiques et le nombre total de paires possibles pour une paire de populations.
+    """Calcule le nombre de paires d'allèles identiques et le nombre total de paires possibles pour une paire d'échantillons.
 
     Args:
-        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}.
-        pop_a: Nom de la première population.
-        pop_b: Nom de la seconde population.
+        length_by_sample: Dict {nom_echantillon: [(longueur, nb_sequence), ...]}.
+        samp_a: Nom du premier échantillon.
+        samp_b: Nom du second échantillon.
 
     Returns:
-        Tuple (identical_count, total_count) pour la paire de populations.
+        Tuple (identical_count, total_count) pour la paire d'échantillons.
     """
     counts_a = {
-        length: count for length, count in length_by_pop.get(pop_a, []) if count > 0
+        length: count for length, count in length_by_sample.get(samp_a, []) if count > 0
     }
     counts_b = {
-        length: count for length, count in length_by_pop.get(pop_b, []) if count > 0
+        length: count for length, count in length_by_sample.get(samp_b, []) if count > 0
     }
     identical_count = sum(
         counts_a.get(length, 0) * counts_b.get(length, 0)
@@ -3021,26 +3002,26 @@ def _compute_identical_pair_for_one_pair(
 
 def compute_DAS(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """
-    Calcule la distance d'allèle partagée (DAS) entre toutes les paires de populations.
+    Calcule la distance d'allèle partagée (DAS) entre toutes les paires d'échantillons.
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
-        population_names: Liste des noms de population.
+        sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Dict {i.j: DAS} pour chaque paire de populations.
+        Dict {i.j: DAS} pour chaque paire d'échantillons.
     """
 
     pairs = [
         (i, j)
-        for i in range(len(population_names))
-        for j in range(i + 1, len(population_names))
+        for i in range(len(sample_names))
+        for j in range(i + 1, len(sample_names))
     ]
     identical_sum = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
     total_sum = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
@@ -3049,11 +3030,11 @@ def compute_DAS(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_pop = _length_by_population(ts, layout=layout)
+        length_by_sample = _length_by_sample(ts, layout=layout)
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
             identical_count, total_count = _compute_identical_pair_for_one_pair(
-                length_by_pop, population_names[i], population_names[j]
+                length_by_sample, sample_names[i], sample_names[j]
             )
             identical_sum[key] += identical_count
             total_sum[key] += total_count
@@ -3068,26 +3049,26 @@ def compute_DAS(
 
 
 def _compute_DM2_for_one_locus(
-    pop_a: str,
-    pop_b: str,
+    samp_a: str,
+    samp_b: str,
     motif_size: int,
-    length_by_pop: dict[str, list[tuple[int, int]]],
+    length_by_sample: dict[str, list[tuple[int, int]]],
     raw_sizes: dict[str, float],
     total_counts: dict[str, int],
     previous_moy: tuple[float, float] | None,
 ) -> tuple[float, tuple[float, float] | None, bool]:
-    """Calcule la contribution de DM2 à UN locus, pour une paire de populations.
+    """Calcule la contribution de DM2 à UN locus, pour une paire d'échantillons.
 
     Reproduit fidèlement un bug de cal_dmu2p (sumstat.cpp) : dans le
     C++, le buffer moy[] est alloué UNE SEULE FOIS avant la boucle sur
-    les loci, et n'est réécrit que si les deux populations ont des
+    les loci, et n'est réécrit que si les deux échantillons ont des
     échantillons à ce locus (sasize*sasize1 > 0) -- sinon il garde les
     valeurs (moy_a, moy_b) du DERNIER locus valide. Mais la ligne
     d'accumulation (dmu2 += sqr((moy[1]-moy[0])/motif_size)) est en
     dehors du if qui protège le calcul de moy[] -- elle s'exécute donc
     à CHAQUE locus, y compris avec des valeurs de moy[] périmées (d'un
     autre locus), divisées par le motif_size du locus COURANT. `nl`,
-    lui, n'est incrémenté que quand les deux populations sont
+    lui, n'est incrémenté que quand les deux échantillons sont
     présentes -- numérateur et dénominateur sont donc désynchronisés
     dès qu'un tel locus existe.
 
@@ -3102,36 +3083,36 @@ def _compute_DM2_for_one_locus(
     que reproduire ce comportement.
 
     Args:
-        pop_a: Nom de la première population.
-        pop_b: Nom de la seconde population.
+        samp_a: Nom du premier échantillon.
+        samp_b: Nom du second échantillon.
         motif_size: Taille du motif pour CE locus.
-        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}
+        length_by_sample: Dict {nom_echantillon: [(longueur, nb_sequence), ...]}
             pour CE locus.
-        raw_sizes: Dict {nom_population: somme des tailles brutes} pour
+        raw_sizes: Dict {nom_echantillon: somme des tailles brutes} pour
             CE locus (sortie de _compute_VAR_constants).
-        total_counts: Dict {nom_population: nombre total de copies de
+        total_counts: Dict {nom_echantillon: nombre total de copies de
             gène} pour CE locus (sortie de _compute_VAR_constants).
         previous_moy: Le (moy_a, moy_b) du dernier locus valide
             rencontré pour cette paire, ou None si aucun locus valide
             n'a encore été rencontré (tout premier locus du groupe --
             cas non observé sur nos datasets, où le premier locus a
-            toujours les deux populations présentes).
+            toujours les deux échantillons présents).
 
     Returns:
         Tuple (contribution, new_moy, was_valid) :
             contribution: le terme à ajouter à la somme dmu2 pour ce
                 locus (0.0 si previous_moy vaut encore None).
             new_moy: (moy_a, moy_b) mis à jour -- recalculé si les deux
-                populations sont présentes à ce locus, sinon identique
+                échantillons sont présentes à ce locus, sinon identique
                 à previous_moy (le bug reproduit).
-            was_valid: True si les deux populations étaient présentes à
+            was_valid: True si les deux échantillons étaient présentes à
                 ce locus (donc si ce locus doit compter dans nl).
     """
-    both_present = pop_a in length_by_pop and pop_b in length_by_pop
+    both_present = samp_a in length_by_sample and samp_b in length_by_sample
 
     if both_present:
-        moy_a = raw_sizes[pop_a] / total_counts[pop_a]
-        moy_b = raw_sizes[pop_b] / total_counts[pop_b]
+        moy_a = raw_sizes[samp_a] / total_counts[samp_a]
+        moy_b = raw_sizes[samp_b] / total_counts[samp_b]
         new_moy = (moy_a, moy_b)
     else:
         # BUG REPRODUIT (cal_dmu2p) : moy[] n'est pas recalculé, on
@@ -3150,13 +3131,13 @@ def _compute_DM2_for_one_locus(
 
 def compute_DM2(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     list_motif_sizes: list[int],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule DM2_i_j : (delta mu)^2 de Goldstein et al. (1995), pour
-    chaque paire de populations, sur tous les loci du groupe passé en
+    chaque paire d'échantillons, sur tous les loci du groupe passé en
     argument.
 
     Reproduit fidèlement le bug d'accumulation de cal_dmu2p -- voir le
@@ -3168,7 +3149,7 @@ def compute_DM2(
 
     Args:
         tree_sequences: Liste de TreeSequences, DANS L'ORDRE du groupe.
-        population_names: Liste des noms de population.
+        sample_names: Liste des noms d'échantillon.
         list_motif_sizes: Liste des tailles de motifs, un par locus,
             dans le même ordre que tree_sequences.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
@@ -3178,8 +3159,8 @@ def compute_DM2(
     """
     pairs = [
         (i, j)
-        for i in range(len(population_names))
-        for j in range(i + 1, len(population_names))
+        for i in range(len(sample_names))
+        for j in range(i + 1, len(sample_names))
     ]
     dmu2_sum = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
     valid_loci_count = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
@@ -3191,16 +3172,16 @@ def compute_DM2(
     for ts, motif_size, layout in zip(
         tree_sequences, list_motif_sizes, layouts, strict=True
     ):
-        length_by_pop = _length_by_population(ts, layout=layout)
-        raw_sizes, _, total_counts = _compute_VAR_constants(length_by_pop)
+        length_by_sample = _length_by_sample(ts, layout=layout)
+        raw_sizes, _, total_counts = _compute_VAR_constants(length_by_sample)
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
-            pop_a, pop_b = population_names[i], population_names[j]
+            samp_a, samp_b = sample_names[i], sample_names[j]
             contribution, new_moy, was_valid = _compute_DM2_for_one_locus(
-                pop_a,
-                pop_b,
+                samp_a,
+                samp_b,
                 motif_size,
-                length_by_pop,
+                length_by_sample,
                 raw_sizes,
                 total_counts,
                 previous_moy[key],
@@ -3219,54 +3200,54 @@ def compute_DM2(
 # FST : between two samples (Weir and Cockerham 1984)
 
 
-def _length_by_pop_and_individuals(
+def _length_by_sample_and_individuals(
     tree_sequence: tskit.TreeSequence,
     *,
     layout: list[tuple[str, np.ndarray]] | None = None,
 ) -> dict[str, list[tuple[int, int]]]:
-    """Calcule la longueur des séquences pour chaque individupar population.
+    """Calcule la longueur des séquences pour chaque individupar échantillon.
     La ploidie de l'individu est détectée par le nombre de noeud dans l'arbre via tree_sequence.individuals().
     On retournera à chaque fois un tuple (longueur_1,longueur_2) pour chaque individu et
     longueur_1 sera répétée si l'individu est haploïde.
 
     Args:
         tree_sequence: Un objet TreeSequence de tskit.
-        layout: [(nom_population, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par population à utilisé par le chemin sériel, où un échantillon n'est plus sa propre population
+        layout: [(nom_echantillon, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par échantillon à utilisé par le chemin sériel, où un échantillon n'est plus sa propre échantillon
 
     Returns:
-        Dict {nom_population: [(longueur_1, longueur_2), ...]}.
+        Dict {nom_echantillon: [(longueur_1, longueur_2), ...]}.
     """
     if layout is None:
         layout = compute_population_layout(tree_sequence)
-    length_by_pop = {pop: [] for pop, _ in layout}
+    length_by_sample = {pop: [] for pop, _ in layout}
     if tree_sequence.num_sites == 0:
         for ind in tree_sequence.individuals():
             nodes = ind.nodes
-            population = next(pop for pop, inds in layout if nodes[0] in inds)
-            length_by_pop[population].append((0, 0))
-        return length_by_pop
+            échantillon = next(pop for pop, inds in layout if nodes[0] in inds)
+            length_by_sample[échantillon].append((0, 0))
+        return length_by_sample
 
     variant = next(tree_sequence.variants())
     tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
     for ind in tree_sequence.individuals():
         nodes = ind.nodes
-        population = next(pop for pop, inds in layout if nodes[0] in inds)
+        échantillon = next(pop for pop, inds in layout if nodes[0] in inds)
         if len(nodes) == 1:
-            length_by_pop[population].append(
+            length_by_sample[échantillon].append(
                 (int(tailles[nodes[0]]), int(tailles[nodes[0]]))
             )
         else:
-            length_by_pop[population].append(
+            length_by_sample[échantillon].append(
                 (int(tailles[nodes[0]]), int(tailles[nodes[1]]))
             )
 
-    return length_by_pop
+    return length_by_sample
 
 
 def _compute_ni_nA_AA_for_one_population(
     pairs: list[tuple[int, int]], al: int
 ) -> tuple[int, int, int]:
-    """Calcule ni, nA et AA pour une population donnée à partir des paires d'allèles.
+    """Calcule ni, nA et AA pour un échantillon donné à partir des paires d'allèles.
 
     Args:
         pairs: Liste de tuples (longueur_1, longueur_2) pour chaque individu.
@@ -3287,11 +3268,11 @@ def _compute_ni_nA_AA_for_one_population(
 def _compute_FST_constants_for_two_populations_combined(
     pairs_1: list[tuple[int, int]], pairs_2: list[tuple[int, int]], al: int
 ) -> tuple[int, int, int]:
-    """Calcule les constantes nécessaires pour FST pour une paire de populations combinées.
+    """Calcule les constantes nécessaires pour FST pour une paire d'échantillons combinés.
 
     Args:
-        pairs_1: Liste de tuples (longueur_1, longueur_2) pour la première population.
-        pairs_2: Liste de tuples (longueur_1, longueur_2) pour la seconde population.
+        pairs_1: Liste de tuples (longueur_1, longueur_2) pour la première échantillon.
+        pairs_2: Liste de tuples (longueur_1, longueur_2) pour la seconde échantillon.
         al: Longueur de l'allèle considéré.
 
     Returns:
@@ -3321,21 +3302,21 @@ def _compute_FST_constants_for_two_populations_combined(
 
 
 def _compute_FST_constants_on_all_alleles_for_two_populations(
-    length_by_pop: dict[str, list[tuple[int, int]]], pop_a: str, pop_b: str
+    length_by_sample: dict[str, list[tuple[int, int]]], samp_a: str, samp_b: str
 ) -> tuple[float, float, float]:
-    """Calcule les constantes nécessaires pour FST pour une paire de populations sur tous les allèles.
+    """Calcule les constantes nécessaires pour FST pour une paire d'échantillons sur tous les allèles.
 
     Args:
-        length_by_pop: Dict {nom_population: [(longueur_1, longueur_2), ...]}.
-        pop_a: Nom de la première population.
-        pop_b: Nom de la seconde population.
+        length_by_sample: Dict {nom_echantillon: [(longueur_1, longueur_2), ...]}.
+        samp_a: Nom du premier échantillon.
+        samp_b: Nom du second échantillon.
 
     Returns:
-        Un tuple (s2G_total, s2I_total, s2P_total) pour la paire de populations.
+        Un tuple (s2G_total, s2I_total, s2P_total) pour la paire d'échantillons.
     """
 
-    pairs_1 = length_by_pop.get(pop_a, [])
-    pairs_2 = length_by_pop.get(pop_b, [])
+    pairs_1 = length_by_sample.get(samp_a, [])
+    pairs_2 = length_by_sample.get(samp_b, [])
 
     unique_alleles = set(length for pair in pairs_1 + pairs_2 for length in pair)
 
@@ -3356,15 +3337,15 @@ def _compute_FST_constants_on_all_alleles_for_two_populations(
 
 def compute_FST(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule FST_i_j : pour chaque paire de populations, la moyenne de FST sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
+    """Calcule FST_i_j : pour chaque paire d'échantillons, la moyenne de FST sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
-        population_names: Liste des noms de population.
+        sample_names: Liste des noms d'échantillon.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
@@ -3372,8 +3353,8 @@ def compute_FST(
     """
     pairs = [
         (i, j)
-        for i in range(len(population_names))
-        for j in range(i + 1, len(population_names))
+        for i in range(len(sample_names))
+        for j in range(i + 1, len(sample_names))
     ]
     s1 = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
     # s2_sum = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
@@ -3382,19 +3363,19 @@ def compute_FST(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_pop = _length_by_pop_and_individuals(ts, layout=layout)
+        length_by_sample = _length_by_sample_and_individuals(ts, layout=layout)
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
-            pop_a, pop_b = population_names[i], population_names[j]
+            samp_a, samp_b = sample_names[i], sample_names[j]
             # calcul de nc
-            ni_1 = len(length_by_pop.get(pop_a, []))
-            ni_2 = len(length_by_pop.get(pop_b, []))
+            ni_1 = len(length_by_sample.get(samp_a, []))
+            ni_2 = len(length_by_sample.get(samp_b, []))
             sni = ni_1 + ni_2
             sni2 = ni_1**2 + ni_2**2
             nc = sni - sni2 / sni if sni > 0 else 0.0
             # mise à jour des constantes
             s1l, _, s3l = _compute_FST_constants_on_all_alleles_for_two_populations(
-                length_by_pop, pop_a, pop_b
+                length_by_sample, samp_a, samp_b
             )
             s1[key] += s1l * nc
             s3[key] += s3l * nc
@@ -3404,14 +3385,14 @@ def compute_FST(
 # [LIK] - mean index of classification (two samples) (Rannala and Moutain 1997; Pascual et al. 2007)
 
 
-def _genotypes_by_pop_and_individuals(
+def _genotypes_by_sample_and_individuals(
     tree_sequence: tskit.TreeSequence,
     *,
     layout: list[tuple[str, np.ndarray]] | None = None,
 ) -> dict[str, list[tuple[int, int] | tuple[int]]]:
-    """Calcule les tailles d'allèles de chaque individu, par population.
+    """Calcule les tailles d'allèles de chaque individu, par échantillon.
 
-    Contrairement à _length_by_pop_and_individuals (qui duplique la
+    Contrairement à _length_by_sample_and_individuals (qui duplique la
     valeur des individus haploïdes en une paire), on garde ici la
     VRAIE ploïdie -- un tuple à 1 élément pour un individu haploïde, à
     2 éléments pour un diploïde -- puisque cal_lik2p applique une
@@ -3420,34 +3401,34 @@ def _genotypes_by_pop_and_individuals(
 
     Args:
         tree_sequence: Un objet TreeSequence de tskit.
-        layout: [(nom_population, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par population à utilisé par le chemin sériel, où un échantillon n'est plus sa propre population
+        layout: [(nom_echantillon, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par échantillon à utilisé par le chemin sériel, où un échantillon n'est plus sa propre échantillon
 
     Returns:
-        Dict {nom_population: [(longueur_1, longueur_2) ou (longueur_1,), ...]}.
+        Dict {nom_echantillon: [(longueur_1, longueur_2) ou (longueur_1,), ...]}.
     """
     if layout is None:
         layout = compute_population_layout(tree_sequence)
-    genotype_by_pop = {pop: [] for pop, _ in layout}
+    genotype_by_sample = {pop: [] for pop, _ in layout}
     if tree_sequence.num_sites == 0:
         for ind in tree_sequence.individuals():
             nodes = ind.nodes
-            population = next(pop for pop, inds in layout if nodes[0] in inds)
-            genotype_by_pop[population].append((0, 0))
-        return genotype_by_pop
+            échantillon = next(pop for pop, inds in layout if nodes[0] in inds)
+            genotype_by_sample[échantillon].append((0, 0))
+        return genotype_by_sample
     else:
         variant = next(tree_sequence.variants())
         tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
         for ind in tree_sequence.individuals():
             nodes = ind.nodes
-            population = next(pop for pop, inds in layout if nodes[0] in inds)
+            échantillon = next(pop for pop, inds in layout if nodes[0] in inds)
             if len(nodes) == 1:
-                genotype_by_pop[population].append((tailles[nodes[0]],))
+                genotype_by_sample[échantillon].append((tailles[nodes[0]],))
             else:
-                genotype_by_pop[population].append(
+                genotype_by_sample[échantillon].append(
                     (tailles[nodes[0]], tailles[nodes[1]])
                 )
 
-        return genotype_by_pop
+        return genotype_by_sample
 
 
 def _compute_num_den_lik_for_one_individual(
@@ -3461,14 +3442,14 @@ def _compute_num_den_lik_for_one_individual(
     Reproduit cal_lik2p (sumstat.cpp) : trois formules distinctes selon
     que l'individu est haploïde, diploïde homozygote ou diploïde
     hétérozygote -- pas une formule unique applicable aux trois cas
-    (contrairement à FST, voir _genotypes_by_pop_and_individuals).
+    (contrairement à FST, voir _genotypes_by_sample_and_individuals).
 
     Args:
         genotype: Tailles d'allèles de l'individu -- un tuple à 1
             élément s'il est haploïde, à 2 s'il est diploïde.
-        count_j: Dict {taille: compte} pour la population de référence
-            (pop_j, celle dont on utilise les fréquences).
-        total_count_j: Nombre total de copies de gène dans pop_j.
+        count_j: Dict {taille: compte} pour l'échantillon de référence
+            (samp_j, celle dont on utilise les fréquences).
+        total_count_j: Nombre total de copies de gène dans samp_j.
         b: Pseudo-compte (1/nal, nal = nombre d'allèles distincts dans
             le dataset à ce locus).
 
@@ -3496,60 +3477,64 @@ def _compute_num_den_lik_for_one_individual(
 
 
 def _compute_LIK_for_one_locus(
-    length_by_pop: dict[str, list[tuple[int, int]]],
-    genotypes_by_pop: dict[str, list[tuple[int, ...]]],
-    pop_i: str,
-    pop_j: str,
+    length_by_sample: dict[str, list[tuple[int, int]]],
+    genotypes_by_sample: dict[str, list[tuple[int, ...]]],
+    samp_i: str,
+    samp_j: str,
 ) -> tuple[float, bool]:
     """Calcule la contribution de LIK_i_j à UN locus (sens i -> j uniquement).
 
-    Teste les individus de pop_i (population testée) contre les
-    fréquences de pop_j (population de référence) -- ASYMÉTRIQUE,
+    Teste les individus de samp_i (échantillon testé) contre les
+    fréquences de samp_j (échantillon de référence) -- ASYMÉTRIQUE,
     contrairement à toutes les autres stats microsat à deux
-    populations : LIK_i_j et LIK_j_i utilisent des rôles inversés et ne
+    échantillons : LIK_i_j et LIK_j_i utilisent des rôles inversés et ne
     sont pas censées être égales. `nal`/`b` sont calculés sur l'union
-    des allèles de pop_i et pop_j présents à ce locus (comme il n'y a
-    que 2 populations dans ce projet, ça correspond exactement à
-    `nal` du C++, qui pool en théorie sur TOUTES les populations du
+    des allèles de samp_i et samp_j présents à ce locus (comme il n'y a
+    que 2 échantillons dans ce projet, ça correspond exactement à
+    `nal` du C++, qui pool en théorie sur TOUTES les échantillons du
     dataset).
 
     Args:
-        length_by_pop: Dict {nom_population: [(longueur, nb_sequence), ...]}
-            pour CE locus (sortie de _length_by_pop_and_individuals).
-        genotypes_by_pop: Dict {nom_population: [génotype par individu, ...]}
-            pour CE locus (sortie de _genotypes_by_pop_and_individuals).
-        pop_i: Population testée.
-        pop_j: Population de référence (dont on utilise les fréquences).
+        length_by_sample: Dict {nom_echantillon: [(longueur, nb_sequence), ...]}
+            pour CE locus (sortie de _length_by_sample_and_individuals).
+        genotypes_by_sample: Dict {nom_echantillon: [génotype par individu, ...]}
+            pour CE locus (sortie de _genotypes_by_sample_and_individuals).
+        samp_i: Population testée.
+        samp_j: Population de référence (dont on utilise les fréquences).
 
     Returns:
         Tuple (contribution, was_valid) : la contribution de ce locus
-        (déjà multipliée par a = 1/nombre d'individus de pop_i), et
-        True si pop_i ET pop_j ont des données à ce locus (sinon ce
+        (déjà multipliée par a = 1/nombre d'individus de samp_i), et
+        True si samp_i ET samp_j ont des données à ce locus (sinon ce
         locus doit être exclu, contribution=0.0).
     """
-    if pop_i not in length_by_pop or pop_j not in length_by_pop:
+    if samp_i not in length_by_sample or samp_j not in length_by_sample:
         return 0.0, False
 
-    count_j = {length: count for length, count in length_by_pop[pop_j]}
+    count_j = {length: count for length, count in length_by_sample[samp_j]}
     total_count_j = sum(count_j.values())
 
     # nal du C++ (cal_lik2p) : un allèle n'est compté que si sa fréquence
-    # SOMMÉE SUR TOUS LES ÉCHANTILLONS est non nulle. `length_by_pop` porte
-    # déjà toutes les populations, et ses clés viennent de variant.alleles --
+    # SOMMÉE SUR TOUS LES ÉCHANTILLONS est non nulle. `length_by_sample` porte
+    # déjà toutes les échantillons, et ses clés viennent de variant.alleles --
     # donc elles incluent des états créés par une mutation puis écrasés, que
     # plus aucun échantillon ne porte. Les compter gonfle nal et écrase b.
     total_counts = {}
-    for rows in length_by_pop.values():
+    for rows in length_by_sample.values():
         for length, count in rows:
             total_counts[length] = total_counts.get(length, 0) + count
     nb_allele = sum(1 for count in total_counts.values() if count > 0)
     b = 1 / nb_allele if nb_allele > 0 else 0.0
 
-    a = 1 / len(genotypes_by_pop[pop_i]) if len(genotypes_by_pop[pop_i]) > 0 else 0.0
+    a = (
+        1 / len(genotypes_by_sample[samp_i])
+        if len(genotypes_by_sample[samp_i]) > 0
+        else 0.0
+    )
 
     likelihood = 0
 
-    for genotype in genotypes_by_pop[pop_i]:
+    for genotype in genotypes_by_sample[samp_i]:
         num_lik, den_lik = _compute_num_den_lik_for_one_individual(
             genotype, count_j, total_count_j, b
         )
@@ -3560,13 +3545,13 @@ def _compute_LIK_for_one_locus(
 
 def compute_LIK(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
     """Calcule LIK_i_j : indice de vraisemblance d'assignation (Rannala &
     Mountain 1997 ; Pascual et al. 2007), pour chaque paire ORDONNÉE de
-    populations, moyenné sur tous les loci du groupe.
+    échantillons, moyenné sur tous les loci du groupe.
 
     Contrairement à NAL/HET/VAR/N2P/H2P/V2P/DAS/DM2/FST (paires non
     ordonnées i<j), LIK est asymétrique : `pairs` couvre toutes les
@@ -3576,17 +3561,17 @@ def compute_LIK(
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
-        population_names: Liste des noms de population.
+        sample_names: Liste des noms d'échantillon.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Dict {"i.j": LIK}, une entrée par paire ORDONNÉE de populations.
+        Dict {"i.j": LIK}, une entrée par paire ORDONNÉE d'échantillons.
     """
 
     pairs = [
         (i, j)
-        for i in range(len(population_names))
-        for j in range(len(population_names))
+        for i in range(len(sample_names))
+        for j in range(len(sample_names))
         if i != j
     ]
     likelihood_sum = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
@@ -3595,13 +3580,13 @@ def compute_LIK(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_pop = _length_by_population(ts, layout=layout)
-        genotypes_by_pop = _genotypes_by_pop_and_individuals(ts, layout=layout)
+        length_by_sample = _length_by_sample(ts, layout=layout)
+        genotypes_by_sample = _genotypes_by_sample_and_individuals(ts, layout=layout)
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
-            pop_i, pop_j = population_names[i], population_names[j]
+            samp_i, samp_j = sample_names[i], sample_names[j]
             likelihood, both_present = _compute_LIK_for_one_locus(
-                length_by_pop, genotypes_by_pop, pop_i, pop_j
+                length_by_sample, genotypes_by_sample, samp_i, samp_j
             )
             likelihood_sum[key] += likelihood
             if both_present:
@@ -3627,35 +3612,35 @@ def _prepare_loci_for_admixture(
 ) -> list[tuple[dict[int, float], dict[int, float], list[tuple[int, ...]]]]:
     """
     Prépare les loci pour le calcul de la log-vraisemblance d'admixture.
-    Pour chaque locus, on calcule les fréquences des allèles dans les populations parentales et on récupère les génotypes des individus de la population focale.
+    Pour chaque locus, on calcule les fréquences des allèles dans les échantillons parentaux et on récupère les génotypes des individus de l'échantillon focal.
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
-        focal: Nom de la population focale.
-        parent1: Nom de la première population parentale.
-        parent2: Nom de la deuxième population parentale.
+        focal: Nom de l'échantillon focal.
+        parent1: Nom du premier échantillon parental.
+        parent2: Nom de la deuxième échantillon parental.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Une liste de tuples pour chaque locus, contenant :
         - dict des fréquences des allèles dans parent1,
         - dict des fréquences des allèles dans parent2,
-        - liste des génotypes des individus de la population focale.
+        - liste des génotypes des individus de l'échantillon focal.
     """
     prepared_loci = []
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_pop = _length_by_population(ts, layout=layout)
+        length_by_sample = _length_by_sample(ts, layout=layout)
         count_parent1 = {
             length: count
-            for length, count in length_by_pop.get(parent1, [])
+            for length, count in length_by_sample.get(parent1, [])
             if count > 0
         }
         count_parent2 = {
             length: count
-            for length, count in length_by_pop.get(parent2, [])
+            for length, count in length_by_sample.get(parent2, [])
             if count > 0
         }
         total_parent1 = sum(count_parent1.values())
@@ -3671,8 +3656,8 @@ def _prepare_loci_for_admixture(
             if total_parent2 > 0
             else {}
         )
-        genotypes_by_pop = _genotypes_by_pop_and_individuals(ts, layout=layout)
-        focal_genotypes = genotypes_by_pop.get(focal, [])
+        genotypes_by_sample = _genotypes_by_sample_and_individuals(ts, layout=layout)
+        focal_genotypes = genotypes_by_sample.get(focal, [])
 
         prepared_loci.append((f1, f2, focal_genotypes))
 
@@ -3761,13 +3746,13 @@ def _compute_AML_one_triplet(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> float:
-    """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour chaque triplet de populations.
+    """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour chaque triplet d'échantillons.
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
-        focal: Nom de la population focale.
-        parent1: Nom de la première population parentale.
-        parent2: Nom de la deuxième population parentale.
+        focal: Nom de l'échantillon focal.
+        parent1: Nom du premier échantillon parental.
+        parent2: Nom de la deuxième échantillon parental.
         seed: Seed pour la génération aléatoire (pour les cas où AML ne peut pas être calculé).
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
@@ -3811,31 +3796,31 @@ def _compute_AML_one_triplet(
 
 def compute_AML_microsat(
     tree_sequences: list[tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     seed: int = 0,
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> dict[str, float]:
-    """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour chaque triplet de populations.
+    """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour chaque triplet d'échantillons.
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
-        population_names: Liste des noms de population.
+        sample_names: Liste des noms d'échantillon.
         seed: Seed pour la génération aléatoire (pour les cas où AML ne peut pas être calculé).
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
-        Dict {"i.j.k": AML} pour chaque triplet de populations.
+        Dict {"i.j.k": AML} pour chaque triplet d'échantillons.
     """
-    npop = len(population_names)
+    n_sample = len(sample_names)
     results = {}
-    for i, t in enumerate(_half_arrangements(npop, 3)):
+    for i, t in enumerate(_half_arrangements(n_sample, 3)):
         h, p1, p2 = t[0], t[1], t[2]
         key = f"{h + 1}.{p1 + 1}.{p2 + 1}"
         focal, parent1, parent2 = (
-            population_names[h],
-            population_names[p1],
-            population_names[p2],
+            sample_names[h],
+            sample_names[p1],
+            sample_names[p2],
         )
         results[key] = _compute_AML_one_triplet(
             tree_sequences,
@@ -3855,92 +3840,90 @@ def compute_AML_microsat(
 
 def compute_all_statistics(
     genotypes_per_locus: list[dict[str, list[int]]],
-    population_names: list[str],
+    sample_names: list[str],
 ) -> dict[str, float]:
     """Calcule les 130 statistiques résumées SNP (IndSeq).
 
-    Les matrices (npop x nloci) de comptes et fréquences sont construites
+    Les matrices (n_sample x n_loci) de comptes et fréquences sont construites
     une seule fois (_prepare_matrices) et transmises à toutes les familles
     de statistiques via _mats.
 
     Args:
-        genotypes_per_locus: Liste de dicts {nom_population:
+        genotypes_per_locus: Liste de dicts {nom_echantillon:
             [génotype, ...]}, un dict par locus.
-        population_names: Les noms de population.
+        sample_names: Les noms d'échantillon.
 
     Returns:
         Un dict {nom_stat: valeur} -- même format que parse_statobs().
     """
-    mats = _prepare_matrices(genotypes_per_locus, population_names)
+    mats = _prepare_matrices(genotypes_per_locus, sample_names)
     results = {}
-    results.update(compute_ML1(genotypes_per_locus, population_names, _mats=mats))
-    results.update(compute_ML2(genotypes_per_locus, population_names, _mats=mats))
-    results.update(compute_ML3(genotypes_per_locus, population_names, _mats=mats))
-    results.update(compute_HW_HB(genotypes_per_locus, population_names, _mats=mats))
-    results.update(compute_FST1(genotypes_per_locus, population_names, _mats=mats))
-    results.update(compute_FST2(genotypes_per_locus, population_names, _mats=mats))
-    results.update(compute_NEI(genotypes_per_locus, population_names, _mats=mats))
-    results.update(compute_AML(genotypes_per_locus, population_names, _mats=mats))
-    results.update(compute_F3(genotypes_per_locus, population_names, _mats=mats))
-    results.update(compute_F4(genotypes_per_locus, population_names, _mats=mats))
+    results.update(compute_ML1(genotypes_per_locus, sample_names, _mats=mats))
+    results.update(compute_ML2(genotypes_per_locus, sample_names, _mats=mats))
+    results.update(compute_ML3(genotypes_per_locus, sample_names, _mats=mats))
+    results.update(compute_HW_HB(genotypes_per_locus, sample_names, _mats=mats))
+    results.update(compute_FST1(genotypes_per_locus, sample_names, _mats=mats))
+    results.update(compute_FST2(genotypes_per_locus, sample_names, _mats=mats))
+    results.update(compute_NEI(genotypes_per_locus, sample_names, _mats=mats))
+    results.update(compute_AML(genotypes_per_locus, sample_names, _mats=mats))
+    results.update(compute_F3(genotypes_per_locus, sample_names, _mats=mats))
+    results.update(compute_F4(genotypes_per_locus, sample_names, _mats=mats))
     results.update(
-        compute_FST3_FST4_FSTG(genotypes_per_locus, population_names, _mats=mats)
+        compute_FST3_FST4_FSTG(genotypes_per_locus, sample_names, _mats=mats)
     )
     return results
 
 
 def compute_all_statistics_poolseq(
     reads_per_locus: list[dict[str, tuple[int, int]]],
-    population_names: list[str],
+    sample_names: list[str],
     pool_sizes: dict[str, int],
 ) -> dict[str, float]:
     """Calcule les statistiques résumées SNP pour PoolSeq.
 
-    Les matrices (npop x nloci) de comptes et tailles d'échantillon sont
+    Les matrices (n_sample x n_loci) de comptes et tailles d'échantillon sont
     construites une seule fois (_prepare_matrices_poolseq) et transmises
     à toutes les familles de statistiques via _mats.
 
     Args:
-        reads_per_locus: Liste de dicts {nom_population: (nreads_dérivé,
+        reads_per_locus: Liste de dicts {nom_echantillon: (nreads_dérivé,
             nreads_total)}, un dict par locus.
-        population_names: Les noms de population.
-        pool_sizes: Dict {nom_population: taille_haploïde du pool}.
+        sample_names: Les noms d'échantillon.
+        pool_sizes: Dict {nom_echantillon: taille_haploïde du pool}.
 
     Returns:
         Un dict {nom_stat: valeur} -- même format que parse_statobs().
     """
-    mats = _prepare_matrices_poolseq(reads_per_locus, population_names)
+    mats = _prepare_matrices_poolseq(reads_per_locus, sample_names)
 
     results = {}
-    results.update(compute_ML1(None, population_names, _mats=mats))
-    results.update(compute_ML2(None, population_names, _mats=mats))
-    results.update(compute_ML3(None, population_names, _mats=mats))
+    results.update(compute_ML1(None, sample_names, _mats=mats))
+    results.update(compute_ML2(None, sample_names, _mats=mats))
+    results.update(compute_ML3(None, sample_names, _mats=mats))
     results.update(
         compute_HW_HB_poolseq(
-            reads_per_locus, population_names, pool_sizes=pool_sizes, _mats=mats
+            reads_per_locus, sample_names, pool_sizes=pool_sizes, _mats=mats
         )
     )
-    results.update(compute_NEI(reads_per_locus, population_names, _mats=mats))
-    results.update(compute_F4(reads_per_locus, population_names, _mats=mats))
+    results.update(compute_NEI(reads_per_locus, sample_names, _mats=mats))
+    results.update(compute_F4(reads_per_locus, sample_names, _mats=mats))
     results.update(
-        compute_F3_poolseq(reads_per_locus, population_names, pool_sizes, _mats=mats)
+        compute_F3_poolseq(reads_per_locus, sample_names, pool_sizes, _mats=mats)
     )
     results.update(
-        compute_FST2_poolseq(reads_per_locus, population_names, pool_sizes, _mats=mats)
+        compute_FST2_poolseq(reads_per_locus, sample_names, pool_sizes, _mats=mats)
     )
     results.update(
-        compute_FST3_FST4_poolseq(
-            reads_per_locus, population_names, pool_sizes, _mats=mats
-        )
+        compute_FST3_FST4_poolseq(reads_per_locus, sample_names, pool_sizes, _mats=mats)
     )
     results.update(
-        compute_FST1_poolseq(reads_per_locus, population_names, pool_sizes, _mats=mats)
+        compute_FST1_poolseq(reads_per_locus, sample_names, pool_sizes, _mats=mats)
     )
-    results.update(compute_AML(reads_per_locus, population_names, _mats=mats))
+    results.update(compute_AML(reads_per_locus, sample_names, _mats=mats))
     return results
 
 
-_DNA_PER_POPULATION_STATS = {
+_DNA_PER_SAMPLE_STATS = {
     "NHA": compute_NHA,
     "NSS": compute_NSS,
     "MPD": compute_MPD,
@@ -3963,7 +3946,7 @@ _DNA_PAIRWISE_STATS = {
 def compute_all_statistics_dna(
     header_text: str,
     tree_sequences_by_locus: dict[str, tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     seed: int = 0,
     layouts_by_locus: dict[str, list[tuple[str, np.ndarray]]] | None = None,
@@ -3985,7 +3968,7 @@ def compute_all_statistics_dna(
             la sortie de `dna_mutation_simulation_per_locus`. Les loci
             microsat (`ms_or_seq == "M"`) présents dans le header sont
             ignorés ici (pas de code de simulation microsat).
-        population_names: toutes les populations du dataset, dans
+        sample_names: toutes les échantillons du dataset, dans
             l'ordre "pop1".."popN" (leur position dans cette liste,
             pas leur nom, détermine l'indice numérique utilisé dans
             les noms de colonnes).
@@ -4013,21 +3996,21 @@ def compute_all_statistics_dna(
             if layouts_by_locus is None
             else [layouts_by_locus[name] for name in locus_names]
         )
-        for stat_name, stat_fn in _DNA_PER_POPULATION_STATS.items():
-            for pop_name, value in stat_fn(
-                tree_sequences, population_names, layouts=layouts
+        for stat_name, stat_fn in _DNA_PER_SAMPLE_STATS.items():
+            for samp_name, value in stat_fn(
+                tree_sequences, sample_names, layouts=layouts
             ).items():
-                pop_index = population_names.index(pop_name) + 1
+                samp_index = sample_names.index(samp_name) + 1
                 key = (
-                    f"{stat_name}_{group_number}_{pop_index}"
+                    f"{stat_name}_{group_number}_{samp_index}"
                     if multi_group
-                    else f"{stat_name}_{pop_index}"
+                    else f"{stat_name}_{samp_index}"
                 )
                 results[key] = value
 
         for stat_name, stat_fn in _DNA_PAIRWISE_STATS.items():
             for pair_key, value in stat_fn(
-                tree_sequences, population_names, layouts=layouts
+                tree_sequences, sample_names, layouts=layouts
             ).items():
                 key = (
                     f"{stat_name}_{group_number}_{pair_key}"
@@ -4039,7 +4022,7 @@ def compute_all_statistics_dna(
     return results
 
 
-_MICROSAT_PER_POPULATION_WITHOUT_MOTIF_SIZE = {
+_MICROSAT_PER_SAMPLE_WITHOUT_MOTIF_SIZE = {
     "NAL": compute_NAL,
     "HET": compute_HET,
 }
@@ -4052,7 +4035,7 @@ _MICROSAT_PAIRWISE_WITHOUT_MOTIF_SIZE = {
     "LIK": compute_LIK,
 }
 
-_MICROSAT_PER_POPULATION_WITH_MOTIF_SIZE = {
+_MICROSAT_PER_SAMPLE_WITH_MOTIF_SIZE = {
     "VAR": compute_VAR,
     "MGW": compute_MGW,
 }
@@ -4068,7 +4051,7 @@ _MICROSAT_TRIPLET_STATS = {"AML": compute_AML_microsat}
 def compute_all_statistics_microsat(
     header_text: str,
     tree_sequences_by_locus: dict[str, tskit.TreeSequence],
-    population_names: list[str],
+    sample_names: list[str],
     *,
     seed: int,
     layouts_by_locus: dict[str, list[tuple[str, np.ndarray]]] | None = None,
@@ -4087,7 +4070,7 @@ def compute_all_statistics_microsat(
             locus).
         tree_sequences_by_locus: {nom_locus: TreeSequence mutée} --
             la sortie de `microsat_mutation_simulation_per_locus`. Les loci ADN (`ms_or_seq == "S"`) présents dans le header sont ignorés ici (pas de code de simulation ADN).
-        population_names: toutes les populations du dataset, dans
+        sample_names: toutes les échantillons du dataset, dans
             l'ordre "pop1".."popN" (leur position dans cette liste,
             pas leur nom, détermine l'indice numérique utilisé dans
             les noms de colonnes).
@@ -4118,20 +4101,20 @@ def compute_all_statistics_microsat(
             else [layouts_by_locus[name] for name in locus_names]
         )
 
-        for stat_name, stat_fn in _MICROSAT_PER_POPULATION_WITHOUT_MOTIF_SIZE.items():
-            for pop_name, value in stat_fn(
-                tree_sequences, population_names, layouts=layouts
+        for stat_name, stat_fn in _MICROSAT_PER_SAMPLE_WITHOUT_MOTIF_SIZE.items():
+            for samp_name, value in stat_fn(
+                tree_sequences, sample_names, layouts=layouts
             ).items():
-                pop_index = population_names.index(pop_name) + 1
+                samp_index = sample_names.index(samp_name) + 1
                 key = (
-                    f"{stat_name}_{group_number}_{pop_index}"
+                    f"{stat_name}_{group_number}_{samp_index}"
                     if multi_group
-                    else f"{stat_name}_{pop_index}"
+                    else f"{stat_name}_{samp_index}"
                 )
                 results[key] = value
         for stat_name, stat_fn in _MICROSAT_PAIRWISE_WITHOUT_MOTIF_SIZE.items():
             for stat_index, value in stat_fn(
-                tree_sequences, population_names, layouts=layouts
+                tree_sequences, sample_names, layouts=layouts
             ).items():
                 key = (
                     f"{stat_name}_{group_number}_{stat_index}"
@@ -4141,20 +4124,20 @@ def compute_all_statistics_microsat(
                 results[key] = value
 
         motif_sizes = [motif_sizes_by_locus[name] for name in locus_names]
-        for stat_name, stat_fn in _MICROSAT_PER_POPULATION_WITH_MOTIF_SIZE.items():
-            for pop_name, value in stat_fn(
-                tree_sequences, population_names, motif_sizes, layouts=layouts
+        for stat_name, stat_fn in _MICROSAT_PER_SAMPLE_WITH_MOTIF_SIZE.items():
+            for samp_name, value in stat_fn(
+                tree_sequences, sample_names, motif_sizes, layouts=layouts
             ).items():
-                pop_index = population_names.index(pop_name) + 1
+                samp_index = sample_names.index(samp_name) + 1
                 key = (
-                    f"{stat_name}_{group_number}_{pop_index}"
+                    f"{stat_name}_{group_number}_{samp_index}"
                     if multi_group
-                    else f"{stat_name}_{pop_index}"
+                    else f"{stat_name}_{samp_index}"
                 )
                 results[key] = value
         for stat_name, stat_fn in _MICROSAT_PAIRWISE_WITH_MOTIF_SIZE.items():
             for stat_index, value in stat_fn(
-                tree_sequences, population_names, motif_sizes, layouts=layouts
+                tree_sequences, sample_names, motif_sizes, layouts=layouts
             ).items():
                 key = (
                     f"{stat_name}_{group_number}_{stat_index}"
@@ -4166,7 +4149,7 @@ def compute_all_statistics_microsat(
         for stat_name, stat_fn in _MICROSAT_TRIPLET_STATS.items():
             for stat_index, value in stat_fn(
                 tree_sequences,
-                population_names,
+                sample_names,
                 seed + int(group_number) * 1000,
                 layouts=layouts,
             ).items():  # pour éviter d'avoir la même graine pour différents groupes

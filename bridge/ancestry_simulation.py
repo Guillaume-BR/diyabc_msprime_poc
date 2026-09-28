@@ -52,11 +52,11 @@ from bridge.header_dataclasses import (
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
     coalescence_coefficient,
-    count_samples_per_population,
+    count_individuals_per_sample,
     individual_sexes_from_locus_genotype,
-    individual_sexes_per_population,
+    individual_sexes_per_sample,
     observed_mrc,
-    population_index_to_name,
+    sample_index_to_name,
 )
 from bridge.parameter_sampling import (
     draw_group_parameter_values,
@@ -167,8 +167,7 @@ def build_samples_argument(
     observed_data.py pour la justification du mapping par ordre
     d'apparition).
 
-    Un seul appel à count_samples_per_population (pas
-    population_index_to_name EN PLUS, qui relit et rescanne tout le
+    Un seul appel à count_individuals_per_sampsample EN PLUS, qui relit et rescanne tout le
     fichier .snp pour ne faire que redériver les mêmes clés dans le même
     ordre) -- l'indice 1-based se déduit directement de la position dans
     ce même dict, garanti dans l'ordre de première apparition (voir sa
@@ -180,7 +179,7 @@ def build_samples_argument(
     Returns:
         Un dict {nom_population_msprime: nombre_d_individus}.
     """
-    counts_by_name = count_samples_per_population(snp_file_path)
+    counts_by_name = count_individuals_per_sample(snp_file_path)
 
     return {
         f"pop{index}": count
@@ -189,7 +188,7 @@ def build_samples_argument(
 
 
 def build_sample_sets_from_scenario(
-    scenario: Scenario, values: dict[str, float], counts_by_samples: dict[str, int]
+    scenario: Scenario, values: dict[str, float], counts_per_sample: dict[str, int]
 ) -> list[msprime.SampleSet]:
     """Construit les SampleSet msprime décrits par les événements `sample` d'un scénario.
 
@@ -199,9 +198,9 @@ def build_sample_sets_from_scenario(
     particuleC.cpp:1528 apparie un événement SAMPLE aux noeuds portant ce
     même indice.
 
-    ATTENTION -- `counts_by_samples` est indexé par ÉCHANTILLON, jamais
+    ATTENTION -- `counts_per_sample` est indexé par ÉCHANTILLON, jamais
     par population. Ses clés ("pop1", "pop2"...) sont un héritage de
-    count_samples_per_population / observed_count_population et sont
+    count_individuals_per_sample / observed_count_population et sont
     IGNORÉES ici : seul l'ordre des valeurs fait foi, le k-ième effectif
     allant au k-ième événement `sample`. Les deux notions ne coïncident
     que par accident sur les jeux de données non sériels ; dès qu'un
@@ -216,7 +215,7 @@ def build_sample_sets_from_scenario(
             Nécessaires uniquement pour les temps exprimés par un nom de
             paramètre (ex. "tbn sample 1", cf. particuleC.cpp:599-605) --
             peut être vide si tous les temps sont littéraux.
-        counts_by_samples: Les effectifs observés, UN PAR ÉCHANTILLON,
+        counts_per_sample: Les effectifs observés, UN PAR ÉCHANTILLON,
             dans l'ordre des événements `sample` (voir ci-dessus).
 
     Returns:
@@ -233,14 +232,14 @@ def build_sample_sets_from_scenario(
         event for event in scenario.events if isinstance(event, SampleEvent)
     ]
 
-    if len(sample_events) != len(counts_by_samples):
+    if len(sample_events) != len(counts_per_sample):
         raise ValueError(
-            f"{len(sample_events)} événements sample mais {len(counts_by_samples)} échantillons observés"
+            f"{len(sample_events)} événements sample mais {len(counts_per_sample)} échantillons observés"
         )
 
     # L'ORDRE des valeurs est le contrat, pas les clés -- extrait une seule
     # fois plutôt qu'à chaque tour de boucle.
-    counts_in_sample_order = list(counts_by_samples.values())
+    counts_in_sample_order = list(counts_per_sample.values())
 
     for i, event in enumerate(sample_events):
         population_name = f"pop{event.pop}"
@@ -255,21 +254,21 @@ def build_sample_sets_from_scenario(
 
 
 def _sample_sets_from_sexes(
-    sexes_by_population: dict[str, list[str]],
+    sexes_per_sample: dict[str, list[str]],
 ) -> list[msprime.SampleSet]:
     """Construit la liste des SampleSet à partir des sexes par population.
 
     Args:
-        sexes_by_population: dict {nom_population: [liste de sexes]}.
+        sexes_per_sample: dict {nom_echantillon: [liste de sexes]}.
 
     Returns:
         Une liste de msprime.SampleSet (2 par population).
     """
     sample_sets = []
-    for name, sexes in sexes_by_population.items():
-        if "9" in sexes_by_population[name]:
+    for name, sexes in sexes_per_sample.items():
+        if "9" in sexes_per_sample[name]:
             raise ValueError(
-                f"Individu avec sexe inconnu trouvé dans la population {name}"
+                f"Individu avec sexe inconnu trouvé dans l'échantillon {name}"
             )
         nb_femelles = sexes.count("F")
         nb_males = sexes.count("M")
@@ -286,26 +285,24 @@ def _sample_sets_from_sexes(
 
 
 def _male_counts_from_sexes(
-    sexes_by_population: dict[str, list[str]],
+    sexes_per_sample: dict[str, list[str]],
 ) -> dict[str, int]:
-    """Construit le dict {nom_population: nombre_d_individus_mâles} à partir des
+    """Construit le dict {nom_echantillon: nombre_d_individus_mâles} à partir des
     sexes par population.
 
     Args:
-        sexes_by_population: dict {nom_population: [liste de sexes]}.
+        sexes_per_sample: dict {nom_echantillon: [liste de sexes]}.
 
     Returns:
-        Un dict {nom_population: nombre_d_individus_mâles}.
+        Un dict {nom_echantillon: nombre_d_individus_mâles}.
     """
-    for name, sexes in sexes_by_population.items():
-        if "9" in sexes_by_population[name]:
+    for name, sexes in sexes_per_sample.items():
+        if "9" in sexes_per_sample[name]:
             raise ValueError(
-                f"Individu avec sexe inconnu trouvé dans la population {name}"
+                f"Individu avec sexe inconnu trouvé dans l'échantillon {name}"
             )
         else:
-            return {
-                name: sexes.count("M") for name, sexes in sexes_by_population.items()
-            }
+            return {name: sexes.count("M") for name, sexes in sexes_per_sample.items()}
 
 
 def build_sex_stratified_samples_argument(
@@ -313,7 +310,7 @@ def build_sex_stratified_samples_argument(
 ) -> list[msprime.SampleSet]:
     """Construit l'argument `samples` de msprime.sim_ancestry pour un locus <X>.
 
-    Contrairement à build_samples_argument (un compte par population,
+    Contrairement à build_samples_argument (un compte par échantillon,
     ploidy uniforme), <X> a besoin d'une ploidy DIFFÉRENTE par individu
     selon son sexe (femelles=2 copies, mâles=1 -- voir
     ParticleC::calploidy, particuleC.cpp:220-233), donc une liste de
@@ -321,7 +318,7 @@ def build_sex_stratified_samples_argument(
     population, un pour les femelles (ploidy=2), un pour les mâles
     (ploidy=1) -- population= est le nom msprime ("pop1", "pop2"...),
     PAS le nom réel du fichier .snp (même traduction que
-    build_samples_argument, via population_index_to_name).
+    build_samples_argumsample).
 
     IMPORTANT -- le ploidy PAR SampleSet ne contrôle QUE le nombre de
     lignées regroupées par individu dans le résultat, PAS le taux de
@@ -331,6 +328,14 @@ def build_sex_stratified_samples_argument(
     coalescence_coefficient("X", sex_ratio) / 2) -- vérifié
     empiriquement avec le mentor que c'est le ploidy GLOBAL de
     sim_ancestry qui interprète initial_size, pas celui des SampleSet.
+
+    PAS sériel-conscient : les clés msprime ("pop1", "pop2"...) sont
+    redérivées depuis la POSITION du bloc observé, pas depuis la
+    population que l'événement `sample` désigne -- deux échantillons de
+    la même population produiraient deux noms de population différents.
+    La combinaison est refusée en amont par
+    reftable_loop.raise_if_serial_with_sex_linked_loci, qui documente
+    pourquoi elle ne peut pas être détectée ici.
 
     Args:
         snp_file_path: Chemin du fichier .snp.
@@ -344,19 +349,19 @@ def build_sex_stratified_samples_argument(
             (dataset <A>-only) : on ne peut pas construire un
             échantillonnage <X> dessus, mieux vaut le signaler
             explicitement que de produire un résultat silencieusement
-            faux (individual_sexes_per_population laisse ce choix à
+            faux (individual_sexes_per_sample laisse ce choix à
             l'appelant, c'est ici qu'il se prend).
     """
 
-    sexes_by_population = individual_sexes_per_population(snp_file_path)
-    index_to_name = population_index_to_name(snp_file_path)
+    sexes_per_sample = individual_sexes_per_sample(snp_file_path)
+    index_to_name = sample_index_to_name(snp_file_path)
     name_to_index = {name: index for index, name in index_to_name.items()}
-    # remplacer les clés de sexes_by_population par les noms msprime ("pop1", "pop2"...)
-    sexes_by_population = {
-        f"pop{name_to_index[k]}": v for k, v in sexes_by_population.items()
+    # remplacer les clés de sexes_per_sample par les noms msprime ("pop1", "pop2"...)
+    sexes_per_sample = {
+        f"pop{name_to_index[k]}": v for k, v in sexes_per_sample.items()
     }
 
-    return _sample_sets_from_sexes(sexes_by_population)
+    return _sample_sets_from_sexes(sexes_per_sample)
 
 
 def build_male_only_samples_argument(snp_file_path: str) -> dict[str, int]:
@@ -374,6 +379,14 @@ def build_male_only_samples_argument(snp_file_path: str) -> dict[str, int]:
     mâles -- <M> doit réutiliser build_samples_argument (tout le monde)
     avec ploidy=1, pas cette fonction.
 
+    PAS sériel-conscient : les clés msprime ("pop1", "pop2"...) sont
+    redérivées depuis la POSITION du bloc observé, pas depuis la
+    population que l'événement `sample` désigne -- deux échantillons de
+    la même population produiraient deux noms de population différents.
+    La combinaison est refusée en amont par
+    reftable_loop.raise_if_serial_with_sex_linked_loci, qui documente
+    pourquoi elle ne peut pas être détectée ici.
+
     Args:
         snp_file_path: Chemin du fichier .snp.
 
@@ -384,15 +397,15 @@ def build_male_only_samples_argument(snp_file_path: str) -> dict[str, int]:
         ValueError: Si un individu a le sexe "9" (inconnu).
     """
 
-    sexes_by_population = individual_sexes_per_population(snp_file_path)
-    index_to_name = population_index_to_name(snp_file_path)
+    sexes_per_sample = individual_sexes_per_sample(snp_file_path)
+    index_to_name = sample_index_to_name(snp_file_path)
     name_to_index = {name: index for index, name in index_to_name.items()}
-    # remplacer les clés de sexes_by_population par les noms msprime ("pop1", "pop2"...)
-    sexes_by_population = {
-        f"pop{name_to_index[k]}": v for k, v in sexes_by_population.items()
+    # remplacer les clés de sexes_per_sample par les noms msprime ("pop1", "pop2"...)
+    sexes_per_sample = {
+        f"pop{name_to_index[k]}": v for k, v in sexes_per_sample.items()
     }
 
-    return _male_counts_from_sexes(sexes_by_population)
+    return _male_counts_from_sexes(sexes_per_sample)
 
 
 def counts_by_sample_for_locus(context, locus) -> dict[str, int]:
@@ -610,13 +623,13 @@ def compute_population_layout(
 
 
 def compute_sample_layout(
-    ts: tskit.TreeSequence, counts_by_samples: dict[str, int]
+    ts: tskit.TreeSequence, counts_per_sample: dict[str, int]
 ) -> list[tuple[str | None, np.ndarray]]:
     """Calcule le layout (IDs des noeuds échantillons) d'une TreeSequence.
 
     Args:
         ts: La TreeSequence à inspecter.
-        counts_by_samples: Les effectifs observés, UN PAR ÉCHANTILLON,
+        counts_per_sample: Les effectifs observés, UN PAR ÉCHANTILLON,
             dans l'ordre des événements `sample` (voir
             build_sample_sets_from_scenario).
 
@@ -625,20 +638,20 @@ def compute_sample_layout(
         cette population), une entrée par échantillon non vide.
 
     Raises:
-        ValueError: Si le nombre total d'individus dans counts_by_samples
+        ValueError: Si le nombre total d'individus dans counts_per_sample
             ne correspond pas au nombre d'individus dans la TreeSequence.
     """
     layout = []
 
-    if sum(counts_by_samples.values()) != ts.num_individuals:
+    if sum(counts_per_sample.values()) != ts.num_individuals:
         raise ValueError(
-            f"Le nombre total d'individus dans counts_by_samples ({sum(counts_by_samples.values())}) ne correspond pas au nombre d'individus dans la TreeSequence ({ts.num_individuals})."
+            f"Le nombre total d'individus dans counts_per_sample ({sum(counts_per_sample.values())}) ne correspond pas au nombre d'individus dans la TreeSequence ({ts.num_individuals})."
         )
     # iter() UNE SEULE FOIS, hors de la boucle : c'est lui le curseur.
     # Le déplacer à l'intérieur ferait repartir chaque échantillon de
     # l'individu 0, silencieusement.
     individuals = iter(ts.individuals())
-    for sample_name, count in counts_by_samples.items():
+    for sample_name, count in counts_per_sample.items():
         block = list(itertools.islice(individuals, count))
         if not block:
             continue
@@ -650,7 +663,7 @@ def simulate_snp_genotypes(
     tree_sequences: Iterator[tskit.TreeSequence],
     seed: int,
     population_layout: list[tuple[str | None, np.ndarray]] | None = None,
-    counts_by_samples: dict[str, int] | None = None,
+    counts_per_sample: dict[str, int] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
     """Tire une mutation par locus (Hudson) et retourne les génotypes par population.
 
@@ -701,8 +714,8 @@ def simulate_snp_genotypes(
 
         if population_layout is None:
             population_layout = (
-                compute_sample_layout(ts, counts_by_samples)
-                if counts_by_samples is not None
+                compute_sample_layout(ts, counts_per_sample)
+                if counts_per_sample is not None
                 else compute_population_layout(ts)
             )
 
@@ -746,7 +759,7 @@ def with_maf_filter(
     seed: int,
     ploidy: int = 2,
     *,
-    counts_by_samples: dict[str, int] | None = None,
+    counts_per_sample: dict[str, int] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
     """Simule des loci SNP indépendants avec filtre MAF.
 
@@ -792,7 +805,7 @@ def with_maf_filter(
         ploidy: Transmis tel quel à `simulate_independent_loci` (même
             contrat -- 2 pour <A>, 1 pour <H>/<X> avec une
             `demography` déjà rescalée, voir sa docstring).
-        counts_by_samples: Si fourni, permet de spécifier la taille des échantillons, utilisé pour le calcul du layout.
+        counts_per_sample: Si fourni, permet de spécifier la taille des échantillons, utilisé pour le calcul du layout.
 
     Returns:
         Un itérateur de `num_loci` dicts {nom_population:
@@ -806,7 +819,7 @@ def with_maf_filter(
             tree_sequences,
             seed=seed,
             population_layout=None,
-            counts_by_samples=counts_by_samples,
+            counts_per_sample=counts_per_sample,
         )
         return
 
@@ -836,8 +849,8 @@ def with_maf_filter(
         for attempt_in_batch, ts in enumerate(tree_sequences):
             if population_layout is None:
                 population_layout = (
-                    compute_sample_layout(ts, counts_by_samples)
-                    if counts_by_samples is not None
+                    compute_sample_layout(ts, counts_per_sample)
+                    if counts_per_sample is not None
                     else compute_population_layout(ts)
                 )
             genotypes_by_population = next(
@@ -867,7 +880,7 @@ def with_maf_filter_shared_ancestry(
     seed: int,
     ploidy: int = 1,
     *,
-    counts_by_samples: dict[str, int] | None = None,
+    counts_per_sample: dict[str, int] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
     """Variante de with_maf_filter pour <Y>/<M> (généalogie partagée).
 
@@ -899,7 +912,7 @@ def with_maf_filter_shared_ancestry(
             à un appel direct de ces deux fonctions.
         seed: La graine de la simulation.
         ploidy: Transmis tel quel à simulate_independent_loci/simulate_shared_ancestry_loci.
-        counts_by_samples: Si fourni, permet de spécifier la taille des échantillons, utilisé pour le calcul du layout.
+        counts_per_sample: Si fourni, permet de spécifier la taille des échantillons, utilisé pour le calcul du layout.
 
     Returns:
         Un itérateur de `num_loci` dicts {nom_population:
@@ -913,7 +926,7 @@ def with_maf_filter_shared_ancestry(
             tree_sequences,
             seed=seed,
             population_layout=None,
-            counts_by_samples=counts_by_samples,
+            counts_per_sample=counts_per_sample,
         )
         return
 
@@ -926,8 +939,8 @@ def with_maf_filter_shared_ancestry(
     # tentative, donc même structure population/échantillons -- voir
     # population_layout.
     population_layout = population_layout = (
-        compute_sample_layout(shared_tree, counts_by_samples)
-        if counts_by_samples is not None
+        compute_sample_layout(shared_tree, counts_per_sample)
+        if counts_per_sample is not None
         else compute_population_layout(shared_tree)
     )
 
@@ -962,7 +975,7 @@ def simulate_genotypes_for_locus_type(
     seed: int,
     *,
     sample_sets: list[msprime.SampleSet] | None = None,
-    counts_by_samples: dict[str, int] | None = None,
+    counts_per_sample: dict[str, int] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
     """Point d'entrée unique de simulation de génotypes SNP, par type de locus.
 
@@ -1026,7 +1039,7 @@ def simulate_genotypes_for_locus_type(
             `.snp` via build_samples_argument. N'est transmis que pour
             "A"/"H"/"M" : "X"/"Y" ont leur propre dispatch par sexe, qui
             n'est pas sérielle.
-        counts_by_samples: Les effectifs observés, UN PAR ÉCHANTILLON et
+        counts_per_sample: Les effectifs observés, UN PAR ÉCHANTILLON et
             dans l'ordre des événements `sample`, dont les boucles MAF
             déduiront le découpage via compute_sample_layout. À NE PAS
             confondre avec `sample_sets` : celui-ci va à msprime, celui-là
@@ -1071,7 +1084,7 @@ def simulate_genotypes_for_locus_type(
             maf_ratio,
             seed,
             ploidy=1,
-            counts_by_samples=counts_by_samples,
+            counts_per_sample=counts_per_sample,
         )
     elif locus_type == "A":
         samples = (
@@ -1086,7 +1099,7 @@ def simulate_genotypes_for_locus_type(
             maf_ratio,
             seed,
             ploidy=2,
-            counts_by_samples=counts_by_samples,
+            counts_per_sample=counts_per_sample,
         )
     elif locus_type == "H":
         samples = (
@@ -1104,7 +1117,7 @@ def simulate_genotypes_for_locus_type(
             maf_ratio,
             seed,
             ploidy=1,
-            counts_by_samples=counts_by_samples,
+            counts_per_sample=counts_per_sample,
         )
     elif locus_type == "X":
         samples = build_sex_stratified_samples_argument(snp_file_path)
@@ -1128,7 +1141,7 @@ def simulate_poolseq_reads(
     observed_reads_per_locus: list[dict[str, tuple[int, int]]],
     seed: int,
     population_layout: list[tuple[str | None, np.ndarray]] | None = None,
-    counts_by_samples: dict[str, int] | None = None,
+    counts_per_sample: dict[str, int] | None = None,
 ) -> Iterator[dict[str, tuple[int, int]]]:
     """Simule les lectures PoolSeq de chaque locus.
 
@@ -1154,7 +1167,7 @@ def simulate_poolseq_reads(
             qui appelle cette fonction une fois PAR TENTATIVE et
             calcule donc son propre cache à travers les tentatives),
             utilisé tel quel sans jamais être recalculé.
-        counts_by_samples: Si fourni, permet de spécifier la taille des échantillons, utilisé pour le calcul du layout.
+        counts_per_sample: Si fourni, permet de spécifier la taille des échantillons, utilisé pour le calcul du layout.
 
     Returns:
         Un itérateur de dicts {nom_population: (nreads_dérivé,
@@ -1181,8 +1194,8 @@ def simulate_poolseq_reads(
         derived_samples = set(tree.samples(mutated_node))
         if population_layout is None:
             population_layout = (
-                compute_sample_layout(ts, counts_by_samples)
-                if counts_by_samples is not None
+                compute_sample_layout(ts, counts_per_sample)
+                if counts_per_sample is not None
                 else compute_population_layout(ts)
             )
 
@@ -1218,7 +1231,7 @@ def _reindex_reads_by_msprime_name(
         La même liste, avec les clés remplacées par les noms de
         population msprime ("pop1", "pop2"...).
     """
-    index_to_name = population_index_to_name(
+    index_to_name = sample_index_to_name(
         snp_file_path
     )  # {1: "POP1", 2: "POP2", 3: "POP3", 4: "POP4"} pour toy_example4.
     real_name_to_msprime_name = {
@@ -1242,7 +1255,7 @@ def with_mrc_filter(
     seed: int,
     ploidy: int = 2,
     *,
-    counts_by_samples: dict[str, int] | None = None,
+    counts_per_sample: dict[str, int] | None = None,
 ) -> Iterator[dict[str, tuple[int, int]]]:
     """Simule des loci SNP indépendants avec filtre MRC.
 
@@ -1284,7 +1297,7 @@ def with_mrc_filter(
             (nreads_dérivé, nreads_total)} observés, un par locus.
         seed: La graine de la simulation.
         ploidy: Transmis tel quel à `simulate_independent_loci`.
-        counts_by_samples: Si fourni, permet de spécifier la taille des échantillons, utilisé pour le calcul du layout.
+        counts_per_sample: Si fourni, permet de spécifier la taille des échantillons, utilisé pour le calcul du layout.
 
     Returns:
         Un itérateur de `num_loci` dicts {nom_population:
@@ -1299,7 +1312,7 @@ def with_mrc_filter(
             tree_sequences,
             observed_reads_per_locus,
             seed=seed,
-            counts_by_samples=counts_by_samples,
+            counts_per_sample=counts_per_sample,
         )  # liste de dictionnaires contenant le nombre de lectures dérivées et ancestrales par population pour chaque locus
         return
     # Calculée une seule fois, à la première tentative, et réutilisée pour
@@ -1333,8 +1346,8 @@ def with_mrc_filter(
 
             if population_layout is None:
                 population_layout = (
-                    compute_sample_layout(ts, counts_by_samples)
-                    if counts_by_samples is not None
+                    compute_sample_layout(ts, counts_per_sample)
+                    if counts_per_sample is not None
                     else compute_population_layout(ts)
                 )
 
@@ -1347,7 +1360,7 @@ def with_mrc_filter(
                     observed_reads_per_locus[locus_index : locus_index + 1],
                     seed=seed + attempt + _MRC_REJECTION_SEED_OFFSET,
                     population_layout=population_layout,
-                    counts_by_samples=counts_by_samples,
+                    counts_per_sample=counts_per_sample,
                 )
             )
             attempt += 1
@@ -1383,7 +1396,7 @@ def prepare_poolseq_observed_reads(
 def poolseq_counts_by_sample(context: SnpReplayContext) -> dict[str, int]:
     """Nombre d'INDIVIDUS par échantillon d'un fichier PoolSeq, dans l'ordre.
 
-    `context.count_samples` donne la taille HAPLOÏDE du pool -- un nombre de
+    `context.counts_per_sample` donne la taille HAPLOÏDE du pool -- un nombre de
     copies de gènes, pas d'individus (voir `_parse_pool_header_line`). D'où le
     `// 2` : msprime reçoit un compte d'individus et le double lui-même avec
     `ploidy=2`.
@@ -1397,7 +1410,7 @@ def poolseq_counts_by_sample(context: SnpReplayContext) -> dict[str, int]:
     MÊME total, donc `_check_layout_matches` ne les distingue pas.
 
     Args:
-        context: Le contexte SNP, dont `count_samples` porte les tailles
+        context: Le contexte SNP, dont `counts_per_sample` porte les tailles
             haploïdes par bloc du fichier, dans l'ordre d'apparition.
 
     Returns:
@@ -1405,7 +1418,7 @@ def poolseq_counts_by_sample(context: SnpReplayContext) -> dict[str, int]:
     """
     return {
         f"pop{index}": count // 2
-        for index, count in enumerate(context.count_samples.values(), start=1)
+        for index, count in enumerate(context.counts_per_sample.values(), start=1)
     }
 
 
@@ -1417,7 +1430,7 @@ def simulate_poolseq_reads_with_mrc_filter(
     observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
     *,
     sample_sets: list[msprime.SampleSet] | None = None,
-    counts_by_samples: dict[str, int] | None = None,
+    counts_per_sample: dict[str, int] | None = None,
 ) -> Iterator[dict[str, tuple[int, int]]]:
     """Point d'entrée unique de simulation de lectures pour un fichier PoolSeq.
 
@@ -1463,7 +1476,7 @@ def simulate_poolseq_reads_with_mrc_filter(
         `parse_mrc_ratio`).
       - `build_samples_argument(snp_file_path)` -- retourne la taille
         HAPLOÏDE du pool par population (cf.
-        `count_samples_per_population`/`_parse_pool_header_line`) --
+        `count_individuals_per_sample`/`_parse_pool_header_line`) --
         divisée par 2 ici pour obtenir un compte d'INDIVIDUS diploïdes
         (voir ci-dessus) ; utilisée TELLE QUELLE (non divisée) partout
         ailleurs, notamment comme `pool_sizes` dans
@@ -1488,7 +1501,7 @@ def simulate_poolseq_reads_with_mrc_filter(
             comme pour `<A>` en IndSeq, aucun rescale n'est
             nécessaire ici).
         context: Le contexte SNP (doit être de type POOL). Fournit
-            `mrc_ratio`, `count_samples` (tailles HAPLOÏDES des pools) et
+            `mrc_ratio`, `counts_per_sample` (tailles HAPLOÏDES des pools) et
             de quoi calculer les lectures observées.
         seed: La graine de la simulation.
         num_loci: Le nombre de loci à simuler.
@@ -1501,7 +1514,7 @@ def simulate_poolseq_reads_with_mrc_filter(
             on retombe sur `poolseq_counts_by_sample(context)`, soit un
             dict `{nom: nb_individus}` équivalent au comportement
             historique.
-        counts_by_samples: Les effectifs, UN PAR ÉCHANTILLON et dans
+        counts_per_sample: Les effectifs, UN PAR ÉCHANTILLON et dans
             l'ordre des événements `sample`, dont `simulate_poolseq_reads`
             déduira le découpage via `compute_sample_layout`. À NE PAS
             confondre avec `sample_sets` : celui-ci va à msprime, celui-là
@@ -1517,8 +1530,8 @@ def simulate_poolseq_reads_with_mrc_filter(
     mrc = context.mrc_ratio
     individual_counts = poolseq_counts_by_sample(context)
     samples = sample_sets if sample_sets is not None else individual_counts
-    if counts_by_samples is None:
-        counts_by_samples = individual_counts
+    if counts_per_sample is None:
+        counts_per_sample = individual_counts
     if observed_reads_per_locus is None:
         observed_reads_per_locus = prepare_poolseq_observed_reads(context)
 
@@ -1530,7 +1543,7 @@ def simulate_poolseq_reads_with_mrc_filter(
         observed_reads_per_locus,
         seed,
         ploidy=2,
-        counts_by_samples=counts_by_samples,
+        counts_per_sample=counts_per_sample,
     )
 
 
@@ -1706,6 +1719,14 @@ def build_sex_stratified_samples_argument_ms_dna(
     Pour les loci de type "X", on doit échantillonner les individus en fonction de leur sexe.
     Cette fonction lit le fichier .snp et construit la liste des SampleSet correspondants.
 
+    PAS sériel-conscient : les clés msprime ("pop1", "pop2"...) sont
+    redérivées depuis la POSITION du bloc observé, pas depuis la
+    population que l'événement `sample` désigne -- deux échantillons de
+    la même population produiraient deux noms de population différents.
+    La combinaison est refusée en amont par
+    reftable_loop.raise_if_serial_with_sex_linked_loci, qui documente
+    pourquoi elle ne peut pas être détectée ici.
+
     Args:
         mss_file_path: Chemin du fichier .mss.
 
@@ -1713,13 +1734,13 @@ def build_sex_stratified_samples_argument_ms_dna(
         Une liste de msprime.SampleSet, stratifiée par sexe.
     """
     # Lire le fichier .mss et extraire les informations nécessaires
-    sexes_by_population = individual_sexes_from_locus_genotype(
+    sexes_per_sample = individual_sexes_from_locus_genotype(
         mss_file_path=mss_file_path,
         locus_name=locus_name,
         list_loci=list_loci,
     )
 
-    return _sample_sets_from_sexes(sexes_by_population)
+    return _sample_sets_from_sexes(sexes_per_sample)
 
 
 def build_male_only_samples_argument_ms_dna(
@@ -1730,6 +1751,14 @@ def build_male_only_samples_argument_ms_dna(
     """
     Construit l'argument `samples` pour simulate_independent_loci, pour les individus mâles uniquement.
 
+    PAS sériel-conscient : les clés msprime ("pop1", "pop2"...) sont
+    redérivées depuis la POSITION du bloc observé, pas depuis la
+    population que l'événement `sample` désigne -- deux échantillons de
+    la même population produiraient deux noms de population différents.
+    La combinaison est refusée en amont par
+    reftable_loop.raise_if_serial_with_sex_linked_loci, qui documente
+    pourquoi elle ne peut pas être détectée ici.
+
     Args:
         mss_file_path: Chemin du fichier .mss.
         list_loci: La liste des loci détaillés.
@@ -1739,13 +1768,13 @@ def build_male_only_samples_argument_ms_dna(
         Un dictionnaire {nom_population: nombre_d_individus_mâles} pour le
     """
     # Lire le fichier .mss et extraire les informations nécessaires
-    sexes_by_population = individual_sexes_from_locus_genotype(
+    sexes_per_sample = individual_sexes_from_locus_genotype(
         mss_file_path=mss_file_path,
         locus_name=locus_name,
         list_loci=list_loci,
     )
 
-    return _male_counts_from_sexes(sexes_by_population)
+    return _male_counts_from_sexes(sexes_per_sample)
 
 
 def build_group_local_param_per_locus(

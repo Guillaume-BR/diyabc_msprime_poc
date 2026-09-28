@@ -1,8 +1,8 @@
 """
 Lecture des données observées DIYABC (fichiers .snp, IndSeq -- format
-individu par ligne -- ou PoolSeq -- format pool par population, un locus
+individu par ligne -- ou PoolSeq -- format pool par échantillon, un locus
 par ligne, voir detect_snp_file_type) -- comptage du nombre d'individus
-(IndSeq) ou taille haploïde des pools (PoolSeq) par population
+(IndSeq) ou taille haploïde des pools (PoolSeq) par échantillon
 (nécessaire pour savoir combien d'échantillons demander à
 msprime.sim_ancestry()), lecture du sex-ratio et du sexe par individu
 (nécessaires pour les loci <X>/<Y>/<M>, dont la ploïdie et le
@@ -43,8 +43,8 @@ def _find_header_index(lines: list[str]) -> int:
     """Repère l'index de la ligne d'en-tête 'IND SEX POP' ou 'POOL'.
 
     Recherchée parmi les deux premières lignes du fichier --
-    factorisé entre count_samples_per_population et
-    individual_sexes_per_population, qui en ont toutes deux besoin.
+    factorisé entre count_individuals_per_sample et
+    individual_sexes_per_sample, qui en ont toutes deux besoin.
     L'en-tête peut être précédé ou non d'un commentaire libre en
     première ligne (ex: '<NM=1NF> <MAF=hudson> ...', comportement
     observé dans data.cpp, qui teste les deux cas) : on recherche son
@@ -111,49 +111,51 @@ def _parse_pool_header_line(lines: list[str], header_index: int) -> dict[str, in
         header_index: L'index de la ligne d'en-tête POOL.
 
     Returns:
-        Un dict {nom_population: taille_haploïde}, ex: pour
+        Un dict {nom_echantillon: taille_haploïde}, ex: pour
         toy_example4 -> {"POP1": 200, "POP2": 200, "POP3": 200,
         "POP4": 200}.
 
     Raises:
-        ValueError: Si aucune population n'est déclarée dans la ligne.
+        ValueError: Si aucun échantillon n'est déclaré dans la ligne.
     """
     header_line = lines[header_index]
     first_pop = header_line.find("POP")
     if first_pop == -1:
         raise ValueError(
-            f"En-tête 'POOL' trouvé mais aucune population déclarée dans la ligne : "
+            f"En-tête 'POOL' trouvé mais aucun échantillon déclaré dans la ligne : "
             f"{header_line!r}"
         )
     second_pop = header_line.find("POP", first_pop + 1)
     if second_pop == -1:
         raise ValueError(
-            f"En-tête 'POOL' trouvé mais aucune population déclarée dans la ligne : "
+            f"En-tête 'POOL' trouvé mais aucun échantillon déclaré dans la ligne : "
             f"{header_line!r}"
         )
-    counts_by_population = {}
+    haploid_counts_per_sample = {}
     for part in header_line[second_pop:].split():
         if part.startswith("POP"):
-            pop_name, haploid_sample_size = part.split(":")
-            counts_by_population[pop_name] = int(haploid_sample_size)
-    return counts_by_population
+            samp_name, haploid_sample_size = part.split(":")
+            haploid_counts_per_sample[samp_name] = int(haploid_sample_size)
+    return haploid_counts_per_sample
 
 
-def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
-    """Compte le nombre d'individus par population dans un fichier .snp DIYABC.
+def count_individuals_per_sample(snp_file_path: str | Path) -> dict[str, int]:
+    """Compte le nombre d'individus pour IND ou de copies de gènes pour POOL par échantillon dans un fichier .snp DIYABC.
 
     Format 'IND SEX POP <génotypes...>' ou 'POOL
     POP_NAME:HAPLOID_SAMPLE_SIZE'.
 
     IMPORTANT -- garantie d'ordre : le dict retourné préserve l'ordre de
-    première apparition des populations dans le fichier (garanti par
+    première apparition des échantillons dans le fichier (garanti par
     Counter/dict en Python >= 3.7, et vérifié expérimentalement sur
     human). Cet ordre a un sens métier précis : header.txt ne nomme jamais
-    les populations (seulement des indices 1,2,3,4) -- le mapping réel,
+    les échantillons (seulement des indices 1,2,3,4) -- le mapping réel,
     vérifié en l'absence de toute référence croisée dans le code C++
     (data.cpp ne relie jamais popname aux indices de scénario), est
-    implicite : pop i du scénario = i-ème population dans l'ORDRE
-    D'APPARITION de ce fichier. Ne jamais remplacer Counter par un type
+    implicite : i-ème bloc de ce fichier = i-ème évènement Sample du scénario,
+    positionnellement, et la population concernée est celle que cet évènement
+    désigne, pas l'indice i lui même (sur human_seriel, les 4 blocs de "POP"
+    vont tous à la population 1). Ne jamais remplacer Counter par un type
     qui ne garantirait pas cet ordre (ex: trier les clés alphabétiquement
     casserait silencieusement ce mapping).
 
@@ -161,7 +163,7 @@ def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
         snp_file_path: Chemin du fichier .snp.
 
     Returns:
-        Un dict {nom_population: effectif}, ex: pour human ->
+        Un dict {nom_echantillon: effectif}, ex: pour human ->
         {"ASW": 30, "YRI": 30, ...} ou pour toy_example4 ->
         {"POP1": 200, "POP2": 200, "POP3": 200, "POP4": 200}.
     """
@@ -171,23 +173,22 @@ def count_samples_per_population(snp_file_path: str | Path) -> dict[str, int]:
     type_of_file = detect_snp_file_type(snp_file_path)
     counts = Counter()
     if type_of_file == "IND":
-        pop_index = lines[header_index].split().index("POP")
-
-        counts = Counter()
+        pop_column_index = lines[header_index].split().index("POP")
         for line in lines[header_index + 1 :]:
             fields = line.split()
             if not fields:
                 continue
-            counts[fields[pop_index]] += 1
+            counts[fields[pop_column_index]] += 1
     elif type_of_file == "POOL":
+        # nombre de copies de gènes
         counts.update(_parse_pool_header_line(lines, header_index))
     return dict(counts)
 
 
-def individual_sexes_per_population(
+def individual_sexes_per_sample(
     snp_file_path: str | Path,
 ) -> dict[str, list[str]]:
-    """Lit le sexe de chaque individu, regroupé par population.
+    """Lit le sexe de chaque individu, regroupé par échantillon.
 
     Fichier .snp DIYABC au format 'IND SEX POP <génotypes...>'.
     Valeurs telles quelles côté DIYABC (data.cpp:702-704) : "M", "F", ou
@@ -198,15 +199,15 @@ def individual_sexes_per_population(
     décider quoi faire du cas "9", typiquement lever une erreur si un
     locus <X>/<Y>/<M> est demandé sur des données non sexées.
 
-    Même garantie d'ordre que count_samples_per_population : listes dans
-    l'ordre d'apparition des individus dans le fichier, par population
+    Même garantie d'ordre que count_individuals_per_sample : listes dans
+    l'ordre d'apparition des individus dans le fichier, par échantillon
     dans l'ordre de première apparition.
 
     Args:
         snp_file_path: Chemin du fichier .snp.
 
     Returns:
-        Un dict {nom_population: [sexe, ...]}, ex: pour toy_example5 ->
+        Un dict {nom_echantillon: [sexe, ...]}, ex: pour toy_example5 ->
         {"pop1": ["M", "F", "F", ...], ...}.
     """
     path = Path(snp_file_path)
@@ -214,16 +215,18 @@ def individual_sexes_per_population(
     header_index = _find_header_index(lines)
     fields_header = lines[header_index].split()
     sex_index = fields_header.index("SEX")
-    pop_index = fields_header.index("POP")
+    pop_column_index = fields_header.index("POP")
 
-    sexes_by_population: dict[str, list[str]] = {}
+    sexes_per_sample: dict[str, list[str]] = {}
     for line in lines[header_index + 1 :]:
         fields = line.split()
         if not fields:
             continue
-        sexes_by_population.setdefault(fields[pop_index], []).append(fields[sex_index])
+        sexes_per_sample.setdefault(fields[pop_column_index], []).append(
+            fields[sex_index]
+        )
 
-    return sexes_by_population
+    return sexes_per_sample
 
 
 def parse_sex_ratio(snp_file_path: str | Path) -> float:
@@ -324,42 +327,43 @@ def parse_mrc_ratio(snp_file_path: str | Path) -> float:
         return 1
 
 
-def population_index_to_name(snp_file_path: str | Path) -> dict[int, str]:
-    """Construit le mapping entre l'indice de population de header.txt et son nom réel.
+def sample_index_to_name(snp_file_path: str | Path) -> dict[int, str]:
+    """Construit le mapping entre l'indice de l'évènement Sample de header.txt et
+    le nom de l'échantillon correspondant.
 
-    header.txt est 1-indexed (pop1, pop2, ...) ; le nom réel est celui
+    header.txt est 1-indexed (pop1, pop2, ...) ; le nom de l'échantillon est celui
     qui apparaît dans le fichier .snp (ex: "ASW", "YRI"...). Voir la
-    docstring de count_samples_per_population pour la justification de
+    docstring de count_individuals_per_sample pour la justification de
     ce mapping par ordre d'apparition (header.txt ne nomme jamais les
-    populations).
+    échantillons).
 
     Args:
         snp_file_path: Chemin du fichier .snp.
 
     Returns:
-        Un dict {indice_1based: nom_population}, ex: {1: "ASW",
+        Un dict {indice_1based: nom_echantillon}, ex: {1: "ASW",
         2: "YRI", 3: "CHB", 4: "GBR"} pour human et {1: "POP1",
         2: "POP2", 3: "POP3", 4: "POP4"} pour toy_example4.
     """
-    names_in_order = list(count_samples_per_population(snp_file_path).keys())
+    names_in_order = list(count_individuals_per_sample(snp_file_path).keys())
     return {i + 1: name for i, name in enumerate(names_in_order)}
 
 
-def observed_mrc(reads_by_population: dict[str, tuple[int, int]]) -> float:
+def observed_mrc(reads_per_sample: dict[str, tuple[int, int]]) -> float:
     """Calcule le MRC observé pour un locus donné.
 
     Reproduit exactement DataC::purgelocMRCPOOLSEQ (data.cpp:1087-1093).
 
     Args:
-        reads_by_population: Dict {nom_population: (nreads1,
+        reads_per_sample: Dict {nom_echantillon: (nreads1,
             nreads1+nreads2)}.
 
     Returns:
         min(somme reads allèle1, somme reads allèle2) TOUTES
         populations combinées.
     """
-    sum_derived = sum(derived for derived, _ in reads_by_population.values())
-    sum_total = sum(total for _, total in reads_by_population.values())
+    sum_derived = sum(derived for derived, _ in reads_per_sample.values())
+    sum_total = sum(total for _, total in reads_per_sample.values())
     mrc = min(sum_derived, sum_total - sum_derived) if sum_total > 0 else 0.0
     return mrc
 
@@ -371,14 +375,14 @@ def observed_reads(
 
     Ignore l'en-tête et les lignes vides. Chaque tuple contient le
     nombre de lectures pour l'allèle 1 et le nombre total de lectures
-    (allèle 1 + allèle 2) pour cette population.
+    (allèle 1 + allèle 2) pour cet échantillon.
 
     Purge les loci sous le seuil MRC (`<MRC=N>`, via parse_mrc_ratio) --
     reproduit `DataC::purgelocMRCPOOLSEQ` (data.cpp), qui élimine ces
     loci de l'observé AU CHARGEMENT du fichier, avant toute utilisation
     (simulation ou calcul de statobs). Le critère est le même que
     `with_mrc_filter`/`mrcreached` : min(somme reads allèle1, somme
-    reads allèle2), TOUTES populations combinées, doit être >= MRC.
+    reads allèle2), TOUS échantillons combinés, doit être >= MRC.
     Sans cette purge, les loci quasi-monomorphes (très peu de lectures
     pour l'allèle minoritaire, souvent des erreurs de séquençage) restent
     inclus et faussent silencieusement toutes les statistiques en aval
@@ -395,8 +399,8 @@ def observed_reads(
             les loci du fichier.
 
     Returns:
-        La liste des lignes de comptage de reads par population, dans
-        l'ordre d'apparition des populations dans le fichier -- chaque
+        La liste des lignes de comptage de reads par échantillon, dans
+        l'ordre d'apparition des échantillons dans le fichier -- chaque
         ligne de la forme {"POP1": (nreads1, nreads1+nreads2),
         "POP2": (nreads1, nreads1+nreads2), ...}.
 
@@ -411,29 +415,24 @@ def observed_reads(
     path = Path(snp_file_path)
     lines = path.read_text().splitlines()
     header_index = _find_header_index(lines)
-    liste_pop = list(_parse_pool_header_line(lines, header_index).keys())
+    liste_samp = list(_parse_pool_header_line(lines, header_index).keys())
     mrc = parse_mrc_ratio(snp_file_path)
     rows = []
-
-    # Fonction interne pour vérifier si le locus passe le seuil MRC
-    def _passes_mrc(locus_reads: dict[str, tuple[int, int]]) -> bool:
-        mrc_observed = observed_mrc(locus_reads)
-        return mrc_observed >= mrc
 
     for line in lines[header_index + 1 :]:
         fields = line.split()
         if not fields:
             continue
-        counts_by_population = {}
+        counts_per_sample = {}
 
-        for i in range(len(liste_pop)):
-            pop_name = liste_pop[i]
+        for i in range(len(liste_samp)):
+            samp_name = liste_samp[i]
             nreads1 = int(fields[2 * i])
             nreads2 = int(fields[2 * i + 1])
-            counts_by_population[pop_name] = (nreads1, nreads1 + nreads2)
+            counts_per_sample[samp_name] = (nreads1, nreads1 + nreads2)
 
-        if mrc <= 0 or _passes_mrc(counts_by_population):
-            rows.append(counts_by_population)
+        if mrc <= 0 or observed_mrc(counts_per_sample) >= mrc:
+            rows.append(counts_per_sample)
             if num_loci is not None and len(rows) >= num_loci:
                 break
     return rows
@@ -572,7 +571,7 @@ def individual_sexes_from_locus_genotype(
         locus_name: Le nom du locus à partir duquel déduire le sexe.
 
     Returns:
-        Un dict {nom_population: [sexe, ...]}, ex: pour toy_example5 ->
+        Un dict {nom_echantillon: [sexe, ...]}, ex: pour toy_example5 ->
         {"pop1": ["M", "F", "F", ...], ...}.
 
     Raises:
@@ -596,7 +595,7 @@ def individual_sexes_from_locus_genotype(
             f"Format de fichier .mss invalide."
         )
 
-    sexes_by_population: dict[str, list[str]] = {}
+    sexes_per_sample: dict[str, list[str]] = {}
 
     # \S* (pas \S+) : le token "manquant" d'une séquence haploïde s'écrit
     # <[]> (contenu vide entre crochets, vérifié empiriquement sur
@@ -615,7 +614,7 @@ def individual_sexes_from_locus_genotype(
             continue
 
         if locus_heritage in {"A", "M", "H"}:
-            sexes_by_population.setdefault(f"pop{i}", []).append("F")
+            sexes_per_sample.setdefault(f"pop{i}", []).append("F")
         elif locus_heritage in {"X", "Y"}:
             fields = line.split()
 
@@ -627,22 +626,22 @@ def individual_sexes_from_locus_genotype(
                     # sequence == [""]) -- reproduit le format haploïde =
                     # mâle de do_sequence, qui ne teste jamais le
                     # manquant pour <X> (contrairement à <Y> ci-dessous).
-                    sexes_by_population.setdefault(f"pop{i}", []).append(
+                    sexes_per_sample.setdefault(f"pop{i}", []).append(
                         "M" if len(sequence) <= 1 else "F"
                     )
                 if locus_heritage == "Y":
                     is_missing = sequence == [""]
-                    sexes_by_population.setdefault(f"pop{i}", []).append(
+                    sexes_per_sample.setdefault(f"pop{i}", []).append(
                         "M" if (len(sequence) == 1 and not is_missing) else "F"
                     )
 
             elif _MATCH_MICROSAT.match(field):
                 if locus_heritage == "Y":
-                    sexes_by_population.setdefault(f"pop{i}", []).append(
+                    sexes_per_sample.setdefault(f"pop{i}", []).append(
                         "M" if field != "000" else "F"
                     )
                 elif locus_heritage == "X":
-                    sexes_by_population.setdefault(f"pop{i}", []).append(
+                    sexes_per_sample.setdefault(f"pop{i}", []).append(
                         "M" if len(field) == 3 else "F"
                     )
 
@@ -656,7 +655,7 @@ def individual_sexes_from_locus_genotype(
                 f"Type d'héritage inattendu pour le locus {locus_name}: {locus_heritage!r}."
             )
 
-    return sexes_by_population
+    return sexes_per_sample
 
 
 def observed_count_population(mss_file_path: str | Path) -> dict[str, int]:

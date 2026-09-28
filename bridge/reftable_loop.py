@@ -45,9 +45,9 @@ from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
     allele_bounds_per_locus,
     base_frequency_by_locus,
-    count_samples_per_population,
+    count_individuals_per_sample,
     detect_snp_file_type,
-    individual_sexes_per_population,
+    individual_sexes_per_sample,
     observed_count_population,
     observed_microsatellites,
     observed_reads,
@@ -72,7 +72,7 @@ from bridge.prior_parser import (
     parse_group_priors,
     parse_priors,
 )
-from bridge.scenario_parser import parse_header_scenarios
+from bridge.scenario_parser import is_serial_scenario, parse_header_scenarios
 
 # _SCENARIO_DRAW_SEED_OFFSET : voir bridge/configuration.py. Décalage
 # appliqué à la seed de particule avant de tirer le scénario
@@ -112,6 +112,89 @@ class ParticleResult:
 # ----------------------------------------------------------------------------
 # Pour les fichiers .snp DIYABC : lecture, écriture, rejeux de tirages réels
 # ----------------------------------------------------------------------------
+
+
+def _heritage_types_declared(header_text: str) -> set[str]:
+    """Extrait les types d'hérédité déclarés, quel que soit le format des loci.
+
+    Les deux formats de 'loci description' ne portent pas l'information au
+    même endroit : le format condensé la donne agrégée
+    (`loci_counts_by_heritage`), le format détaillé un locus à la fois
+    (`LociDescriptionDetailed.heritage`).
+
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Returns:
+        L'ensemble des types présents, parmi "A", "H", "X", "Y", "M".
+    """
+    loci = parse_loci_description(header_text)
+    if isinstance(loci, list):
+        return {locus.heritage for locus in loci}
+    return {
+        heritage
+        for heritage, count in loci.loci_counts_by_heritage.items()
+        if count > 0
+    }
+
+
+def raise_if_serial_with_sex_linked_loci(header_text: str) -> None:
+    """Refuse la combinaison non implémentée « sériel + loci <X>/<Y> ».
+
+    Les quatre constructeurs d'échantillons sexués
+    (`build_sex_stratified_samples_argument` / `build_male_only_samples_
+    argument` et leurs jumeaux `_ms_dna`) ne sont PAS sériels-conscients :
+    le dispatch par locus écrase les `SampleSet` sériels construits par
+    `build_sample_sets_from_scenario`, et ces constructeurs redérivent
+    leurs clés msprime depuis la POSITION du bloc observé
+    (`f"pop{i}"`, i = i-ème bloc `POP`) au lieu de la population que
+    l'événement `sample` désigne. Sur un scénario sériel, `i` dépasse le
+    nombre de populations échantillonnées.
+
+    Pourquoi lever plutôt que laisser msprime se plaindre : les deux
+    issues possibles sont très inégales, et la plus dangereuse est
+    atteignable. Mesuré sur reference/toy_example2_ms_dna, dont le
+    scénario 1 déclare 5 populations pour 2 échantillons et dont
+    `build_demography` crée `pop1`..`pop5` toutes `initially_active=True`
+    -- un `samples={"pop1": 5, "pop2": 5, "pop3": 5}` est accepté SANS
+    erreur (15 nœuds au lieu de 10), les échantillons étant rattachés à
+    une population ancestrale jamais échantillonnée. Ce n'est que
+    lorsque l'indice inventé dépasse l'indice maximal que msprime lève
+    un `KeyError` bruyant.
+
+    Appelée au montage du run, une fois, et non par particule : l'échec
+    doit précéder la première particule, pas survenir à la 743e. Levée
+    dès qu'UN scénario du header est sériel, sans attendre de savoir
+    lequel `draw_scenario` tirera.
+
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Raises:
+        NotImplementedError: Si un scénario est sériel et que le header
+            déclare des loci <X> ou <Y>.
+    """
+    sex_linked = _heritage_types_declared(header_text) & {"X", "Y"}
+    if not sex_linked:
+        return
+    serial_indexes = [
+        scenario.index
+        for scenario in parse_header_scenarios(header_text)
+        if is_serial_scenario(scenario)
+    ]
+    if not serial_indexes:
+        return
+    raise NotImplementedError(
+        "Échantillonnage sériel non implémenté pour les loci liés au sexe : "
+        f"scénario(s) {serial_indexes} échantillonne(nt) deux fois la même "
+        f"population, et le header déclare des loci {sorted(sex_linked)}. "
+        "Les constructeurs d'échantillons sexués ignorent les SampleSet "
+        "sériels et redérivent leurs noms de population depuis la position "
+        "du bloc observé ; les échantillons seraient silencieusement "
+        "rattachés à une population ancestrale (vérifié sur "
+        "toy_example2_ms_dna), sans erreur msprime."
+    )
+
 
 # ── Tirage indépendant de scénario + paramètres, par particule ────────────
 
@@ -215,11 +298,12 @@ def run_reftable_simulation(
     """
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
+    raise_if_serial_with_sex_linked_loci(header_text)
     snp_filename = header_text.splitlines()[0].strip()
     snp_path = reference_directory / snp_filename
     loci_description = parse_loci_description(header_text)
     snp_file_type = detect_snp_file_type(snp_path)
-    count_samples = count_samples_per_population(snp_file_path=snp_path)
+    counts_per_sample = count_individuals_per_sample(snp_file_path=snp_path)
     sex_ratio = parse_sex_ratio(snp_path)
     maf_ratio = parse_maf_ratio(snp_path)
     mrc_ratio = parse_mrc_ratio(snp_path)
@@ -228,8 +312,8 @@ def run_reftable_simulation(
         if snp_file_type == "POOL"
         else None
     )
-    sexes_per_population = (
-        individual_sexes_per_population(snp_file_path=snp_path)
+    sexes_per_sample = (
+        individual_sexes_per_sample(snp_file_path=snp_path)
         if snp_file_type == "IND"
         else {}
     )
@@ -239,12 +323,12 @@ def run_reftable_simulation(
         snp_path=snp_path,
         snp_file_type=snp_file_type,
         loci_description=loci_description,
-        count_samples=count_samples,
+        counts_per_sample=counts_per_sample,
         sex_ratio=sex_ratio,
         maf_ratio=maf_ratio,
         mrc_ratio=mrc_ratio,
         reads_observed=reads_observed,
-        sexes_per_population=sexes_per_population,
+        sexes_per_sample=sexes_per_sample,
     )
 
     results_by_index: dict[int, ParticleResult] = {}
@@ -651,6 +735,7 @@ def simulate_from_directory(
         plus, si besoin -- déjà fait ici aussi).
     """
     header_text = context.header_text
+    raise_if_serial_with_sex_linked_loci(header_text)
 
     priors, _ = parse_priors(header_text)
     print(f"{len(priors)} priors parsé depuis {test_directory}/header.txt")
@@ -845,11 +930,12 @@ def replay_reftable_simulation(
     """
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
+    raise_if_serial_with_sex_linked_loci(header_text)
     snp_filename = header_text.splitlines()[0].strip()
     snp_path = reference_directory / snp_filename
     loci_description = parse_loci_description(header_text)
     snp_file_type = detect_snp_file_type(snp_path)
-    count_samples = count_samples_per_population(snp_file_path=snp_path)
+    counts_per_sample = count_individuals_per_sample(snp_file_path=snp_path)
     sex_ratio = parse_sex_ratio(snp_path)
     maf_ratio = parse_maf_ratio(snp_path)
     mrc_ratio = parse_mrc_ratio(snp_path)
@@ -858,8 +944,8 @@ def replay_reftable_simulation(
         if snp_file_type == "POOL"
         else None
     )
-    sexes_per_population = (
-        individual_sexes_per_population(snp_file_path=snp_path)
+    sexes_per_sample = (
+        individual_sexes_per_sample(snp_file_path=snp_path)
         if snp_file_type == "IND"
         else {}
     )
@@ -869,12 +955,12 @@ def replay_reftable_simulation(
         snp_path=snp_path,
         snp_file_type=snp_file_type,
         loci_description=loci_description,
-        count_samples=count_samples,
+        counts_per_sample=counts_per_sample,
         sex_ratio=sex_ratio,
         maf_ratio=maf_ratio,
         mrc_ratio=mrc_ratio,
         reads_observed=reads_observed,
-        sexes_per_population=sexes_per_population,
+        sexes_per_sample=sexes_per_sample,
     )
 
     # On lit les sorties de diyabc (scénario tiré + valeurs de paramètres RÉELLEMENT tirées) pour
@@ -1002,6 +1088,7 @@ def run_reftable_simulation_dna(
     """
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
+    raise_if_serial_with_sex_linked_loci(header_text)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
     list_loci = parse_loci_description(header_text)
@@ -1252,6 +1339,7 @@ def replay_reftable_simulation_dna(
     """
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
+    raise_if_serial_with_sex_linked_loci(header_text)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
     list_loci = parse_loci_description(header_text)
@@ -1403,6 +1491,7 @@ def run_reftable_simulation_microsat(
     """
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
+    raise_if_serial_with_sex_linked_loci(header_text)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
     list_loci = parse_loci_description(header_text)
@@ -1530,6 +1619,7 @@ def replay_reftable_simulation_microsat(
         reference_directory
     )  # Normalise en path au cas où une str soit passée
     header_text = read_header_text(reference_directory)
+    raise_if_serial_with_sex_linked_loci(header_text)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
     list_loci = parse_loci_description(header_text)

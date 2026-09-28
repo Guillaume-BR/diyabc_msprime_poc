@@ -197,3 +197,28 @@ def parse_header_scenarios(header_text: str) -> list[Scenario]:
             first_line = block.splitlines()[0]
             warnings.warn(f"Bloc '{first_line}' ignoré : {e}", stacklevel=2)
     return scenarios
+
+
+def is_serial_scenario(scenario: Scenario) -> bool:
+    """Indique si un scénario échantillonne deux fois la même population.
+
+    C'est la définition exacte de l'échantillonnage sériel/temporel : un
+    scénario peut déclarer plusieurs lignes `sample` visant la même
+    population à des dates différentes (reference/human_seriel : quatre
+    `sample 1` aux temps 0, 50, 200, 500). Le critère porte sur les
+    événements `sample` seuls, jamais sur `npop` -- un scénario peut
+    déclarer des populations jamais échantillonnées (ancestrales ou
+    non observées, cf. toy_example2_ms_dna et ses 5 populations pour 2
+    échantillons), ce qui rendrait une comparaison à `npop` trompeuse.
+
+    Args:
+        scenario: Le scénario à tester.
+
+    Returns:
+        True si au moins une population porte plus d'un événement
+        `sample`.
+    """
+    sampled_pops = [
+        event.pop for event in scenario.events if isinstance(event, SampleEvent)
+    ]
+    return len(sampled_pops) > len(set(sampled_pops))

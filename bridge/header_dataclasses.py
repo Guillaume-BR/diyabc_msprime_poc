@@ -199,12 +199,12 @@ class SnpReplayContext:
     snp_path: Path
     snp_file_type: str
     loci_description: LociDescription
-    count_samples: dict[str, int]
+    counts_per_sample: dict[str, int]
     sex_ratio: float
     maf_ratio: float | None
     mrc_ratio: float | None
     reads_observed: list[dict[str, tuple[int, int]]] | None
-    sexes_per_population: dict[str, list[str]]
+    sexes_per_sample: dict[str, list[str]]
 
 
 @dataclass

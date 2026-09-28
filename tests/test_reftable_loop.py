@@ -22,13 +22,14 @@ from bridge.reftable_loop import (
     group_prior_column_names,
     parse_real_reftable_params,
     parse_real_reftable_params_with_group_priors,
+    raise_if_serial_with_sex_linked_loci,
     run_reftable_simulation,
     run_reftable_simulation_dna,
     simulate_from_directory,
     write_reftable_bin,
     write_reftable_txt,
 )
-from bridge.scenario_parser import parse_header_scenarios
+from bridge.scenario_parser import is_serial_scenario, parse_header_scenarios
 
 
 def test_simulate_from_directory(tmp_path, snp_context_human):
@@ -454,3 +455,69 @@ def test_run_reftable_simulation_dna_draws_multiple_scenarios(header_text_te2):
     )
 
     assert [r.scenario_index for r in results] == [1, 1, 2, 1, 1, 1]
+
+
+# ── Garde « sériel + loci liés au sexe » ──────────────────────────────────
+
+
+def test_is_serial_scenario_distingue_seriel_et_non_seriel():
+    """human_seriel échantillonne 4 fois la population 1, toy_example5 une
+    seule fois chacune de ses 3 populations. Le critère porte sur les
+    événements `sample` seuls : toy_example2_ms_dna déclare 5 populations
+    pour 2 échantillons et n'est pourtant PAS sériel -- c'est précisément
+    le cas qu'une comparaison à `npop` classerait à tort."""
+    seriel = parse_header_scenarios(
+        (REFERENCE_DIR / "human_seriel" / "headerRF.txt").read_text()
+    )
+    te5 = parse_header_scenarios(
+        (REFERENCE_DIR / "toy_example5" / "headerRF.txt").read_text()
+    )
+    te2 = parse_header_scenarios(
+        (REFERENCE_DIR / "toy_example2_ms_dna" / "headerRF.txt").read_text()
+    )
+
+    assert [is_serial_scenario(s) for s in seriel] == [True, True]
+    assert [is_serial_scenario(s) for s in te5] == [False, False, False]
+    assert [is_serial_scenario(s) for s in te2] == [False, False]
+
+
+@pytest.mark.parametrize(
+    "dataset",
+    ["human_seriel", "toy_example4_seriel", "toy_example1_ms", "toy_example5"],
+)
+def test_raise_if_serial_with_sex_linked_loci_laisse_passer_les_datasets_valides(
+    dataset,
+):
+    """Aucun dataset de reference/ ne doit être refusé : les jeux sériels
+    (human_seriel, toy_example4_seriel, toy_example1_ms) sont <A>/<M>, et
+    les jeux portant des <X>/<Y> (toy_example5) ne sont pas sériels. La
+    garde ne doit donc jamais se déclencher sur l'existant -- c'est ce qui
+    rend son ajout prouvablement neutre sur tout ce qui est validé."""
+    header_text = (REFERENCE_DIR / dataset / "headerRF.txt").read_text()
+
+    raise_if_serial_with_sex_linked_loci(header_text)
+
+
+def test_raise_if_serial_with_sex_linked_loci_leve_sur_la_combinaison():
+    """Sur toy_example5 (qui porte des <X> et des <Y>) rendu sériel en
+    dupliquant un événement `sample` -- le compteur de lignes du bloc
+    `scenario N [w] (nlines)` doit être incrémenté en même temps, sinon
+    split_scenario_blocks tronque le bloc et l'événement ajouté est
+    ignoré."""
+    header_text = (REFERENCE_DIR / "toy_example5" / "headerRF.txt").read_text()
+    serial_header = header_text.replace(
+        "scenario 1 [0.33333] (6)", "scenario 1 [0.33333] (7)"
+    ).replace("0 sample 3\nta merge 1 3", "0 sample 3\n50 sample 3\nta merge 1 3")
+    assert is_serial_scenario(parse_header_scenarios(serial_header)[0])
+
+    with pytest.raises(NotImplementedError, match="sériel"):
+        raise_if_serial_with_sex_linked_loci(serial_header)
+
+
+def test_raise_if_serial_with_sex_linked_loci_ignore_le_seriel_sans_xy():
+    """Contrôle symétrique : la même mutation appliquée à un header sans
+    locus lié au sexe (toy_example4_seriel, <A> seul) ne lève pas. La
+    garde refuse une COMBINAISON, pas le sériel en soi."""
+    header_text = (REFERENCE_DIR / "human_seriel" / "headerRF.txt").read_text()
+
+    raise_if_serial_with_sex_linked_loci(header_text)
