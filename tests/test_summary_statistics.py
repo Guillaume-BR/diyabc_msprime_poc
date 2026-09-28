@@ -19,24 +19,24 @@ from bridge.ancestry_simulation import (
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.summary_statistics import (
     _compute_DM2_for_one_locus,
-    _compute_FST_constants_for_two_populations_combined,
-    _compute_FST_constants_on_all_alleles_for_two_populations,
+    _compute_FST_constants_for_two_samples_combined,
+    _compute_FST_constants_on_all_alleles_for_two_samples,
     _compute_H2P_for_one_pair,
     _compute_identical_pair_for_one_pair,
     _compute_LIK_for_one_locus,
     _compute_MGW_by_locus,
     _compute_N2P_for_one_locus,
     _compute_N2P_for_one_pair,
-    _compute_ni_nA_AA_for_one_population,
+    _compute_ni_nA_AA_for_one_sample,
     _compute_num_den_lik_for_one_individual,
     _compute_V2P_constants,
     _compute_VAR_constants,
-    _compute_VAR_for_one_population,
-    _genotype_matrix_by_population,
+    _compute_VAR_for_one_sample,
+    _genotype_matrix_by_sample,
     _genotypes_by_sample_and_individuals,
     _length_by_sample,
     _length_by_sample_and_individuals,
-    _pool_allele_counts_for_two_populations,
+    _pool_allele_counts_for_two_samples,
     _prepare_matrices_poolseq,
     compute_all_statistics_dna,
     compute_all_statistics_microsat,
@@ -65,8 +65,8 @@ from bridge.summary_statistics import (
     compute_VAR,
     compute_VNS,
     compute_VPD,
-    count_alleles_per_population,
-    total_genes_copies_per_population,
+    count_alleles_per_sample,
+    total_genes_copies_per_sample,
 )
 
 
@@ -75,10 +75,8 @@ def test_prepare_matrices_poolseq():
         {"POP1": (0, 93), "POP2": (0, 100), "POP3": (1, 116), "POP4": (0, 139)},
         {"POP1": (1, 80), "POP2": (0, 90), "POP3": (0, 110), "POP4": (1, 120)},
     ]
-    population_names = ["POP1", "POP2", "POP3", "POP4"]
-    counts, ns, freq0, freq1 = _prepare_matrices_poolseq(
-        reads_per_locus, population_names
-    )
+    sample_names = ["POP1", "POP2", "POP3", "POP4"]
+    counts, ns, freq0, freq1 = _prepare_matrices_poolseq(reads_per_locus, sample_names)
 
     assert counts.shape == (4, 2)
     assert np.array_equal(counts, np.array([[0, 1], [0, 0], [1, 0], [0, 1]]))
@@ -92,12 +90,10 @@ def test_compute_all_statistics_poolseq():
         {"POP1": (0, 93), "POP2": (0, 100), "POP3": (1, 116), "POP4": (0, 139)},
         {"POP1": (1, 80), "POP2": (0, 90), "POP3": (0, 110), "POP4": (1, 120)},
     ]
-    population_names = ["POP1", "POP2", "POP3", "POP4"]
+    sample_names = ["POP1", "POP2", "POP3", "POP4"]
     pool_sizes = {"POP1": 200, "POP2": 200, "POP3": 200, "POP4": 200}
 
-    results = compute_all_statistics_poolseq(
-        reads_per_locus, population_names, pool_sizes
-    )
+    results = compute_all_statistics_poolseq(reads_per_locus, sample_names, pool_sizes)
 
     # Vérifier que les résultats contiennent les clés attendues
     expected_keys = {
@@ -114,8 +110,8 @@ def test_compute_all_statistics_poolseq():
     assert abs(results["HWv_1"] - 0.0003) < 1e-4, "HWv_1 should be approximately 0.0003"
 
 
-def test_genotype_matrix_by_population(dna_context_te2):
-    """Vérifie _genotype_matrix_by_population sur un locus <A> (diploïde) et un
+def test_genotype_matrix_by_sample(dna_context_te2):
+    """Vérifie _genotype_matrix_by_sample sur un locus <A> (diploïde) et un
     locus <M> (haploïde) du même dataset : la forme retournée doit respecter le
     nombre de sites/samples réels de la TreeSequence, sans perte ni doublon de
     sample entre populations, et le nombre de samples par population doit
@@ -131,7 +127,7 @@ def test_genotype_matrix_by_population(dna_context_te2):
         seed=42,
     )
 
-    def samples_per_population(ts):
+    def samples_nodes_per_population(ts):
         return {
             population.metadata["name"]: ts.samples(population=population.id)
             for population in ts.populations()
@@ -139,24 +135,24 @@ def test_genotype_matrix_by_population(dna_context_te2):
 
     for locus_name in ("Locus_S_A_11_", "Locus_S_M_16_"):
         ts = mutated[locus_name]
-        result = _genotype_matrix_by_population(ts)
-        expected_samples = samples_per_population(ts)
+        result = _genotype_matrix_by_sample(ts)
+        expected_samples = samples_nodes_per_population(ts)
 
         assert result.keys() == {"pop1", "pop2"}
         total_samples = 0
-        for pop_name, matrix in result.items():
+        for sample_name, matrix in result.items():
             assert matrix.shape[0] == ts.num_sites
-            assert matrix.shape[1] == len(expected_samples[pop_name])
+            assert matrix.shape[1] == len(expected_samples[sample_name])
             total_samples += matrix.shape[1]
         assert total_samples == ts.num_samples
 
-    samples_a = _genotype_matrix_by_population(mutated["Locus_S_A_11_"])
-    samples_m = _genotype_matrix_by_population(mutated["Locus_S_M_16_"])
-    for pop_name in ("pop1", "pop2"):
-        assert samples_a[pop_name].shape[1] == 2 * samples_m[pop_name].shape[1]
+    samples_a = _genotype_matrix_by_sample(mutated["Locus_S_A_11_"])
+    samples_m = _genotype_matrix_by_sample(mutated["Locus_S_M_16_"])
+    for sample_name in ("pop1", "pop2"):
+        assert samples_a[sample_name].shape[1] == 2 * samples_m[sample_name].shape[1]
 
 
-def test_genotype_matrix_by_population_with_same_layout(dna_context_te2):
+def test_genotype_matrix_by_sample_with_same_layout(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
@@ -170,15 +166,15 @@ def test_genotype_matrix_by_population_with_same_layout(dna_context_te2):
     ts = mutated[first_key]
     layout = compute_population_layout(ts)
 
-    result_with_layout = _genotype_matrix_by_population(ts, layout=layout)
-    result_without_layout = _genotype_matrix_by_population(ts)
+    result_with_layout = _genotype_matrix_by_sample(ts, layout=layout)
+    result_without_layout = _genotype_matrix_by_sample(ts)
 
-    assert [pop_name for pop_name in result_with_layout] == [
-        pop_name for pop_name in result_without_layout
+    assert [sample_name for sample_name in result_with_layout] == [
+        sample_name for sample_name in result_without_layout
     ]
-    for pop_name in result_with_layout:
+    for sample_name in result_with_layout:
         assert np.array_equal(
-            result_with_layout[pop_name], result_without_layout[pop_name]
+            result_with_layout[sample_name], result_without_layout[sample_name]
         )
 
 
@@ -209,7 +205,7 @@ def _mutated_two_population_ts(seed=3):
     )
 
 
-def test_genotype_matrix_by_population_with_different_layout():
+def test_genotype_matrix_by_sample_with_different_layout():
     """Un layout qui change le REGROUPEMENT, pas seulement l'ordre des clés.
 
     Chaque population est coupée en deux : la sortie doit contenir
@@ -231,28 +227,31 @@ def test_genotype_matrix_by_population_with_different_layout():
     # silencieusement -- voir _length_by_sample_and_individuals, qui retrouve
     # la population d'un individu par `nodes[0] in inds`.
     split_layout = []
-    for pop_name, node_ids in default_layout:
+    for sample_name, node_ids in default_layout:
         half = len(node_ids) // 2
-        split_layout.append((f"{pop_name}_a", node_ids[:half]))
-        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+        split_layout.append((f"{sample_name}_a", node_ids[:half]))
+        split_layout.append((f"{sample_name}_b", node_ids[half:]))
 
-    without_layout = _genotype_matrix_by_population(ts)
-    with_split_layout = _genotype_matrix_by_population(ts, layout=split_layout)
+    without_layout = _genotype_matrix_by_sample(ts)
+    with_split_layout = _genotype_matrix_by_sample(ts, layout=split_layout)
 
     assert list(without_layout) == ["pop1", "pop2"]
     assert list(with_split_layout) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]
 
-    for pop_name, node_ids in split_layout:
-        assert with_split_layout[pop_name].shape == (ts.num_sites, len(node_ids))
+    for sample_name, node_ids in split_layout:
+        assert with_split_layout[sample_name].shape == (ts.num_sites, len(node_ids))
 
     # Recoller les deux moitiés d'une population redonne exactement la
     # matrice du découpage par population : le layout change le groupement,
     # jamais le contenu.
-    for pop_name in ("pop1", "pop2"):
+    for sample_name in ("pop1", "pop2"):
         rejoined = np.hstack(
-            [with_split_layout[f"{pop_name}_a"], with_split_layout[f"{pop_name}_b"]]
+            [
+                with_split_layout[f"{sample_name}_a"],
+                with_split_layout[f"{sample_name}_b"],
+            ]
         )
-        assert np.array_equal(rejoined, without_layout[pop_name])
+        assert np.array_equal(rejoined, without_layout[sample_name])
 
 
 def test_mean_segregating_sites_per_group(dna_context_te2):
@@ -270,16 +269,16 @@ def test_mean_segregating_sites_per_group(dna_context_te2):
     )
 
     loci_description = dna_context_te2.list_loci
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
-    mean_g2 = compute_NSS(tree_sequences_for_group("G2"), population_names)
+    mean_g2 = compute_NSS(tree_sequences_for_group("G2"), sample_names)
     assert mean_g2 == {"pop1": pytest.approx(5.8), "pop2": pytest.approx(5.6)}
 
-    mean_g3 = compute_NSS(tree_sequences_for_group("G3"), population_names)
+    mean_g3 = compute_NSS(tree_sequences_for_group("G3"), sample_names)
     assert mean_g3 == {"pop1": pytest.approx(7.2), "pop2": pytest.approx(7.4)}
 
 
@@ -287,8 +286,8 @@ def test_mean_segregating_sites_per_group_empty_defaults_to_zero():
     """Une liste de loci vide ne doit pas faire disparaître de population
     du résultat ni lever d'exception -- chaque population attendue garde
     une valeur (0.0), comme le `res = 0.0` du C++ avant son `if (nl > 0)`."""
-    population_names = ["pop1", "pop2"]
-    assert compute_NSS([], population_names) == {
+    sample_names = ["pop1", "pop2"]
+    assert compute_NSS([], sample_names) == {
         "pop1": 0.0,
         "pop2": 0.0,
     }
@@ -308,16 +307,16 @@ def test_mean_distinct_haplotypes_per_group(dna_context_te2):
     )
 
     loci_description = dna_context_te2.list_loci
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
-    mean_g2 = compute_NHA(tree_sequences_for_group("G2"), population_names)
+    mean_g2 = compute_NHA(tree_sequences_for_group("G2"), sample_names)
     assert mean_g2 == {"pop1": pytest.approx(5.2), "pop2": pytest.approx(5.4)}
 
-    mean_g3 = compute_NHA(tree_sequences_for_group("G3"), population_names)
+    mean_g3 = compute_NHA(tree_sequences_for_group("G3"), sample_names)
     assert mean_g3 == {"pop1": pytest.approx(6.0), "pop2": pytest.approx(6.0)}
 
 
@@ -325,10 +324,10 @@ def test_mean_distinct_haplotypes_per_group_empty_defaults_to_zero():
     """Une liste de loci vide ne doit pas faire disparaître de population
     du résultat ni lever d'exception -- chaque population attendue garde
     une valeur (0.0), comme le `res = 0.0` du C++ avant son `if (nl > 0)`."""
-    population_names = ["pop1", "pop2"]
-    # test si tree_sequtest_length_by_populationence est vide
+    sample_names = ["pop1", "pop2"]
+    # test si tree_sequence est vide
     tree_sequences_empty = []
-    mean_empty = compute_NHA(tree_sequences_empty, population_names)
+    mean_empty = compute_NHA(tree_sequences_empty, sample_names)
     assert mean_empty == {"pop1": 0.0, "pop2": 0.0}
 
 
@@ -347,19 +346,19 @@ def test_mean_pairwise_differences_per_group(dna_context_te2):
     )
 
     loci_description = dna_context_te2.list_loci
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
-    mean_g2 = compute_MPD(tree_sequences_for_group("G2"), population_names)
+    mean_g2 = compute_MPD(tree_sequences_for_group("G2"), sample_names)
     assert mean_g2 == {
         "pop1": pytest.approx(1.1997435897435897),
         "pop2": pytest.approx(1.2999999999999998),
     }
 
-    mean_g3 = compute_MPD(tree_sequences_for_group("G3"), population_names)
+    mean_g3 = compute_MPD(tree_sequences_for_group("G3"), sample_names)
     assert mean_g3 == {
         "pop1": pytest.approx(1.5768421052631578),
         "pop2": pytest.approx(1.8084210526315794),
@@ -370,10 +369,10 @@ def test_mean_pairwise_differences_per_group_empty_defaults_to_zero():
     """Une liste de loci vide ne doit pas faire disparaître de population
     du résultat ni lever d'exception -- chaque population attendue garde
     une valeur (0.0), comme le `res = 0.0` du C++ avant son `if (nl > 0)`."""
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
     # test si tree_sequence est vide
     tree_sequences_empty = []
-    mean_empty = compute_MPD(tree_sequences_empty, population_names)
+    mean_empty = compute_MPD(tree_sequences_empty, sample_names)
     assert mean_empty == {"pop1": 0.0, "pop2": 0.0}
 
 
@@ -392,19 +391,19 @@ def test_variance_pairwise_differences_per_group(dna_context_te2):
     )
 
     loci_description = dna_context_te2.list_loci
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
-    variance_g2 = compute_VPD(tree_sequences_for_group("G2"), population_names)
+    variance_g2 = compute_VPD(tree_sequences_for_group("G2"), sample_names)
     assert variance_g2 == {
         "pop1": pytest.approx(2.0666373720417366),
         "pop2": pytest.approx(1.7601968335472828),
     }
 
-    variance_g3 = compute_VPD(tree_sequences_for_group("G3"), population_names)
+    variance_g3 = compute_VPD(tree_sequences_for_group("G3"), sample_names)
     assert variance_g3 == {
         "pop1": pytest.approx(2.6465162907268174),
         "pop2": pytest.approx(2.935839598997494),
@@ -415,10 +414,10 @@ def test_variance_pairwise_differences_per_group_empty_defaults_to_zero():
     """Une liste de loci vide ne doit pas faire disparaître de population
     du résultat ni lever d'exception -- chaque population attendue garde
     une valeur (0.0), comme le `res = 0.0` du C++ avant son `if (nl > 0)`."""
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
     # test si tree_sequence est vide
     tree_sequences_empty = []
-    variance_empty = compute_VPD(tree_sequences_empty, population_names)
+    variance_empty = compute_VPD(tree_sequences_empty, sample_names)
     assert variance_empty == {"pop1": 0.0, "pop2": 0.0}
 
 
@@ -437,19 +436,19 @@ def test_mean_tajima_d_per_group(dna_context_te2):
     )
 
     loci_description = dna_context_te2.list_loci
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
-    dta_g2 = compute_DTA(tree_sequences_for_group("G2"), population_names)
+    dta_g2 = compute_DTA(tree_sequences_for_group("G2"), sample_names)
     assert dta_g2 == {
         "pop1": pytest.approx(-0.11361849459656947),
         "pop2": pytest.approx(-0.2621067146690289),
     }
 
-    dta_g3 = compute_DTA(tree_sequences_for_group("G3"), population_names)
+    dta_g3 = compute_DTA(tree_sequences_for_group("G3"), sample_names)
     assert dta_g3 == {
         "pop1": pytest.approx(-0.6063248006420837),
         "pop2": pytest.approx(-0.5259556352897572),
@@ -460,8 +459,8 @@ def test_mean_tajima_d_per_group_empty_defaults_to_zero():
     """Une liste de loci vide ne doit pas faire disparaître de population
     du résultat ni lever d'exception -- chaque population attendue garde
     une valeur (0.0), comme le `res = 0.0` du C++ avant son `if (nl > 0)`."""
-    population_names = ["pop1", "pop2"]
-    assert compute_DTA([], population_names) == {
+    sample_names = ["pop1", "pop2"]
+    assert compute_DTA([], sample_names) == {
         "pop1": 0.0,
         "pop2": 0.0,
     }
@@ -482,16 +481,16 @@ def test_mean_private_segregating_sites_per_group(dna_context_te2):
     )
 
     loci_description = dna_context_te2.list_loci
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
-    pss_g2 = compute_PSS(tree_sequences_for_group("G2"), population_names)
+    pss_g2 = compute_PSS(tree_sequences_for_group("G2"), sample_names)
     assert pss_g2 == {"pop1": pytest.approx(1.2), "pop2": pytest.approx(1.0)}
 
-    pss_g3 = compute_PSS(tree_sequences_for_group("G3"), population_names)
+    pss_g3 = compute_PSS(tree_sequences_for_group("G3"), sample_names)
     assert pss_g3 == {"pop1": pytest.approx(3.6), "pop2": pytest.approx(3.8)}
 
 
@@ -499,8 +498,8 @@ def test_mean_private_segregating_sites_per_group_empty_defaults_to_zero():
     """Une liste de loci vide ne doit pas faire disparaître de population du
     résultat ni lever d'exception -- chaque population attendue garde une
     valeur (0.0)."""
-    population_names = ["pop1", "pop2"]
-    assert compute_PSS([], population_names) == {
+    sample_names = ["pop1", "pop2"]
+    assert compute_PSS([], sample_names) == {
         "pop1": 0.0,
         "pop2": 0.0,
     }
@@ -521,19 +520,19 @@ def test_mean_minor_allele_count_per_group(dna_context_te2):
     )
 
     loci_description = dna_context_te2.list_loci
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
-    mns_g2 = compute_MNS(tree_sequences_for_group("G2"), population_names)
+    mns_g2 = compute_MNS(tree_sequences_for_group("G2"), sample_names)
     assert mns_g2 == {
         "pop1": pytest.approx(3.486274509803921),
         "pop2": pytest.approx(4.0),
     }
 
-    mns_g3 = compute_MNS(tree_sequences_for_group("G3"), population_names)
+    mns_g3 = compute_MNS(tree_sequences_for_group("G3"), sample_names)
     assert mns_g3 == {
         "pop1": pytest.approx(2.8034188034188032),
         "pop2": pytest.approx(2.7534065934065937),
@@ -544,8 +543,8 @@ def test_mean_minor_allele_count_per_group_empty_defaults_to_zero():
     """Une liste de loci vide ne doit pas faire disparaître de population du
     résultat ni lever d'exception -- chaque population attendue garde une
     valeur (0.0)."""
-    population_names = ["pop1", "pop2"]
-    assert compute_MNS([], population_names) == {
+    sample_names = ["pop1", "pop2"]
+    assert compute_MNS([], sample_names) == {
         "pop1": 0.0,
         "pop2": 0.0,
     }
@@ -566,19 +565,19 @@ def test_variance_minor_allele_count_per_group(dna_context_te2):
     )
 
     loci_description = dna_context_te2.list_loci
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
-    vns_g2 = compute_VNS(tree_sequences_for_group("G2"), population_names)
+    vns_g2 = compute_VNS(tree_sequences_for_group("G2"), sample_names)
     assert vns_g2 == {
         "pop1": pytest.approx(8.9039600153787),
         "pop2": pytest.approx(18.444444444444446),
     }
 
-    vns_g3 = compute_VNS(tree_sequences_for_group("G3"), population_names)
+    vns_g3 = compute_VNS(tree_sequences_for_group("G3"), sample_names)
     assert vns_g3 == {
         "pop1": pytest.approx(1.2056680546424137),
         "pop2": pytest.approx(2.6550416616350683),
@@ -589,8 +588,8 @@ def test_variance_minor_allele_count_per_group_empty_defaults_to_zero():
     """Une liste de loci vide ne doit pas faire disparaître de population du
     résultat ni lever d'exception -- chaque population attendue garde une
     valeur (0.0)."""
-    population_names = ["pop1", "pop2"]
-    assert compute_VNS([], population_names) == {
+    sample_names = ["pop1", "pop2"]
+    assert compute_VNS([], sample_names) == {
         "pop1": 0.0,
         "pop2": 0.0,
     }
@@ -610,16 +609,16 @@ def test_mean_distinct_haplotypes_per_group_pairwize(dna_context_te2):
     )
 
     loci_description = dna_context_te2.list_loci
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
-    mean_g2 = compute_NH2(tree_sequences_for_group("G2"), population_names)
+    mean_g2 = compute_NH2(tree_sequences_for_group("G2"), sample_names)
     assert mean_g2 == {"1.2": pytest.approx(6.8)}
 
-    mean_g3 = compute_NH2(tree_sequences_for_group("G3"), population_names)
+    mean_g3 = compute_NH2(tree_sequences_for_group("G3"), sample_names)
     assert mean_g3 == {"1.2": pytest.approx(10.0)}
 
 
@@ -627,8 +626,8 @@ def test_mean_distinct_haplotypes_per_group_pairwize_empty_defaults_to_zero():
     """Une liste de loci vide ne doit pas faire disparaître de population du
     résultat ni lever d'exception -- chaque population attendue garde une
     valeur (0.0)."""
-    population_names = ["pop1", "pop2"]
-    assert compute_NH2([], population_names) == {
+    sample_names = ["pop1", "pop2"]
+    assert compute_NH2([], sample_names) == {
         "1.2": 0.0,
     }
 
@@ -648,16 +647,16 @@ def test_mean_segregating_sites_per_group_pairwize(dna_context_te2):
     )
 
     loci_description = dna_context_te2.list_loci
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
-    mean_g2 = compute_NS2(tree_sequences_for_group("G2"), population_names)
+    mean_g2 = compute_NS2(tree_sequences_for_group("G2"), sample_names)
     assert mean_g2 == {"1.2": pytest.approx(6.8)}
 
-    mean_g3 = compute_NS2(tree_sequences_for_group("G3"), population_names)
+    mean_g3 = compute_NS2(tree_sequences_for_group("G3"), sample_names)
     assert mean_g3 == {"1.2": pytest.approx(11.0)}
 
 
@@ -665,8 +664,8 @@ def test_mean_segregating_sites_per_group_pairwize_empty_defaults_to_zero():
     """Une liste de loci vide ne doit pas faire disparaître de population du
     résultat ni lever d'exception -- chaque population attendue garde une
     valeur (0.0)."""
-    population_names = ["pop1", "pop2"]
-    assert compute_NS2([], population_names) == {
+    sample_names = ["pop1", "pop2"]
+    assert compute_NS2([], sample_names) == {
         "1.2": 0.0,
     }
 
@@ -686,16 +685,16 @@ def test_mean_pairwise_differences_per_group_pairwize(dna_context_te2):
     )
 
     loci_description = dna_context_te2.list_loci
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
-    mean_g2 = compute_MP2(tree_sequences_for_group("G2"), population_names)
+    mean_g2 = compute_MP2(tree_sequences_for_group("G2"), sample_names)
     assert mean_g2 == {"1.2": pytest.approx(1.2498717948717948)}
 
-    mean_g3 = compute_MP2(tree_sequences_for_group("G3"), population_names)
+    mean_g3 = compute_MP2(tree_sequences_for_group("G3"), sample_names)
     assert mean_g3 == {"1.2": pytest.approx(1.6926315789473683)}
 
 
@@ -703,8 +702,8 @@ def test_mean_pairwise_differences_per_group_pairwize_empty_defaults_to_zero():
     """Une liste de loci vide ne doit pas faire disparaître de population du
     résultat ni lever d'exception -- chaque population attendue garde une
     valeur (0.0)."""
-    population_names = ["pop1", "pop2"]
-    assert compute_MP2([], population_names) == {
+    sample_names = ["pop1", "pop2"]
+    assert compute_MP2([], sample_names) == {
         "1.2": 0.0,
     }
 
@@ -724,16 +723,16 @@ def test_mean_pairwise_differences_between_per_group_pairwize(dna_context_te2):
     )
 
     loci_description = dna_context_te2.list_loci
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
-    mean_g2 = compute_MPB(tree_sequences_for_group("G2"), population_names)
+    mean_g2 = compute_MPB(tree_sequences_for_group("G2"), sample_names)
     assert mean_g2 == {"1.2": pytest.approx(1.28725)}
 
-    mean_g3 = compute_MPB(tree_sequences_for_group("G3"), population_names)
+    mean_g3 = compute_MPB(tree_sequences_for_group("G3"), sample_names)
     assert mean_g3 == {"1.2": pytest.approx(1.7454999999999998)}
 
 
@@ -741,8 +740,8 @@ def test_mean_pairwise_differences_between_per_group_pairwize_empty_defaults_to_
     """Une liste de loci vide ne doit pas faire disparaître de population du
     résultat ni lever d'exception -- chaque population attendue garde une
     valeur (0.0)."""
-    population_names = ["pop1", "pop2"]
-    assert compute_MPB([], population_names) == {
+    sample_names = ["pop1", "pop2"]
+    assert compute_MPB([], sample_names) == {
         "1.2": 0.0,
     }
 
@@ -762,16 +761,16 @@ def test_mean_hst_per_group_pairwize(dna_context_te2):
     )
 
     loci_description = dna_context_te2.list_loci
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     def tree_sequences_for_group(group_name):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
-    mean_g2 = compute_HST(tree_sequences_for_group("G2"), population_names)
+    mean_g2 = compute_HST(tree_sequences_for_group("G2"), sample_names)
     assert mean_g2 == {"1.2": pytest.approx(0.029037253935292443)}
 
-    mean_g3 = compute_HST(tree_sequences_for_group("G3"), population_names)
+    mean_g3 = compute_HST(tree_sequences_for_group("G3"), sample_names)
     assert mean_g3 == {"1.2": pytest.approx(0.03028841080070557)}
 
 
@@ -786,10 +785,10 @@ def test_compute_all_statistics_dna(dna_context_te2):
         seed=42,
     )
 
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     results = compute_all_statistics_dna(
-        dna_context_te2.header_text, mutated, population_names
+        dna_context_te2.header_text, mutated, sample_names
     )
 
     # Vérifier que les résultats contiennent les clés attendues
@@ -882,7 +881,7 @@ def test_length_by_sample(microsat_context_te2_xy):
     ]
 
 
-def test_length_by_population_with_same_layout():
+def test_length_by_sample_with_same_layout():
     ts = _mutated_microsat_ts()
     default_layout = compute_population_layout(ts)
 
@@ -890,21 +889,25 @@ def test_length_by_population_with_same_layout():
     result_without_layout = _length_by_sample(ts)
 
     assert list(result_with_layout.keys()) == list(result_without_layout.keys())
-    for pop_name in result_with_layout:
-        assert result_with_layout[pop_name][0] == result_without_layout[pop_name][0]
-        assert result_with_layout[pop_name][1] == result_without_layout[pop_name][1]
+    for sample_name in result_with_layout:
+        assert (
+            result_with_layout[sample_name][0] == result_without_layout[sample_name][0]
+        )
+        assert (
+            result_with_layout[sample_name][1] == result_without_layout[sample_name][1]
+        )
 
 
-def test_length_by_population_with_different_layout():
+def test_length_by_sample_with_different_layout():
     ts = _mutated_microsat_ts()
     default_layout = compute_population_layout(ts)
 
     # Create a different layout
     split_layout = []
-    for pop_name, node_ids in default_layout:
+    for sample_name, node_ids in default_layout:
         half = len(node_ids) // 2
-        split_layout.append((f"{pop_name}_a", node_ids[:half]))
-        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+        split_layout.append((f"{sample_name}_a", node_ids[:half]))
+        split_layout.append((f"{sample_name}_b", node_ids[half:]))
 
     result_with_layout = _length_by_sample(ts, layout=split_layout)
     result_without_layout = _length_by_sample(ts)
@@ -912,8 +915,8 @@ def test_length_by_population_with_different_layout():
     assert list(result_with_layout) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]
     assert list(result_without_layout) == ["pop1", "pop2"]
 
-    for pop_name, node_ids in split_layout:
-        assert sum(nb_seq for _, nb_seq in result_with_layout[pop_name]) == len(
+    for sample_name, node_ids in split_layout:
+        assert sum(nb_seq for _, nb_seq in result_with_layout[sample_name]) == len(
             node_ids
         )
 
@@ -922,9 +925,9 @@ def test_length_by_population_with_different_layout():
     # pour tous (la boucle interne itère variant.alleles). D'où une somme
     # terme à terme, et non une concaténation comme pour les helpers par
     # individu.
-    for pop_name in ("pop1", "pop2"):
-        half_a = result_with_layout[f"{pop_name}_a"]
-        half_b = result_with_layout[f"{pop_name}_b"]
+    for sample_name in ("pop1", "pop2"):
+        half_a = result_with_layout[f"{sample_name}_a"]
+        half_b = result_with_layout[f"{sample_name}_b"]
 
         # L'alignement des listes est une hypothèse : on la teste au lieu
         # de s'y fier, sinon le zip apparierait silencieusement deux
@@ -935,16 +938,16 @@ def test_length_by_population_with_different_layout():
             (taille, count_a + count_b)
             for (taille, count_a), (_, count_b) in zip(half_a, half_b, strict=True)
         ]
-        assert rejoined == result_without_layout[pop_name]
+        assert rejoined == result_without_layout[sample_name]
 
 
-def test_count_alleles_per_population():
+def test_count_alleles_per_sample():
     length_per_population = {
         "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
         "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
     }
 
-    results = count_alleles_per_population(length_per_population)
+    results = count_alleles_per_sample(length_per_population)
 
     assert results.keys() == {"pop1", "pop2"}
     assert results["pop1"] == 3
@@ -962,17 +965,17 @@ def test_compute_NAL(microsat_context_te2_xy):
         seed=42,
     )
 
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
-    results = compute_NAL(mutated.values(), population_names)
+    results = compute_NAL(mutated.values(), sample_names)
 
     assert results.keys() == {"pop1", "pop2"}
     assert results["pop1"] == 9.1
     assert pytest.approx(results["pop2"]) == 79 / 9
 
 
-def test_total_genes_copies_per_population(microsat_context_te2_xy):
-    """Vérifie _total_genes_copies_per_population sur
+def test_total_genes_copies_per_sample(microsat_context_te2_xy):
+    """Vérifie _total_genes_copies_per_sample sur
     toy_example2_ms_dna_xy."""
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
@@ -983,8 +986,8 @@ def test_total_genes_copies_per_population(microsat_context_te2_xy):
         seed=42,
     )
 
-    length_by_population = _length_by_sample(mutated["Locus_M_A_1_"])
-    results = total_genes_copies_per_population(length_by_population)
+    length_by_sample = _length_by_sample(mutated["Locus_M_A_1_"])
+    results = total_genes_copies_per_sample(length_by_sample)
 
     assert results.keys() == {"pop1", "pop2"}
     assert results["pop1"] == 39
@@ -1004,9 +1007,9 @@ def test_compute_HET(microsat_context_te2_xy):
 
     tree_sequences1 = [mutated["Locus_M_A_1_"]]
 
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
-    results = compute_HET(tree_sequences1, population_names)
+    results = compute_HET(tree_sequences1, sample_names)
 
     assert results.keys() == {"pop1", "pop2"}
     assert (
@@ -1021,7 +1024,7 @@ def test_compute_HET(microsat_context_te2_xy):
     )
 
     tree_sequences2 = list(mutated.values())
-    results = compute_HET(tree_sequences2, population_names)
+    results = compute_HET(tree_sequences2, sample_names)
 
     assert results.keys() == {"pop1", "pop2"}
     assert pytest.approx(results["pop1"]) == 7.929892037786773 / 10
@@ -1042,10 +1045,8 @@ def test_compute_VAR_constants(microsat_context_te2_xy):
         seed=42,
     )
 
-    length_by_population = _length_by_sample(mutated["Locus_M_A_1_"])
-    raw_sizes, raw_square_sizes, total_counts = _compute_VAR_constants(
-        length_by_population
-    )
+    length_by_sample = _length_by_sample(mutated["Locus_M_A_1_"])
+    raw_sizes, raw_square_sizes, total_counts = _compute_VAR_constants(length_by_sample)
 
     assert raw_sizes.keys() == {"pop1", "pop2"}
     assert raw_square_sizes.keys() == {"pop1", "pop2"}
@@ -1066,7 +1067,7 @@ def test_compute_VAR_constants(microsat_context_te2_xy):
     assert total_counts["pop2"] == 40
 
 
-def test_compute_VAR_for_one_population(microsat_context_te2_xy):
+def test_compute_VAR_for_one_sample(microsat_context_te2_xy):
     """Vérifie compute_VAR sur toy_example2_ms_dna_xy pour une seule
     population."""
     demography, _ = build_random_demography_for_scenario_index(
@@ -1079,7 +1080,7 @@ def test_compute_VAR_for_one_population(microsat_context_te2_xy):
     )
 
     s, v, n = _compute_VAR_constants(_length_by_sample(mutated["Locus_M_A_1_"]))
-    result = _compute_VAR_for_one_population(s["pop1"], v["pop1"], n["pop1"], 2)
+    result = _compute_VAR_for_one_sample(s["pop1"], v["pop1"], n["pop1"], 2)
 
     s1, v1, n1 = (
         203 * 31 + 197 * 1 + 193 * 7 + 199 * 0 + 189 * 0,
@@ -1100,12 +1101,12 @@ def test_compute_VAR(microsat_context_te2_xy):
         seed=42,
     )
 
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
     list_loci = [
         locus for locus in microsat_context_te2_xy.list_loci if locus.ms_or_seq == "M"
     ]
     list_motif_sizes = [locus.motif_size for locus in list_loci]
-    results = compute_VAR(mutated.values(), population_names, list_motif_sizes)
+    results = compute_VAR(mutated.values(), sample_names, list_motif_sizes)
 
     assert results.keys() == {"pop1", "pop2"}
     assert pytest.approx(results["pop1"]) == 154.90377867746088 / 10
@@ -1152,8 +1153,8 @@ def test_compute_MGW(microsat_context_te2_xy):
         locus for locus in microsat_context_te2_xy.list_loci if locus.ms_or_seq == "M"
     ]
     list_motif_sizes = [locus.motif_size for locus in list_loci]
-    population_names = ["pop1", "pop2"]
-    results = compute_MGW(mutated.values(), population_names, list_motif_sizes)
+    sample_names = ["pop1", "pop2"]
+    results = compute_MGW(mutated.values(), sample_names, list_motif_sizes)
 
     assert results.keys() == {"pop1", "pop2"}
     assert pytest.approx(results["pop1"]) == 0.7398373983739838
@@ -1177,13 +1178,13 @@ def test_compute_N2P_for_one_pair():
 def test_compute_N2P_for_one_locus():
     """Vérifie que la fonction _compute_N2P_for_one_locus fonctionne
     correctement."""
-    length_by_population = {
+    length_by_sample = {
         "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
         "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
     }
 
     combined_alleles_count = _compute_N2P_for_one_locus(
-        length_by_population, ["pop1", "pop2"]
+        length_by_sample, ["pop1", "pop2"]
     )
 
     assert combined_alleles_count == {"1.2": 5.0}
@@ -1200,9 +1201,9 @@ def test_compute_N2P(microsat_context_te2_xy):
         seed=42,
     )
 
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
-    results = compute_N2P(mutated.values(), population_names)
+    results = compute_N2P(mutated.values(), sample_names)
 
     assert results == {"1.2": 10.8}
 
@@ -1210,13 +1211,13 @@ def test_compute_N2P(microsat_context_te2_xy):
 # tests relatifs à la stat H2P
 
 
-def test_pool_allele_counts_for_two_populations():
-    """Vérifie que la fonction _pool_allele_counts_for_two_populations
+def test_pool_allele_counts_for_two_samples():
+    """Vérifie que la fonction _pool_allele_counts_for_two_samples
     fonctionne correctement."""
     alleles_pop1 = [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)]
     alleles_pop2 = [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)]
 
-    pooled_counts = _pool_allele_counts_for_two_populations(alleles_pop1, alleles_pop2)
+    pooled_counts = _pool_allele_counts_for_two_samples(alleles_pop1, alleles_pop2)
 
     expected_pooled_counts = [
         (201, 0.0),
@@ -1268,9 +1269,9 @@ def test_compute_H2P(microsat_context_te2_xy):
         seed=42,
     )
 
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
-    results = compute_H2P(mutated.values(), population_names)
+    results = compute_H2P(mutated.values(), sample_names)
 
     assert pytest.approx(results["1.2"]) == 0.8132570166897283
 
@@ -1280,12 +1281,12 @@ def test_compute_H2P(microsat_context_te2_xy):
 
 def test_compute_V2P_constants():
     """Vérifie que les constantes de compute_V2P sont correctes."""
-    length_by_population = {
+    length_by_sample = {
         "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
         "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
     }
 
-    s, v, n = _compute_VAR_constants(length_by_population)
+    s, v, n = _compute_VAR_constants(length_by_sample)
 
     s1, v1, n1 = _compute_V2P_constants("pop1", "pop2", s, v, n)
 
@@ -1333,9 +1334,9 @@ def test_compute_V2P(microsat_context_te2_xy):
     list_motif_sizes = [
         locus.motif_size for locus in list_loci if locus.ms_or_seq == "M"
     ]
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
-    results = compute_V2P(mutated.values(), population_names, list_motif_sizes)
+    results = compute_V2P(mutated.values(), sample_names, list_motif_sizes)
 
     assert pytest.approx(results["1.2"]) == 15.091707024376934
 
@@ -1347,13 +1348,13 @@ def test_compute_identical_pair_for_one_pair():
     """Vérifie que la fonction _compute_identical_pair_for_one_pair fonctionne
     correctement."""
     _length_by_sample = {
-        "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
-        "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
+        "samp1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
+        "samp2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
     }
-    pop_a, pop_b = "pop1", "pop2"
+    samp_a, samp_b = "samp1", "samp2"
 
     identical_count, total_count = _compute_identical_pair_for_one_pair(
-        _length_by_sample, pop_a, pop_b
+        _length_by_sample, samp_a, samp_b
     )
 
     assert total_count == 39 * 40
@@ -1371,9 +1372,9 @@ def test_compute_DAS(microsat_context_te2_xy):
         seed=42,
     )
 
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
-    results = compute_DAS(mutated.values(), population_names)
+    results = compute_DAS(mutated.values(), sample_names)
 
     assert pytest.approx(results["1.2"]) == 0.17150455927051672
 
@@ -1385,15 +1386,15 @@ def test_compute_DM2_for_one_locus():
     """Vérifie que la fonction _compute_DM2_for_one_locus fonctionne
     correctement."""
     # test sur un locus où les deux populations sont présentes
-    length_by_population = {
+    length_by_sample = {
         "pop1": [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)],
         "pop2": [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)],
     }
 
-    raw_sizes, _, total_counts = _compute_VAR_constants(length_by_population)
+    raw_sizes, _, total_counts = _compute_VAR_constants(length_by_sample)
 
     contribution, new_moy, was_valid = _compute_DM2_for_one_locus(
-        "pop1", "pop2", 2, length_by_population, raw_sizes, total_counts, None
+        "pop1", "pop2", 2, length_by_sample, raw_sizes, total_counts, None
     )
 
     moy_1 = raw_sizes["pop1"] / total_counts["pop1"]
@@ -1403,7 +1404,7 @@ def test_compute_DM2_for_one_locus():
     assert was_valid
 
     # test sur un locus où une des populations est absente.
-    length_by_population_2 = {
+    length_by_sample_2 = {
         "pop1": [
             (208, 1),
             (212, 4),
@@ -1420,13 +1421,13 @@ def test_compute_DM2_for_one_locus():
         ]
     }
 
-    raw_sizes_2, _, total_counts_2 = _compute_VAR_constants(length_by_population_2)
+    raw_sizes_2, _, total_counts_2 = _compute_VAR_constants(length_by_sample_2)
 
     contribution_2, new_moy_2, was_valid_2 = _compute_DM2_for_one_locus(
         "pop1",
         "pop2",
         2,
-        length_by_population_2,
+        length_by_sample_2,
         raw_sizes_2,
         total_counts_2,
         (100.0, 105.0),
@@ -1452,9 +1453,9 @@ def test_compute_DM2(microsat_context_te2_xy):
     list_motif_sizes = [
         locus.motif_size for locus in list_loci if locus.ms_or_seq == "M"
     ]
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
-    results = compute_DM2(mutated.values(), population_names, list_motif_sizes)
+    results = compute_DM2(mutated.values(), sample_names, list_motif_sizes)
 
     assert pytest.approx(results["1.2"]) == 0.7197632222952716
 
@@ -1516,8 +1517,8 @@ def test_length_by_pop_and_individuals_with_same_layout():
     result_without_layout = _length_by_sample_and_individuals(ts)
 
     assert list(result_with_layout.keys()) == list(result_without_layout.keys())
-    for pop_name in result_with_layout:
-        assert result_with_layout[pop_name] == result_without_layout[pop_name]
+    for sample_name in result_with_layout:
+        assert result_with_layout[sample_name] == result_without_layout[sample_name]
 
 
 def test_length_by_pop_and_individuals_with_different_layout():
@@ -1528,10 +1529,10 @@ def test_length_by_pop_and_individuals_with_different_layout():
     ploidy = ts.num_samples // ts.num_individuals
     # Create a different layout
     split_layout = []
-    for pop_name, node_ids in default_layout:
+    for sample_name, node_ids in default_layout:
         half = len(node_ids) // 2
-        split_layout.append((f"{pop_name}_a", node_ids[:half]))
-        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+        split_layout.append((f"{sample_name}_a", node_ids[:half]))
+        split_layout.append((f"{sample_name}_b", node_ids[half:]))
 
     result_with_layout = _length_by_sample_and_individuals(ts, layout=split_layout)
     result_without_layout = _length_by_sample_and_individuals(ts)
@@ -1539,19 +1540,19 @@ def test_length_by_pop_and_individuals_with_different_layout():
     assert list(result_with_layout) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]
     assert list(result_without_layout) == ["pop1", "pop2"]
 
-    for pop_name, node_ids in split_layout:
-        assert len(result_with_layout[pop_name]) == len(node_ids) // ploidy
+    for sample_name, node_ids in split_layout:
+        assert len(result_with_layout[sample_name]) == len(node_ids) // ploidy
 
-    for pop_name in ("pop1", "pop2"):
-        half_a = result_with_layout[f"{pop_name}_a"]
-        half_b = result_with_layout[f"{pop_name}_b"]
+    for sample_name in ("pop1", "pop2"):
+        half_a = result_with_layout[f"{sample_name}_a"]
+        half_b = result_with_layout[f"{sample_name}_b"]
 
         rejoined = half_a + half_b
-        assert rejoined == result_without_layout[pop_name]
+        assert rejoined == result_without_layout[sample_name]
 
 
-def test_compute_ni_nA_AA_for_one_population():
-    """Vérifie que la fonction _compute_ni_nA_AA_for_one_population fonctionne
+def test_compute_ni_nA_AA_for_one_sample():
+    """Vérifie que la fonction _compute_ni_nA_AA_for_one_sample fonctionne
     correctement."""
     alleles_per_individual = [
         np.int64([203, 203]),
@@ -1560,18 +1561,18 @@ def test_compute_ni_nA_AA_for_one_population():
         np.int64([203, 203]),
     ]
 
-    ni, nA, AA = _compute_ni_nA_AA_for_one_population(alleles_per_individual, 203)
+    ni, nA, AA = _compute_ni_nA_AA_for_one_sample(alleles_per_individual, 203)
 
     assert ni == 4
     assert nA == 7
     assert AA == 3
 
 
-def test_compute_FST_constants_for_two_populations_combined():
+def test_compute_FST_constants_for_two_samples_combined():
     pairs_1 = [(203, 203), (203, 203), (203, 193), (203, 203)]
     pairs_2 = [(203, 203), (203, 193), (197, 203), (203, 193)]
 
-    s2G, s2I, s2p = _compute_FST_constants_for_two_populations_combined(
+    s2G, s2I, s2p = _compute_FST_constants_for_two_samples_combined(
         pairs_1, pairs_2, 203
     )
 
@@ -1580,7 +1581,7 @@ def test_compute_FST_constants_for_two_populations_combined():
     assert s2p == 0.015625
 
     # second test avec une allele non_presente
-    s2G, s2I, s2p = _compute_FST_constants_for_two_populations_combined(
+    s2G, s2I, s2p = _compute_FST_constants_for_two_samples_combined(
         pairs_1, pairs_2, 58
     )
     assert s2G == 0
@@ -1588,7 +1589,7 @@ def test_compute_FST_constants_for_two_populations_combined():
     assert s2p == 0
 
 
-def test_compute_FST_constants_on_all_alleles_for_two_populations():
+def test_compute_FST_constants_on_all_alleles_for_two_samples():
     """Vérifie que la fonction
     _compute_constants_on_all_alleles_for_two_populations fonctionne
     correctement."""
@@ -1597,7 +1598,7 @@ def test_compute_FST_constants_on_all_alleles_for_two_populations():
         "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
     }
 
-    s1l, s2l, s3l = _compute_FST_constants_on_all_alleles_for_two_populations(
+    s1l, s2l, s3l = _compute_FST_constants_on_all_alleles_for_two_samples(
         _length_by_sample, "pop1", "pop2"
     )
 
@@ -1606,7 +1607,7 @@ def test_compute_FST_constants_on_all_alleles_for_two_populations():
     assert pytest.approx(s3l) == 0.421875
 
     # nouveau test avec des pop non présente
-    s1l, s2l, s3l = _compute_FST_constants_on_all_alleles_for_two_populations(
+    s1l, s2l, s3l = _compute_FST_constants_on_all_alleles_for_two_samples(
         _length_by_sample, "pop3", "pop4"
     )
 
@@ -1626,9 +1627,9 @@ def test_compute_FST(microsat_context_te2_xy):
         seed=42,
     )
 
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
-    results = compute_FST(mutated.values(), population_names)
+    results = compute_FST(mutated.values(), sample_names)
 
     assert pytest.approx(results["1.2"]) == 0.03084132131276057
 
@@ -1717,8 +1718,8 @@ def test_genotypes_by_pop_and_individuals_with_same_layout():
     result_without_layout = _genotypes_by_sample_and_individuals(ts)
 
     assert list(result_with_layout.keys()) == list(result_without_layout.keys())
-    for pop_name in result_with_layout:
-        assert result_with_layout[pop_name] == result_without_layout[pop_name]
+    for sample_name in result_with_layout:
+        assert result_with_layout[sample_name] == result_without_layout[sample_name]
 
 
 def test_genotypes_by_pop_and_individuals_with_different_layout():
@@ -1729,10 +1730,10 @@ def test_genotypes_by_pop_and_individuals_with_different_layout():
     ploidy = ts.num_samples // ts.num_individuals
     # Create a different layout
     split_layout = []
-    for pop_name, node_ids in default_layout:
+    for sample_name, node_ids in default_layout:
         half = len(node_ids) // 2
-        split_layout.append((f"{pop_name}_a", node_ids[:half]))
-        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+        split_layout.append((f"{sample_name}_a", node_ids[:half]))
+        split_layout.append((f"{sample_name}_b", node_ids[half:]))
 
     result_with_layout = _genotypes_by_sample_and_individuals(ts, layout=split_layout)
     result_without_layout = _genotypes_by_sample_and_individuals(ts)
@@ -1740,15 +1741,15 @@ def test_genotypes_by_pop_and_individuals_with_different_layout():
     assert list(result_with_layout) == ["pop1_a", "pop1_b", "pop2_a", "pop2_b"]
     assert list(result_without_layout) == ["pop1", "pop2"]
 
-    for pop_name, node_ids in split_layout:
-        assert len(result_with_layout[pop_name]) == len(node_ids) // ploidy
+    for sample_name, node_ids in split_layout:
+        assert len(result_with_layout[sample_name]) == len(node_ids) // ploidy
 
-    for pop_name in ("pop1", "pop2"):
-        half_a = result_with_layout[f"{pop_name}_a"]
-        half_b = result_with_layout[f"{pop_name}_b"]
+    for sample_name in ("pop1", "pop2"):
+        half_a = result_with_layout[f"{sample_name}_a"]
+        half_b = result_with_layout[f"{sample_name}_b"]
 
         rejoined = half_a + half_b
-        assert rejoined == result_without_layout[pop_name]
+        assert rejoined == result_without_layout[sample_name]
 
 
 def test_compute_num_den_lik_for_one_individual():
@@ -1818,9 +1819,9 @@ def test_compute_LIK(microsat_context_te2_xy):
         seed=42,
     )
 
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
-    results = compute_LIK(mutated.values(), population_names)
+    results = compute_LIK(mutated.values(), sample_names)
 
     assert len(results) == 2
     assert (
@@ -1841,10 +1842,10 @@ def test_compute_all_statistics_microsat(microsat_context_te2_xy):
         seed=42,
     )
 
-    population_names = ["pop1", "pop2"]
+    sample_names = ["pop1", "pop2"]
 
     results = compute_all_statistics_microsat(
-        microsat_context_te2_xy.header_text, mutated, population_names, seed=42
+        microsat_context_te2_xy.header_text, mutated, sample_names, seed=42
     )
 
     expected_keys = {"LIK_1_1.2", "MGW_1_1", "FST_1_1.2"}

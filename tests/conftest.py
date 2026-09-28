@@ -24,7 +24,7 @@ from bridge.observed_data import (
     count_individuals_per_sample,
     detect_snp_file_type,
     individual_sexes_per_sample,
-    observed_count_population,
+    observed_count_sample,
     observed_microsatellites,
     observed_reads,
     observed_sequences,
@@ -213,7 +213,7 @@ def dna_context_te2(header_text_te2) -> DnaReplayContext:
         list_loci=list_loci,
         dna_observed=dna_observed,
         frequencies_per_locus=base_frequency_by_locus(dna_observed),
-        samples_default=observed_count_population(OBSERVED_MSS_FILE_TE2),
+        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE2),
         sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE2),
     )
 
@@ -228,7 +228,7 @@ def dna_context_te2_xy(header_text_te2_XY) -> DnaReplayContext:
         list_loci=list_loci,
         dna_observed=dna_observed,
         frequencies_per_locus=base_frequency_by_locus(dna_observed),
-        samples_default=observed_count_population(OBSERVED_MSS_FILE_TE2_XY),
+        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE2_XY),
         sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE2_XY),
     )
 
@@ -243,7 +243,7 @@ def microsat_context_te2_xy(header_text_te2_XY) -> MicrosatReplayContext:
         list_loci=list_loci,
         microsat_observed=microsat_observed,
         bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
-        samples_default=observed_count_population(OBSERVED_MSS_FILE_TE2_XY),
+        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE2_XY),
         sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE2_XY),
     )
 
@@ -258,7 +258,7 @@ def microsat_context_te1(header_text_te1) -> MicrosatReplayContext:
         list_loci=list_loci,
         microsat_observed=microsat_observed,
         bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
-        samples_default=observed_count_population(OBSERVED_MSS_FILE_TE1),
+        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE1),
         sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE1),
     )
 
@@ -273,6 +273,6 @@ def microsat_context_te1_modified(header_text_te1_modified) -> MicrosatReplayCon
         list_loci=list_loci,
         microsat_observed=microsat_observed,
         bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
-        samples_default=observed_count_population(OBSERVED_MSS_FILE_TE1),
+        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE1),
         sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE1),
     )

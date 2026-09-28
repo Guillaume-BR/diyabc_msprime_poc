@@ -657,8 +657,8 @@ def individual_sexes_from_locus_genotype(
     return sexes_per_sample
 
 
-def observed_count_population(mss_file_path: str | Path) -> dict[str, int]:
-    """Compte le nombre d'individus par population dans un fichier .mss.
+def observed_count_sample(mss_file_path: str | Path) -> dict[str, int]:
+    """Compte le nombre d'individus par échantillon dans un fichier .mss.
 
     Args:
         mss_file_path: Chemin du fichier .mss.
@@ -671,7 +671,7 @@ def observed_count_population(mss_file_path: str | Path) -> dict[str, int]:
     """
     lines = Path(mss_file_path).read_text().splitlines()
 
-    population_counts: dict[str, int] = {}
+    sample_counts: dict[str, int] = {}
     POP_indexes = [i for i, line in enumerate(lines) if line.lower().startswith("pop")]
     if not POP_indexes:
         raise ValueError(
@@ -679,15 +679,15 @@ def observed_count_population(mss_file_path: str | Path) -> dict[str, int]:
             f"Format de fichier .mss invalide."
         )
     for i, index in enumerate(POP_indexes):
-        population_counts.setdefault(f"pop{i + 1}", 0)
+        sample_counts.setdefault(f"pop{i + 1}", 0)
         next_index = POP_indexes[i + 1] if i + 1 < len(POP_indexes) else len(lines)
         for line in lines[index + 1 : next_index]:
             if line.strip():
-                population_counts[f"pop{i + 1}"] += 1
+                sample_counts[f"pop{i + 1}"] += 1
             else:
                 continue
 
-    return population_counts
+    return sample_counts
 
 
 def base_frequency_by_locus(

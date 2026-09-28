@@ -47,7 +47,7 @@ from bridge.observed_data import (
     count_individuals_per_sample,
     detect_snp_file_type,
     individual_sexes_per_sample,
-    observed_count_population,
+    observed_count_sample,
     observed_microsatellites,
     observed_reads,
     observed_sequences,
@@ -1101,7 +1101,7 @@ def run_reftable_simulation_dna(
         list_loci=list_loci,
         dna_observed=sequences_observed,
         frequencies_per_locus=base_frequency_by_locus(sequences_observed),
-        samples_default=observed_count_population(mss_path),
+        samples_default=observed_count_sample(mss_path),
         sex_ratio=parse_sex_ratio(mss_path),
     )
 
@@ -1355,7 +1355,7 @@ def replay_reftable_simulation_dna(
         list_loci=list_loci,
         dna_observed=sequences_observed,
         frequencies_per_locus=base_frequency_by_locus(sequences_observed),
-        samples_default=observed_count_population(mss_path),
+        samples_default=observed_count_sample(mss_path),
         sex_ratio=parse_sex_ratio(mss_path),
     )
 
@@ -1507,7 +1507,7 @@ def run_reftable_simulation_microsat(
         list_loci=list_loci,
         microsat_observed=microsat_observed,
         bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
-        samples_default=observed_count_population(mss_path),
+        samples_default=observed_count_sample(mss_path),
         sex_ratio=parse_sex_ratio(mss_path),
     )
 
@@ -1636,7 +1636,7 @@ def replay_reftable_simulation_microsat(
         list_loci=list_loci,
         microsat_observed=microsat_observed,
         bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
-        samples_default=observed_count_population(mss_path),
+        samples_default=observed_count_sample(mss_path),
         sex_ratio=parse_sex_ratio(mss_path),
     )
 

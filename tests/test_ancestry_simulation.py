@@ -205,7 +205,7 @@ def test_simulate_snp_genotypes_scenario1(header_text):
         assert set(all_genotypes) == {0, 1}, f"Locus non polymorphe : {locus_genotypes}"
 
 
-def test_simulate_snp_genotypes_grouped_by_population(header_text):
+def test_simulate_snp_genotypes_grouped_by_sample(header_text):
     """Vérifie que les génotypes sont bien regroupés par nom de
     population (pop1..pop4), avec le bon nombre de lignées par groupe
     (30 individus x ploidy 2 = 60 lignées par population), et que chaque
@@ -225,7 +225,7 @@ def test_simulate_snp_genotypes_grouped_by_population(header_text):
 
     for locus_genotypes in genotypes_per_locus:
         assert set(locus_genotypes.keys()) == {"pop1", "pop2", "pop3", "pop4"}
-        for _pop_name, genos in locus_genotypes.items():
+        for _sample_name, genos in locus_genotypes.items():
             assert len(genos) == 60  # 30 individus x ploidy 2
 
         # Polymorphe globalement (au moins un 0 et un 1 sur l'ensemble)
@@ -301,7 +301,7 @@ def test_simulate_genotypes_for_locus_type(snp_context_te5):
 
 def test_compute_sample_layout_different_count():
     """Vérifie que compute_sample_layout renvoie bien une liste de tuples
-    (nom_population, sample_ids) avec les bons noms de populations et le bon
+    (nom_echantillon, sample_ids) avec les bons noms de populations et le bon
     nombre d'individus par population."""
     # test effectifs inégaux
     ts = _ts_from_sample_sets(
@@ -310,7 +310,7 @@ def test_compute_sample_layout_different_count():
     samples = {"pop1": 7, "pop2": 3}
     computed_layout = compute_sample_layout(ts, samples)
 
-    assert [pop_name for pop_name, _ in computed_layout] == ["pop1", "pop2"]
+    assert [sample_name for sample_name, _ in computed_layout] == ["pop1", "pop2"]
     assert np.array_equal(computed_layout[0][1], np.arange(14))
     assert np.array_equal(computed_layout[1][1], np.arange(14, 20))
 
@@ -328,7 +328,7 @@ def test_compute_sample_layout_with_mixed_ploidy():
     samples = {"pop1": 5, "pop2": 5}
     computed_layout = compute_sample_layout(ts, samples)
 
-    assert [pop_name for pop_name, _ in computed_layout] == ["pop1", "pop2"]
+    assert [sample_name for sample_name, _ in computed_layout] == ["pop1", "pop2"]
     assert np.array_equal(computed_layout[0][1], np.arange(8))
     assert np.array_equal(computed_layout[1][1], np.arange(8, 17))
 
@@ -345,7 +345,7 @@ def test_compute_sample_layout_with_null_effectif():
     samples = {"pop1": 5, "pop2": 0, "anc": 3}
     computed_layout = compute_sample_layout(ts, samples)
 
-    assert [pop_name for pop_name, _ in computed_layout] == ["pop1", "anc"]
+    assert [sample_name for sample_name, _ in computed_layout] == ["pop1", "anc"]
     assert np.array_equal(computed_layout[0][1], np.arange(10))
     assert np.array_equal(computed_layout[1][1], np.arange(10, 16))
 
@@ -389,13 +389,13 @@ def test_compute_sample_layout_matches_population_layout_on_non_serial_data(
         ploidy=2,
     )
 
-    by_population = compute_population_layout(ts)
+    by_sample = compute_population_layout(ts)
     by_sample = compute_sample_layout(ts, counts)
 
-    assert [n for n, _ in by_population] == [n for n, _ in by_sample]
+    assert [n for n, _ in by_sample] == [n for n, _ in by_sample]
     assert all(
         np.array_equal(a, b)
-        for (_, a), (_, b) in zip(by_population, by_sample, strict=True)
+        for (_, a), (_, b) in zip(by_sample, by_sample, strict=True)
     )
 
 
@@ -579,10 +579,10 @@ def test_with_maf_filter_with_different_layout_null_maf():
 
     layout = compute_population_layout(ts)
     split_layout = []
-    for pop_name, node_ids in layout:
+    for sample_name, node_ids in layout:
         half = len(node_ids) // 2
-        split_layout.append((f"{pop_name}_a", node_ids[:half]))
-        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+        split_layout.append((f"{sample_name}_a", node_ids[:half]))
+        split_layout.append((f"{sample_name}_b", node_ids[half:]))
 
     with_split = with_maf_filter(
         demography,
@@ -626,10 +626,10 @@ def test_with_maf_filter_with_different_layout_nonnull_maf():
 
     layout = compute_population_layout(ts)
     split_layout = []
-    for pop_name, node_ids in layout:
+    for sample_name, node_ids in layout:
         half = len(node_ids) // 2
-        split_layout.append((f"{pop_name}_a", node_ids[:half]))
-        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+        split_layout.append((f"{sample_name}_a", node_ids[:half]))
+        split_layout.append((f"{sample_name}_b", node_ids[half:]))
 
     with_split = with_maf_filter(
         demography,
@@ -799,10 +799,10 @@ def test_with_maf_filter_shared_ancestry_with_different_layout_null_maf():
 
     layout = compute_population_layout(ts)
     split_layout = []
-    for pop_name, node_ids in layout:
+    for sample_name, node_ids in layout:
         half = len(node_ids) // 2
-        split_layout.append((f"{pop_name}_a", node_ids[:half]))
-        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+        split_layout.append((f"{sample_name}_a", node_ids[:half]))
+        split_layout.append((f"{sample_name}_b", node_ids[half:]))
 
     with_split = with_maf_filter_shared_ancestry(
         demography,
@@ -847,10 +847,10 @@ def test_with_maf_filter_shared_ancestry_with_different_layout_nonnull_maf():
 
     layout = compute_population_layout(ts)
     split_layout = []
-    for pop_name, node_ids in layout:
+    for sample_name, node_ids in layout:
         half = len(node_ids) // 2
-        split_layout.append((f"{pop_name}_a", node_ids[:half]))
-        split_layout.append((f"{pop_name}_b", node_ids[half:]))
+        split_layout.append((f"{sample_name}_a", node_ids[:half]))
+        split_layout.append((f"{sample_name}_b", node_ids[half:]))
 
     with_split = with_maf_filter_shared_ancestry(
         demography,
@@ -879,7 +879,7 @@ def test_with_maf_filter_shared_ancestry_with_different_layout_nonnull_maf():
 
 def test_reindex_reads_by_msprime_name():
     """Vérifie que reindex_reads_by_msprime_name renvoie bien un dict
-    {nom_population: (derived_reads, total_reads)} avec les bons noms de
+    {nom_echantillon: (derived_reads, total_reads)} avec les bons noms de
     populations, et que le nombre total de reads est correct."""
     observed_reads_te4 = observed_reads(OBSERVED_SNP_FILE_TE4)
     reindexed = _reindex_reads_by_msprime_name(
@@ -911,11 +911,11 @@ def test_with_mrc_filter(header_text_te4):
         )
     )
     assert len(loci) == num_loci
-    for reads_by_population in loci:
+    for reads_by_sample in loci:
         sum_derived = sum(
-            derived_reads for derived_reads, _ in reads_by_population.values()
+            derived_reads for derived_reads, _ in reads_by_sample.values()
         )
-        sum_total = sum(total_reads for _, total_reads in reads_by_population.values())
+        sum_total = sum(total_reads for _, total_reads in reads_by_sample.values())
         mrc_observed = (
             min(sum_derived, sum_total - sum_derived) if sum_total > 0 else 0.0
         )
@@ -980,11 +980,11 @@ def test_simulate_poolseq_reads_with_mrc_filter(snp_context_te4):
 
     assert len(results) == 100
     assert results[0].keys() == {"pop1", "pop2", "pop3", "pop4"}
-    for reads_by_population in results:
+    for reads_by_sample in results:
         sum_derived = sum(
-            derived_reads for derived_reads, _ in reads_by_population.values()
+            derived_reads for derived_reads, _ in reads_by_sample.values()
         )
-        sum_total = sum(total_reads for _, total_reads in reads_by_population.values())
+        sum_total = sum(total_reads for _, total_reads in reads_by_sample.values())
         mrc_observed = (
             min(sum_derived, sum_total - sum_derived) if sum_total > 0 else 0.0
         )

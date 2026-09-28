@@ -201,7 +201,7 @@ def build_sample_sets_from_scenario(
 
     ATTENTION -- `counts_per_sample` est indexé par ÉCHANTILLON, jamais
     par population. Ses clés ("pop1", "pop2"...) sont un héritage de
-    count_individuals_per_sample / observed_count_population et sont
+    count_individuals_per_sample / observed_count_sample et sont
     IGNORÉES ici : seul l'ordre des valeurs fait foi, le k-ième effectif
     allant au k-ième événement `sample`. Les deux notions ne coïncident
     que par accident sur les jeux de données non sériels ; dès qu'un

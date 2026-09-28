@@ -9,7 +9,7 @@ l'ampleur du corpus de statistiques à reproduire (doc DIYABC section 2.6.3).
 
 Transformation effectuée : genotypes_per_locus contient, pour chaque
 locus, des génotypes HAPLOÏDES (une valeur 0/1 par lignée génomique),
-regroupés par population (voir ancestry_simulation.simulate_snp_genotypes).
+regroupés par échantillon (voir ancestry_simulation.simulate_snp_genotypes).
 Ce module les agrège par PAIRES DE LIGNÉES CONSÉCUTIVES en génotypes
 DIPLOÏDES (0/1/2), conformément au format réel du fichier .snp (vérifié
 empiriquement : msprime associe les lignées [2i, 2i+1] au même individu
@@ -60,11 +60,11 @@ def write_snp_file(
     pour la justification de cette hypothèse).
 
     Args:
-        genotypes_per_locus: num_loci dicts {nom_population:
+        genotypes_per_locus: num_loci dicts {nom_echantillon:
             [génotypes haploïdes...]}, un par locus (la forme produite
             par ancestry_simulation.simulate_snp_genotypes). Doit
-            contenir AU MOINS un locus, et toutes les populations
-            doivent être présentes et avoir le même nombre de lignées
+            contenir AU MOINS un locus, et tous les échantillons
+            doivent être présents et avoir le même nombre de lignées
             à chaque locus (cohérence vérifiée par la simulation
             elle-même, pas revérifiée ici).
         output_path: Chemin où écrire le fichier .snp.
@@ -75,20 +75,20 @@ def write_snp_file(
     if not genotypes_per_locus:
         raise ValueError("genotypes_per_locus est vide : au moins un locus est requis")
 
-    population_names = list(genotypes_per_locus[0].keys())
+    sample_names = list(genotypes_per_locus[0].keys())
 
     # Construit, pour chaque population, la matrice diploïde
     # [individu][locus] -- nécessaire car le fichier organise les données
     # par individu (toutes ses lignes de loci sur une seule ligne).
-    diploid_matrix_per_population: dict[str, list[list[int]]] = {}
-    for pop_name in population_names:
+    diploid_matrix_per_sample: dict[str, list[list[int]]] = {}
+    for sample_name in sample_names:
         per_locus_diploid = [
-            _genotypes_to_diploid(locus_genotypes[pop_name])
+            _genotypes_to_diploid(locus_genotypes[sample_name])
             for locus_genotypes in genotypes_per_locus
         ]
         # Transpose : de [locus][individu] vers [individu][locus]
         num_individuals = len(per_locus_diploid[0])
-        diploid_matrix_per_population[pop_name] = [
+        diploid_matrix_per_sample[sample_name] = [
             [per_locus_diploid[loc][ind] for loc in range(len(per_locus_diploid))]
             for ind in range(num_individuals)
         ]
@@ -97,10 +97,10 @@ def write_snp_file(
     header_cols = ["IND", "SEX", "POP"] + ["A"] * num_loci
 
     lines = [" ".join(header_cols)]
-    for pop_name, individuals_matrix in diploid_matrix_per_population.items():
+    for sample_name, individuals_matrix in diploid_matrix_per_sample.items():
         for ind_index, diploid_genotypes in enumerate(individuals_matrix, start=1):
-            ind_name = f"sim_{pop_name}_{ind_index}"
-            row = [ind_name, "9", pop_name] + [str(g) for g in diploid_genotypes]
+            ind_name = f"sim_{sample_name}_{ind_index}"
+            row = [ind_name, "9", sample_name] + [str(g) for g in diploid_genotypes]
             lines.append(" ".join(row))
 
     Path(output_path).write_text("\n".join(lines) + "\n")

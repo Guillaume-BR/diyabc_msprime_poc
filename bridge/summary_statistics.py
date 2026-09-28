@@ -18,7 +18,7 @@ Trois familles, trois formats d'entrée, trois points d'entrée
     ancestry_simulation.simulate_poolseq_reads_with_mrc_filter.
   - Séquences ADN : dict {nom_locus: tskit.TreeSequence mutée} -- la
     forme produite par ancestry_simulation.dna_mutation_simulation_
-    per_locus, tranchée par échantillon via _genotype_matrix_by_population
+    per_locus, tranchée par échantillon via _genotype_matrix_by_sample
     (format complètement différent des deux précédents, pas de liste de
     génotypes 0/1).
 
@@ -1162,7 +1162,7 @@ def compute_F4(
 # ---------------------------------------------------------------------------
 
 
-def _genotype_matrix_by_population(
+def _genotype_matrix_by_sample(
     tree_sequence: tskit.TreeSequence,
     *,
     layout: list[tuple[str, np.ndarray]] | None = None,
@@ -1270,7 +1270,7 @@ def compute_NSS(
         layouts = [None] * len(tree_sequences)
 
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
+        genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for samp_name in sample_names:
             matrix = genotype_matrices[samp_name]
             mean_segregating_sites[samp_name] += _count_segregating_sites(matrix)
@@ -1332,7 +1332,7 @@ def compute_NHA(
         layouts = [None] * len(tree_sequences)
 
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
+        genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for samp_name in sample_names:
             matrix = genotype_matrices[samp_name]
             mean_distinct_haplotypes[samp_name] += _count_distinct_haplotypes(matrix)
@@ -1415,7 +1415,7 @@ def compute_MPD(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
+        genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for samp_name in sample_names:
             matrix = genotype_matrices[samp_name]
             pairwise_distances = _pairwise_hamming_distances(matrix)
@@ -1474,7 +1474,7 @@ def compute_VPD(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
+        genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for samp_name in sample_names:
             matrix = genotype_matrices[samp_name]
             pairwise_distances = _pairwise_hamming_distances(matrix)
@@ -1600,7 +1600,7 @@ def compute_DTA(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
+        genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for samp_name in sample_names:
             matrix = genotype_matrices[samp_name]
             tajima_d = _tajima_d_per_locus(matrix)
@@ -1634,7 +1634,7 @@ def _private_segregating_sites_per_locus(
 
     Toutes les matrices de `genotype_matrices` viennent du même
     `genotype_matrix()` (juste tranchées par colonnes, voir
-    _genotype_matrix_by_population) -- la ligne `i` désigne donc le MÊME
+    _genotype_matrix_by_sample) -- la ligne `i` désigne donc le MÊME
     site physique pour toutes les échantillons. Contrairement au C++, qui
     compare des listes d'indices de sites variables de longueurs
     différentes par une recherche imbriquée (`ssa[sample][j] ==
@@ -1643,7 +1643,7 @@ def _private_segregating_sites_per_locus(
 
     Args:
         genotype_matrices: Dict {nom_echantillon: matrice} pour TOUTES
-            les échantillons du dataset (voir _genotype_matrix_by_population).
+            les échantillons du dataset (voir _genotype_matrix_by_sample).
         target_sample: L'échantillon pour lequel compter les sites
             privés.
 
@@ -1704,7 +1704,7 @@ def compute_PSS(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
+        genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for samp_name in sample_names:
             mean_pss[samp_name] += _private_segregating_sites_per_locus(
                 genotype_matrices, samp_name
@@ -1794,7 +1794,7 @@ def compute_MNS(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
+        genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for samp_name in sample_names:
             minor_counts = _minor_allele_counts_at_segregating_sites(
                 genotype_matrices[samp_name]
@@ -1854,7 +1854,7 @@ def compute_VNS(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
+        genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for samp_name in sample_names:
             minor_counts = _minor_allele_counts_at_segregating_sites(
                 genotype_matrices[samp_name]
@@ -1914,7 +1914,7 @@ def compute_NH2(
         layouts = [None] * len(tree_sequences)
 
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
+        genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for ia, ib in pairs:
             samp_a = sample_names[ia]
             samp_b = sample_names[ib]
@@ -1973,7 +1973,7 @@ def compute_NS2(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
+        genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for ia, ib in pairs:
             samp_a = sample_names[ia]
             samp_b = sample_names[ib]
@@ -2063,7 +2063,7 @@ def compute_MP2(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
+        genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for ia, ib in pairs:
             samp_a = sample_names[ia]
             samp_b = sample_names[ib]
@@ -2187,7 +2187,7 @@ def compute_MPB(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
+        genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for ia, ib in pairs:
             samp_a = sample_names[ia]
             samp_b = sample_names[ib]
@@ -2256,7 +2256,7 @@ def compute_HST(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
-        genotype_matrices = _genotype_matrix_by_population(ts, layout=layout)
+        genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for ia, ib in pairs:
             samp_a = sample_names[ia]
             samp_b = sample_names[ib]
@@ -2325,7 +2325,7 @@ def _length_by_sample(
 # NAL : mean number of alleles across loci
 
 
-def count_alleles_per_population(
+def count_alleles_per_sample(
     length_by_sample: dict[str, list[tuple[int, int]]],
 ) -> dict[str, int]:
     """Compte le nombre de tuples ayant un compte > 0.
@@ -2371,7 +2371,7 @@ def compute_NAL(
 
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         length_by_sample = _length_by_sample(ts, layout=layout)
-        counts = count_alleles_per_population(length_by_sample)
+        counts = count_alleles_per_sample(length_by_sample)
         for samp_name in counts:
             allele_counts[samp_name] += counts[samp_name]
             valid_loci_count[samp_name] += 1
@@ -2388,7 +2388,7 @@ def compute_NAL(
 # HET : mean gene diversity across loci
 
 
-def total_genes_copies_per_population(
+def total_genes_copies_per_sample(
     length_by_sample: dict[str, list[tuple[int, int]]],
 ) -> dict[str, int]:
     """Compte le nombre total d'allèles distincts pour chaque échantillon.
@@ -2407,7 +2407,7 @@ def total_genes_copies_per_population(
     return total_counts
 
 
-def _compute_HET_for_one_population(
+def _compute_HET_for_one_sample(
     total_count: int, _lengths_counts: list[tuple[int, int]]
 ) -> float:
     """Calcule HET pour un échantillon donné à partir du nombre total d'allèles
@@ -2452,10 +2452,10 @@ def compute_HET(
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         length_by_sample = _length_by_sample(ts, layout=layout)
-        total_counts = total_genes_copies_per_population(length_by_sample)
+        total_counts = total_genes_copies_per_sample(length_by_sample)
         for samp_name in total_counts:
             if total_counts[samp_name] > 1:
-                gene_diversity[samp_name] += _compute_HET_for_one_population(
+                gene_diversity[samp_name] += _compute_HET_for_one_sample(
                     total_counts[samp_name], length_by_sample[samp_name]
                 )
                 valid_loci_count[samp_name] += 1
@@ -2498,11 +2498,11 @@ def _compute_VAR_constants(
         )
         for samp_name in length_by_sample
     }
-    total_counts = total_genes_copies_per_population(length_by_sample)
+    total_counts = total_genes_copies_per_sample(length_by_sample)
     return raw_sizes, raw_square_sizes, total_counts
 
 
-def _compute_VAR_for_one_population(
+def _compute_VAR_for_one_sample(
     raw_sizes: float, raw_square_sizes: float, total_count: int, motif_size: int
 ) -> float:
     """Calcule VAR pour un échantillon donné à partir des sommes brutes et du
@@ -2559,7 +2559,7 @@ def compute_VAR(
         )
         for samp_name in length_by_sample:
             if total_counts[samp_name] > 1:
-                allele_size_variance[samp_name] += _compute_VAR_for_one_population(
+                allele_size_variance[samp_name] += _compute_VAR_for_one_sample(
                     raw_sizes[samp_name],
                     raw_square_sizes[samp_name],
                     total_counts[samp_name],
@@ -2705,12 +2705,12 @@ def _compute_N2P_for_one_locus(
             combined_alleles[key] += _compute_N2P_for_one_pair(lengths_a, lengths_b)
         elif sample_names[i] in length_by_sample:
             lengths_a = length_by_sample[sample_names[i]]
-            combined_alleles[key] += count_alleles_per_population(length_by_sample)[
+            combined_alleles[key] += count_alleles_per_sample(length_by_sample)[
                 sample_names[i]
             ]
         elif sample_names[j] in length_by_sample:
             lengths_b = length_by_sample[sample_names[j]]
-            combined_alleles[key] += count_alleles_per_population(length_by_sample)[
+            combined_alleles[key] += count_alleles_per_sample(length_by_sample)[
                 sample_names[j]
             ]
     return combined_alleles
@@ -2756,7 +2756,7 @@ def compute_N2P(
 # H2P - mean gene diversity across loci (two samples)
 
 
-def _pool_allele_counts_for_two_populations(
+def _pool_allele_counts_for_two_samples(
     pop_1: list[tuple[int, int]], pop_2: list[tuple[int, int]]
 ) -> list[tuple[int, int]]:
     """Fusionne les comptes bruts de deux échantillons, allèle par allèle.
@@ -2764,7 +2764,7 @@ def _pool_allele_counts_for_two_populations(
     Ne calcule ni H2P ni une fréquence -- juste n_i·freq_i + n_j·freq_j
     (= compte_i + compte_j, la division par n_i/n_j s'annulant avec la
     multiplication), pour que _compute_H2P_for_one_pair puisse
-    réutiliser _compute_HET_for_one_population dessus (qui fait
+    réutiliser _compute_HET_for_one_sample dessus (qui fait
     lui-même la division par le total).
 
     Args:
@@ -2807,7 +2807,7 @@ def _compute_H2P_for_one_pair(
         raise KeyError(
             "L'un des échantillons n'est pas présent dans les matrices de génotypes."
         )
-    pooled_counts = _pool_allele_counts_for_two_populations(
+    pooled_counts = _pool_allele_counts_for_two_samples(
         length_by_sample[samp_a], length_by_sample[samp_b]
     )
     total_count = sum(count for _, count in pooled_counts)
@@ -2860,16 +2860,16 @@ def compute_H2P(
                 )
                 H2P_values[key].append(H2P_value)
             else:
-                total_counts = total_genes_copies_per_population(length_by_sample)
+                total_counts = total_genes_copies_per_sample(length_by_sample)
                 if sample_names[i] in length_by_sample:
                     _lengths_counts = length_by_sample[sample_names[i]]
-                    H2P_value = _compute_HET_for_one_population(
+                    H2P_value = _compute_HET_for_one_sample(
                         total_counts[sample_names[i]], _lengths_counts
                     )
                     H2P_values[key].append(H2P_value)
                 elif sample_names[j] in length_by_sample:
                     _lengths_counts = length_by_sample[sample_names[j]]
-                    H2P_value = _compute_HET_for_one_population(
+                    H2P_value = _compute_HET_for_one_sample(
                         total_counts[sample_names[j]], _lengths_counts
                     )
                     H2P_values[key].append(H2P_value)
@@ -2959,7 +2959,7 @@ def compute_V2P(
                 samp_a, samp_b, raw_sizes, raw_square_sizes, total_counts
             )
             if total_count_sum > 1:
-                V2P_value = _compute_VAR_for_one_population(
+                V2P_value = _compute_VAR_for_one_sample(
                     raw_size_sum, raw_square_size_sum, total_count_sum, motif_size
                 )
                 V2P_values[key].append(V2P_value)
@@ -3253,7 +3253,7 @@ def _length_by_sample_and_individuals(
     return length_by_sample
 
 
-def _compute_ni_nA_AA_for_one_population(
+def _compute_ni_nA_AA_for_one_sample(
     pairs: list[tuple[int, int]], al: int
 ) -> tuple[int, int, int]:
     """Calcule ni, nA et AA pour un échantillon donné à partir des paires
@@ -3275,7 +3275,7 @@ def _compute_ni_nA_AA_for_one_population(
     return ni, nA, AA
 
 
-def _compute_FST_constants_for_two_populations_combined(
+def _compute_FST_constants_for_two_samples_combined(
     pairs_1: list[tuple[int, int]], pairs_2: list[tuple[int, int]], al: int
 ) -> tuple[int, int, int]:
     """Calcule les constantes nécessaires pour FST pour une paire
@@ -3289,8 +3289,8 @@ def _compute_FST_constants_for_two_populations_combined(
     Returns:
         Un tuple (s2G,s2I, s2P)
     """
-    ni_1, nA_1, AA_1 = _compute_ni_nA_AA_for_one_population(pairs_1, al)
-    ni_2, nA_2, AA_2 = _compute_ni_nA_AA_for_one_population(pairs_2, al)
+    ni_1, nA_1, AA_1 = _compute_ni_nA_AA_for_one_sample(pairs_1, al)
+    ni_2, nA_2, AA_2 = _compute_ni_nA_AA_for_one_sample(pairs_2, al)
 
     sni = ni_1 + ni_2
     sni2 = ni_1**2 + ni_2**2
@@ -3312,7 +3312,7 @@ def _compute_FST_constants_for_two_populations_combined(
         return 0.0, 0.0, 0.0
 
 
-def _compute_FST_constants_on_all_alleles_for_two_populations(
+def _compute_FST_constants_on_all_alleles_for_two_samples(
     length_by_sample: dict[str, list[tuple[int, int]]], samp_a: str, samp_b: str
 ) -> tuple[float, float, float]:
     """Calcule les constantes nécessaires pour FST pour une paire
@@ -3336,7 +3336,7 @@ def _compute_FST_constants_on_all_alleles_for_two_populations(
     s3l = 0.0
 
     for al in unique_alleles:
-        s2G, s2I, s2P = _compute_FST_constants_for_two_populations_combined(
+        s2G, s2I, s2P = _compute_FST_constants_for_two_samples_combined(
             pairs_1, pairs_2, al
         )
         s1l += s2P
@@ -3385,7 +3385,7 @@ def compute_FST(
             sni2 = ni_1**2 + ni_2**2
             nc = sni - sni2 / sni if sni > 0 else 0.0
             # mise à jour des constantes
-            s1l, _, s3l = _compute_FST_constants_on_all_alleles_for_two_populations(
+            s1l, _, s3l = _compute_FST_constants_on_all_alleles_for_two_samples(
                 length_by_sample, samp_a, samp_b
             )
             s1[key] += s1l * nc

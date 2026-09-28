@@ -23,7 +23,7 @@ from bridge.observed_data import (
     detect_snp_file_type,
     individual_sexes_from_locus_genotype,
     individual_sexes_per_sample,
-    observed_count_population,
+    observed_count_sample,
     observed_microsatellites,
     observed_reads,
     observed_sequences,
@@ -185,10 +185,10 @@ def test_observed_sequences(header_text_te2):
     )
 
 
-def test_observed_count_population():
+def test_observed_count_sample():
     """Vérifie que le comptage du nombre d'individus par population est correct
     pour le fichier toy_example2 (dataset <A>+<M> avec 3 populations)."""
-    population_counts = observed_count_population(OBSERVED_MSS_FILE_TE2)
+    population_counts = observed_count_sample(OBSERVED_MSS_FILE_TE2)
     assert population_counts == {"pop1": 20, "pop2": 20}
 
 
