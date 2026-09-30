@@ -21,8 +21,8 @@ structurally and statistically equivalent to the real DIYABC's output.
 | SNP IndSeq | complete, 130 stats | `human` (5000 loci), `toy_example3`, `toy_example5` |
 | SNP PoolSeq | complete | `toy_example4` |
 | Heritage `<A>/<H>/<X>/<Y>/<M>` (SNP) | complete | `human`, `toy_example5` |
-| MicroSat | complete, 11 stats + `AML` | `toy_example2_ms_dna`, `toy_example1_ms_modified` |
-| DNA sequences | complete, 13 stats | `toy_example2_ms_dna` (`K2P` only) |
+| MicroSat | complete, 11 stats + `AML` | `toy_example2_ms_dna_K2P`, `toy_example1_ms_modified` |
+| DNA sequences | complete, 13 stats; `JK`/`K2P`/`TN` all covered | `toy_example2_ms_dna_{JK,K2P,TN}` (5 loci/group, 2 runs each), `toy_example2_ms_dna_50loci_K2P` (50/group, 2 runs) — a **G2 residual is open**, see Open work |
 | DNA sequences `<X>`/`<Y>` | implemented | synthetic fixture only — the real binary SIGSEGVs on this case |
 | Serial/temporal sampling (MicroSat) | complete | `toy_example1_ms` (1 population, 4 sampling times) |
 | Serial/temporal sampling (SNP IndSeq) | complete | `human_seriel` (1 population, 4 sampling times, 130 stats, 0/130 significant) |
@@ -46,6 +46,29 @@ divergences, the sign test for a global bias. Several datasets declared
 validated on the KS alone carry such a bias; it turned out to be the
 loci-count residual — see "Systematic negative bias" under Closed
 investigations.
+
+**Report the sign test's `k/n`, p AND median — and trust none of the three on
+one replay.** The p swings wildly with how many columns sit near zero while the
+amplitude barely moves: on `toy_example2_ms_dna_K2P`, scenario 1 gives median
++1.569% at p = 0.644 and scenario 2 median +1.514% at p = 9.4e-04 — 0.05 point
+apart in amplitude, three orders of magnitude apart in p. That made the median
+look like the stable estimator. **It is not, and the two scenarios of one run
+are not two replicates** — they share one DIYABC reftable and one set of
+replayed draws, so their agreement measures nothing. A fresh DIYABC run moved
+`JK` scenario 1 from +2.361% to −0.537%, sign included. **An independent replay
+means a new DIYABC reftable, never another scenario of the same one** — missing
+that distinction produced two successive wrong verdicts on the DNA shift (see
+Open work). Per-run noise there is ±2 points, so aggregate by run before
+concluding anything: 6 run-level means, all positive, is the signal; 12 raw
+medians spanning −0.76% to +4.69% is not. The p is also
+**anti-conservative**, since the columns are far from independent (the six
+`FST2m` share populations, `HWm`/`HWv` come from one computation), so the
+effective number of units is well below `n` — the opposite bias to the KS's.
+Exclude the prior columns from `n`: on a paired replay they are the same draws
+on both sides (KS p = 1 exactly), and they only add coin flips. That
+prior check is itself worth keeping as a two-line sanity test — if a prior
+column departs from p = 1, the replay is not paired and nothing downstream
+means anything.
 
 `reference/` holds ground truth produced by the real DIYABC binary —
 **never modify these files.**
@@ -131,12 +154,6 @@ column name is a literal prefix followed by an **integer** (`f"ML1p_{i + 1}"`,
 `f"FST2m_{key}"` with `key = f"{i + 1}.{j + 1}"`). No Python identifier ever
 reaches an output string, so no column can move. The golden tests, keyed by
 column name, confirm it empirically.
-
-**Still on the old vocabulary, deliberately**: the `.mss` side
-(`observed_count_population`, `individual_sexes_from_locus_genotype`'s
-`sexes_by_population`), and the *prose* of
-`ancestry_simulation.py` (~52 `population` in docstrings — its identifiers are
-clean; it is the frontier zone, so each sentence needs reading, not a `sed`).
 
 **Renaming prose is not renaming identifiers**, and it bit twice here. A
 `population` → `échantillon` substitution in French breaks agreement (gender
@@ -304,6 +321,21 @@ locus/particle.
   fresh `*ReplayContext`** from that text. Since the ReplayContext refactor,
   functions never re-read the header from disk, so "write a new file, then
   call the function on that directory" silently uses the original.
+- **Never read a raw DIYABC reftable with a generic whitespace parser.**
+  `first_records_of_the_reference_table_0.txt` is **ragged**: `bintotxt` omits
+  the parameters a row's own scenario does not use, so those rows carry fewer
+  fields than the header line. `pandas.read_csv(sep=r"\s+")` left-aligns them,
+  which shifts **every** later column — mutation parameters and statistics
+  included — on those rows only. Measured on `toy_example2_ms_dna_K2P`: header
+  71 fields, scenario-1 rows 71, scenario-2 rows 68 (no `ta`/`ra`/`t2`), so the
+  column labelled `ta` actually held a microsat mutation rate and `k1seq_2` held
+  a statistic. Always read the rectangular rewrite produced by
+  `rewrite_real_reftable_txt` (`first_records_clean.txt`, unused parameters
+  written as `nan`, which is what our own `write_reftable_txt` emits too). Same
+  trap family as the trailer line and `DRAW UNTIL`: a line whose *length* is
+  load-bearing. It cost a wrong conclusion on 30/09 — and note that every
+  historical validation of this project was run with `scenario = 1` hardcoded in
+  the comparison notebook, i.e. on the only rows the raggedness never touched.
 
 ## Closed investigations — do not reopen
 
@@ -349,11 +381,44 @@ under the date given.
   400 individuals (800 gene copies) with `Npresent <= 1000`, so the 200→500
   segment is in discrete mode for **every** particle. The earlier "never
   triggered" claim was true of the datasets then in the repo, where samples
-  were small relative to `N`. Whether this explains any observed discrepancy is
-  NOT established — the one experiment run on it was confounded (see
-  `notes/exploration.md`, 25/09).
-  Don't reopen on the same rumor; if a precise source turns up, check it
-  against those line numbers first.
+  were small relative to `N`.
+  **Established 30/09 — it does explain a real discrepancy, and this is now the
+  one known systematic difference between the two simulators.** Not replicating
+  that switch shows up as an `N`-dependent divergence of genealogy *shape*, which
+  is visible on any statistic sensitive to the frequency spectrum. Measured on
+  `toy_example2_ms_dna_50loci_K2P` G2 (`<A>` sequences, 80 sampled gene copies,
+  `N1 ~ UN[10,10000]`, all five populations at `N1`), stratifying the paired
+  replay by the drawn `N1` — `MPD` (π) relative error, 2 independent DIYABC runs
+  × 2 scenarios:
+
+  | `N1` | n | run 0 sc1 | run 0 sc2 | run 1 sc1 | run 1 sc2 |
+  |---|---|---|---|---|---|
+  | <160 | 6–9 | −71.8% | −66.8% | −61.9% | −71.1% |
+  | 160–500 | 16–29 | −52.8% | −53.4% | −54.4% | −49.5% |
+  | 500–1500 | 42–52 | −28.0% | −28.6% | −26.5% | −21.3% |
+  | 1500–4000 | 109–140 | −9.9% | −9.0% | −12.1% | −8.7% |
+  | >4000 | 291–317 | −3.2% | −2.0% | −1.9% | −2.4% |
+
+  Monotone, reproducible within a couple of points per stratum. **The decisive
+  quantity is π/`S`**, which depends on branch-length *shape* alone, not on the
+  mutation rate or the loci count: ours is flat at ~0.24 across every stratum
+  (the Kingman value), DIYABC's climbs 0.258 → 0.274 → 0.351 → 0.521 → 1.344 as
+  `N1` falls. So it is DIYABC's genealogy that changes with `N`, not ours —
+  multiple lineages merging within one generation produce polytomies and shift
+  length from terminal to internal branches, raising π while `S` barely moves.
+  That is why our `S` runs +1 to +3% while our π runs −4 to −5%: **more sites at
+  rarer frequencies.** (The `N1 < 160` stratum reports π/`S` > 1, which is
+  structurally impossible for a per-site process — worth its own look, but it
+  rests on 6–9 particles and is not needed for the conclusion.)
+  **Not replicated — now an open chantier**, see "Discrete coalescent" under Open
+  work for the exact criterion (three branches, not two) and the msprime
+  constraints. Until then, judge any `N`-dependent residual against this gradient
+  before looking elsewhere, and prefer datasets whose priors keep
+  `nLineages / N` small. Likely relevant to the open `ML3p_2.3.4` residual on
+  `toy_example4_seriel`, which has 800 gene copies with `Npresent <= 1000` —
+  i.e. discrete mode for *every* particle.
+  Don't reopen the "simplified substitution model" rumor; if a precise source
+  turns up, check it against those line numbers first.
 - **`LIK` pseudo-count `nal` too large (24/09)** — `_compute_LIK_for_one_locus`
   counted every allele appearing in `variant.alleles`, i.e. every state ever
   produced by a mutation, **including states no sample carries any more**
@@ -631,7 +696,7 @@ number of sampled populations.
 
 Why that had to raise rather than let msprime complain — the two outcomes are
 wildly unequal and **the dangerous one is reachable**. Measured on
-`toy_example2_ms_dna`, whose scenario 1 declares 5 populations for 2 samples and
+`toy_example2_ms_dna_K2P`, whose scenario 1 declares 5 populations for 2 samples and
 whose `build_demography` creates `pop1..pop5` all `initially_active=True`:
 `samples={"pop1": 5, "pop2": 5, "pop3": 5}` is accepted with **no error at all**
 (15 nodes instead of 10), the samples silently attached to an
@@ -646,7 +711,7 @@ predicate is `scenario_parser.is_serial_scenario`, i.e.
 `len(sample_events) > len({e.pop for e in sample_events})`: "the same population
 is sampled twice", which is the definition of serial. **Do not rephrase it as a
 comparison with `npop`** — a scenario may declare never-sampled populations
-(`toy_example2_ms_dna`: 5 for 2), and that comparison would misclassify it.
+(`toy_example2_ms_dna_K2P`: 5 for 2), and that comparison would misclassify it.
 No reference dataset triggers the guard: the serial ones are `<A>`/`<M>`, the
 `<X>`/`<Y>` ones are not serial — which is what makes adding it provably neutral
 on everything already validated.
@@ -704,6 +769,49 @@ slips, kept because DIYABC's own output depends on them.
 
 ## Open work
 
+- **Replicate DIYABC's discrete generation-by-generation coalescent.** This is
+  the one known systematic difference between the two simulators, measured and
+  reproducible — see the `evalcriterium` entry under Closed investigations for
+  the `N1`-stratified gradient (π error −72% to −2%) and the π/`S` argument.
+
+  **The criterion, verbatim** (`particuleC.cpp::ParticleC::evalcriterium`, 1250-1273),
+  evaluated **per segment and per locus**, with `nLineages` the lineage count on
+  entering that segment. It returns 1 when the *continuous* approximation is
+  acceptable, 0 when DIYABC switches to discrete:
+
+  ```cpp
+  if (seqlist[iseq].t1 < 0) return 1;              // last, infinite segment: always continuous
+  nGen = seqlist[iseq].t1 - seqlist[iseq].t0;
+  ra   = (double)nLineages / (double)seqlist[iseq].N;
+  if      (nGen <=  30) OK = ra < (0.0031*nGen*nGen - 0.053*nGen + 0.7197);
+  else if (nGen <= 100) OK = ra < (0.033*nGen + 1.7);
+  else                  OK = ra < 0.5;
+  ```
+
+  Note the `nGen <= 30` branch is **quadratic** and non-monotone (0.720 at
+  nGen = 0, minimum ≈0.49 around nGen ≈ 8.5, 1.92 at nGen = 30), and that it is
+  discontinuous with the next branch (2.72 at nGen = 31). Transcribe it as is;
+  it is a heuristic, not a formula to tidy.
+
+  **What msprime gives us** (verified on 1.4.2): `msprime.DiscreteTimeWrightFisher(duration=...)`
+  exists and mixes with `StandardCoalescent` through a time-ordered `model=[...]`
+  list, so a per-segment schedule is expressible. Two obstacles, both real:
+  - **DTWF requires `ploidy = 2`** (`LibraryError: The DTWF model only supports
+    ploidy = 2`). Every non-`<A>` heritage type runs at `ploidy=1` here, so
+    `<H>`/`<M>`/`<Y>` and `<X>` males have no direct route. Whether a halved
+    rescaled size at `ploidy=2` is equivalent needs proving, not assuming.
+  - **The criterion is dynamic**: `nLineages` is not known before simulating, and
+    it differs per locus. DIYABC evaluates it once on entering each segment with
+    the live count. An msprime `model=[...]` schedule is fixed up front, so it can
+    only approximate — e.g. from the expected lineage count at each segment, or by
+    simulating in stages and re-deciding between them.
+
+  **Success criterion, already in place**: rerun the `N1`-stratified replay on
+  `toy_example2_ms_dna_50loci_K2P` and require the `MPD` gradient to flatten and
+  DIYABC's π/`S` climb (0.258 → 1.344 as `N1` falls) to be matched instead of
+  staying flat at the Kingman ~0.24. That measurement is the test; it exists and
+  is reproducible over 2 runs × 2 scenarios.
+
 - **Serial sampling is not wired for `<X>`/`<Y>` — now guarded, not fixed.**
   The per-locus dispatch still overrides the serial `SampleSet`s, on both the
   SNP and MicroSat/DNA sides. Since 28/09 the combination is refused up front by
@@ -720,20 +828,124 @@ slips, kept because DIYABC's own output depends on them.
   this is **not** a false positive. `ML2p_2.4` is intermediate: significant in
   both 100-loci replays, not at 1000, amplitude decaying — the loci-count
   residual, with a consistently negative sign worth noting. Left unexplored by
-  the user's call (cost vs. stakes). His hypothesis — a link to how
-  `toy_example4`'s observed data was built (scenario 3, pop4 admixed, i.e.
-  populations 2, 3 and 4) — is **a hypothesis with no established mechanism**:
-  a serial replay only reads the observed data through
-  `observed_reads_per_locus`, fed identically to both simulators. First step if
-  anyone picks this up: re-read `cal_ml3p` in `sumstat.cpp`, since the ML family
-  is the only one affected.
-- **`DTA_2_2` mean shift** on the 50+50-loci DNA dataset: a small but real
-  mean difference (real ≈0.018, sim ≈0.043) on a **G2** column, with a std
-  ratio near 1 — so it does not fit the (now resolved) G3 variance story. Never
-  investigated.
-- **No `JK`- or `TN`-model reference dataset** exists, so those two branches of
-  `build_transition_matrix` are covered by hand-computed synthetic values only
-  (`toy_example2_ms_dna` exercises `K2P` only).
+  the user's call (cost vs. stakes).
+  **Localised 30/09: it is the oldest SAMPLE, not a population, and not
+  admixture.** Splitting the whole ML family by index on run 0 scenario 1 gives a
+  perfect separation — every column carrying index **4** diverges, no other one
+  does:
+
+  | clean | rdiff | KS p | | affected | rdiff | KS p |
+  |---|---|---|---|---|---|---|
+  | `ML1p_1` | −0.30% | 1.00 | | `ML1p_4` | −3.58% | 0.107 |
+  | `ML1p_2` | +0.19% | 0.97 | | `ML2p_1.4` | −10.48% | 0.067 |
+  | `ML1p_3` | +0.49% | 1.00 | | `ML2p_2.4` | −9.27% | 0.009 |
+  | `ML2p_1.2` | +0.08% | 1.00 | | `ML2p_3.4` | −3.28% | 0.246 |
+  | `ML2p_1.3` | +0.09% | 1.00 | | `ML3p_1.2.4` | −13.68% | 0.011 |
+  | `ML2p_2.3` | +0.20% | 0.98 | | `ML3p_1.3.4` | −22.06% | 0.029 |
+  | `ML3p_1.2.3` | +0.28% | 1.00 | | `ML3p_2.3.4` | −14.32% | 0.0001 |
+
+  7/7 affected, all negative, against 0.96–1.00 KS p for the other five. **This
+  is not a small-mean artifact**: the KS is scale-invariant, so the separation
+  cannot come from the index-4 columns having smaller means (0.008–0.083 vs
+  0.24–0.44). The earlier hypothesis — a link to `toy_example4`'s observed data
+  being built under scenario 3 with pop4 admixed — **is falsified**: this header
+  declares **one** population sampled at four dates (`0/50/200/500 sample 1`), so
+  there is no population 4. Index 4 is the **oldest sample**, at t = 500.
+  The number of populations in the statistic is irrelevant: `ML3p_1.2.3` is clean
+  at +0.28% while `ML1p_4` is not. So this is a **serial-sampling** lead, not an
+  admixture or ML-combinatorics one, and the discrete coalescent is already
+  falsified for it (see the `Npresent` stratification below).
+  **The discrete coalescent is NOT the cause — falsified 30/09.** Stratifying the
+  paired replay by the drawn `Npresent` (3 runs, including the 1000-loci one)
+  gives the *opposite* gradient to the one that signature produces. `ML3p_2.3.4`
+  relative error:
+
+  | `Npresent` | <150 | 150–350 | 350–600 | 600–1000 |
+  |---|---|---|---|---|
+  | run 0 | **+8.1%** | −45.8% | −30.0% | −32.3% |
+  | run 1 | **−1.7%** | −31.8% | −31.3% | −59.4% |
+  | run 0, 1000 loci | **−3.6%** | −21.8% | −20.7% | −16.3% |
+
+  Every particle here is already in discrete mode (800 gene copies with
+  `Npresent <= 1000`, so `ra >= 0.8`), and within that regime a smaller `N`
+  widens the discrete/continuous gap — yet **that is exactly where the two
+  simulators agree best**. On `toy_example2_ms_dna_50loci_K2P` the discrete
+  signature runs the other way (π error −72% at `N1 < 160` down to −3% above
+  4000). `FST2m_2.4` stays within ±4% in every stratum, so the pairing and the
+  stratification are sound.
+  Read the `<150` column as saturation, not accuracy: tiny `N` collapses
+  diversity and drives a likelihood statistic to a boundary value on both sides.
+  The falsification was later confirmed by a second route: `Npresent` is the
+  wrong variable, since sample 4 (t = 500) lives in the **`Npast`** regime
+  whenever `tbn < 500`. Stratifying by `Npast` *conditional* on `tbn < 500`, the
+  residual is **worst where `Npast` is largest** (`ML3p_2.3.4` −70.0% / −56.8% /
+  −32.6% above 20000, against +8.0% / −61.3% / −12.3% in 1600–6000) — whereas
+  discrete mode needs `ra = 800/N >= 0.5`, i.e. `Npast < 1600`, a stratum holding
+  only 6 particles. The residual lives where **both** simulators are continuous.
+
+  **The failing configuration, specified** (3 runs, scenario 1). Splitting by
+  `tbn`, the residual collapses once the size change is older than the oldest
+  sample — `ML3p_2.3.4`:
+
+  | `tbn` | run 0 | run 1 | run 0, 1000 loci |
+  |---|---|---|---|
+  | <200 | −47.1% | −51.9% | −20.0% |
+  | 200–500 | −41.8% | −57.5% | −24.6% |
+  | **>500** | **−2.2%** | **−8.9%** | **−7.3%** |
+
+  So it takes all three of: **(a)** `tbn < 500`, i.e. the oldest sample drawn
+  beyond the `VarNe`, inside `Npast`; **(b)** `Npast` large — with
+  `Npresent <= 1000` and `Npast ~ UN[10,50000]` that is a 20–50x expansion into
+  the past, i.e. a forward-time bottleneck; **(c)** the ML family, since
+  `FST2m_2.4` stays within ±4% in every stratum, so sample 4's allele frequencies
+  are not globally wrong. `ML1p_1` (the present-day sample) is clean in every
+  stratum of every split, at |rdiff| < 1.7% and KS p > 0.85.
+  In one sentence: **a sample taken from an ancestral population much larger than
+  the recent one.** First steps if anyone picks this up: re-read `cal_ml3p` in
+  `sumstat.cpp`, and compare a single particle at fixed `tbn ≈ 100`,
+  `Npast ≈ 40000`, `Npresent ≈ 500` — the allele-frequency spectrum of sample 4
+  is where the two sides must be made to disagree visibly.
+- **G2 frequency-spectrum residual — CAUSE FOUND, not fixed.** On
+  `toy_example2_ms_dna_50loci_K2P`, two independent DIYABC runs × 2 scenarios ×
+  2 samples, no exception: `MNS`/`NSS` **+1 to +3%** (8/8 positive) while `MPD`
+  (π) is **−3.7 to −5.1%** (8/8 negative). Opposite directions rule out a rate
+  mismatch — a rate error moves `S` and π together, as in the G3 control. KS
+  flags 17 of 168 comparisons (10.1% against 5% expected), **all in G2**, all in
+  `MPD`/`VPD`/`DTA`, with `MPD_2_2` and `DTA_2_2` in all four cells.
+  **The cause is DIYABC's discrete generation-by-generation coalescent**, which
+  this project does not replicate — see the `evalcriterium` entry under Closed
+  investigations for the `N1`-stratified measurement and the π/`S` argument.
+  Falsified along the way, so don't retry them: `sample_site_rates` is a faithful
+  port (`p_fixe` as a percentage, `ggamma3(1.0, gams)` ≡
+  `gammavariate(gams, 1/gams)` with mean 1 and variance `1/gams`, the `sitefix`
+  bug, zeros applied before normalizing over *all* sites); and
+  `_segregating_sites_mask` matches `cal_nsspl` exactly (≥2 distinct non-missing
+  states within the sample), as `_pairwise_hamming_distances` matches
+  `cal_mpdpl`.
+  Fixing it means a coalescent-side rewrite, so the practical rule is the one in
+  the closed entry: check the `N1` gradient first, and prefer priors that keep
+  `nLineages / N` small.
+  G2 is where it surfaces because its mutation rate is **10x lower** than G3's
+  (`UN[1e-8,1e-6]` vs `UN[1e-7,1e-5]`): few mutations per locus, so the
+  statistics are dominated by genealogy shape instead of saturating.
+  **`DTA` carries no usable amplitude** — real 0.0200 vs simulated 0.0459 is an
+  absolute shift of +0.026 on a mean-of-per-locus-D that nearly cancels to zero,
+  hence `rdiff` of +130%. Judge this family on `MPD`. **Never read a `rdiff` on a
+  statistic whose mean sits near zero.** This item absorbs the former `DTA_2_2`
+  entry.
+
+- **The DNA global shift is the loci-count residual, and it shrinks as
+  documented.** Same dataset family, sign-test median aggregated per run (the
+  only independent unit): at 5 loci per group, `K2P` gave +1.542 % and +0.071 %
+  (scatter 1.47 points); at 50, +0.613 % and +0.309 % (scatter 0.30 points). A 5x
+  drop in scatter and a halved magnitude for 10x the loci — the signature of
+  "Systematic negative bias" under Closed investigations, positive-signed here.
+  Twelve measurements at 5 loci ranged −0.76 % to +4.69 %, which is why two
+  successive verdicts were written and retracted on that dataset before the loci
+  count was raised. **Do not read a global bias off a 5-loci-per-group dataset.**
+  The `JK` and `TN` branches of `build_transition_matrix` are validated by the
+  per-column agreement at 5 loci (14 flags / 504 comparisons = 2.8 % against
+  25.2 expected), which never depended on the global shift.
 - **`_genotypes_by_pop_and_individuals` not audited** for the `np.int64` leak
   that caused the `FST` bug. Harmless today (`LIK`'s formula does no boolean
   addition), but the next consumer of those tuples inherits the trap.
