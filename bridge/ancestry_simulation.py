@@ -164,7 +164,7 @@ def build_samples_argument(
 
     Le nom de population msprime ("pop1", "pop2"...) correspond à
     l'indice utilisé dans header.txt, mappé sur le nombre réel
-    d'individus observés pour la population correspondante (voir
+    d'individus observés pour l'échantillon correspondant (voir
     observed_data.py pour la justification du mapping par ordre
     d'apparition).
 
@@ -371,7 +371,7 @@ def build_male_only_samples_argument(snp_file_path: str) -> dict[str, int]:
 
     Le nom de population msprime ("pop1", "pop2"...) correspond à
     l'indice utilisé dans header.txt, mappé sur le nombre réel
-    d'individus MÂLES observés pour la population correspondante (voir
+    d'individus MÂLES observés pour l'échantillon correspondant (voir
     observed_data.py pour la justification du mapping par ordre
     d'apparition).
 
@@ -664,7 +664,7 @@ def simulate_snp_genotypes(
     population_layout: list[tuple[str | None, np.ndarray]] | None = None,
     counts_per_sample: dict[str, int] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
-    """Tire une mutation par locus (Hudson) et retourne les génotypes par population.
+    """Tire une mutation par locus (Hudson) et retourne des dict clés par nom d'échantillon.
 
     Pour chaque TreeSequence (un locus = un arbre indépendant), tire
     une mutation UNIQUE selon l'algorithme de Hudson (vectorisé), et
@@ -788,7 +788,7 @@ def with_maf_filter(
     généalogie à chaque rejet, jamais de recyclage d'un arbre rejeté,
     comme avant). Le lot scale avec `num_loci` plutôt que d'être fixe :
     voir _MAF_BATCH_SIZE pour le détail. La structure population/
-    échantillons (`population_layout`) ne dépend que de `demography`/
+    noeuds (`population_layout`) ne dépend que de `demography`/
     `samples`, jamais de la graine tirée -- elle est donc calculée une
     seule fois, à la toute première tentative, et réutilisée pour toutes
     les suivantes (voir notes/exploration.md, entrée du 20/07/2026).
@@ -935,7 +935,7 @@ def with_maf_filter_shared_ancestry(
         )
     )
     # Calculée une seule fois : même généalogie PARTAGÉE à chaque
-    # tentative, donc même structure population/échantillons -- voir
+    # tentative, donc même structure population/noeuds -- voir
     # population_layout.
     population_layout = population_layout = (
         compute_sample_layout(shared_tree, counts_per_sample)
@@ -1146,9 +1146,9 @@ def simulate_poolseq_reads(
 
     Tire une mutation par locus (même algorithme de Hudson que
     simulate_snp_genotypes), puis convertit la proportion de lignées
-    dérivées de chaque population en un tirage binomial de lectures,
-    calé sur la profondeur totale RÉELLEMENT observée à ce locus/cette
-    population (`observed_reads_per_locus`) -- seule la répartition
+    dérivées de chaque échantillon en un tirage binomial de lectures,
+    calé sur la profondeur totale RÉELLEMENT observée à ce locus/cet échantillon
+    (`observed_reads_per_locus`) -- seule la répartition
     allèle1/allèle2 est simulée, jamais la couverture elle-même.
 
     Args:
@@ -1221,10 +1221,10 @@ def _reindex_reads_by_msprime_name(
     msprime.
 
     Args:
-        observed_reads_per_locus: Une liste de dicts {nom_population
+        observed_reads_per_locus: Une liste de dicts {nom_echantillon
             réel: (nreads_dérivé, nreads_total)}, un par locus.
         snp_file_path: Chemin du fichier .snp, pour obtenir la
-            correspondance des noms de population.
+            correspondance des noms d'échantillons.
 
     Returns:
         La même liste, avec les clés remplacées par les noms de
@@ -1312,7 +1312,7 @@ def with_mrc_filter(
             observed_reads_per_locus,
             seed=seed,
             counts_per_sample=counts_per_sample,
-        )  # liste de dictionnaires contenant le nombre de lectures dérivées et ancestrales par population pour chaque locus
+        )  # liste de dictionnaires contenant le nombre de lectures dérivées et ancestrales par échantillon pour chaque locus
         return
     # Calculée une seule fois, à la première tentative, et réutilisée pour
     # toutes les suivantes (tous les loci/tentatives partagent la même
@@ -1474,7 +1474,7 @@ def simulate_poolseq_reads_with_mrc_filter(
         `<MRC=...>` absent, PAS 0 comme pour MAF -- voir
         `parse_mrc_ratio`).
       - `build_samples_argument(snp_file_path)` -- retourne la taille
-        HAPLOÏDE du pool par population (cf.
+        HAPLOÏDE du pool par échantillon (cf.
         `count_individuals_per_sample`/`_parse_pool_header_line`) --
         divisée par 2 ici pour obtenir un compte d'INDIVIDUS diploïdes
         (voir ci-dessus) ; utilisée TELLE QUELLE (non divisée) partout
@@ -1482,7 +1482,7 @@ def simulate_poolseq_reads_with_mrc_filter(
         `summary_statistics.py` (la correction de biais de lecture Q1
         a besoin du vrai `HAPLOID_SAMPLE_SIZE`, pas de sa moitié).
       - `observed_reads(snp_file_path)` -- les lectures RÉELLEMENT
-        observées par locus/population, ensuite retraduites vers les
+        observées par locus/échantillon, ensuite retraduites vers les
         noms de population msprime (`"pop1"`, `"pop2"`...) via
         `_reindex_reads_by_msprime_name` (les noms réels du fichier .snp
         n'ont aucune raison de coïncider avec cette convention -- voir

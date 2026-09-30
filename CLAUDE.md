@@ -134,7 +134,7 @@ column name, confirm it empirically.
 
 **Still on the old vocabulary, deliberately**: the `.mss` side
 (`observed_count_population`, `individual_sexes_from_locus_genotype`'s
-`sexes_by_population`), `snp_writer.py` (deprecated), and the *prose* of
+`sexes_by_population`), and the *prose* of
 `ancestry_simulation.py` (~52 `population` in docstrings — its identifiers are
 clean; it is the frontier zone, so each sentence needs reading, not a `sed`).
 
