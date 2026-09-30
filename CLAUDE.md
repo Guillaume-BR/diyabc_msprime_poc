@@ -298,7 +298,21 @@ locus/particle.
   300%–10000% off for every population except the scenario's hub. **When
   hand-crafting or editing a header, always regenerate this trailer line to
   match that scenario's own priors — never copy it from another scenario.**
-  This has bitten the project three times.
+  This has bitten the project **five** times, the last two on 30/09 when
+  `toy_example2_ms_dna_50loci_TN` and `_50loci_JK` got `K2P`'s trailer: `k1seq`
+  tokens under `MODEL JK` (two too many) and no `k2seq` under `MODEL TN` (two too
+  few). Both reftables were unusable and had to be regenerated; the `TN` one had
+  already produced an analysis that was retracted.
+  **`reftable_loop.check_header_trailer_line` now guards this**, called from all
+  seven run/replay entry points: it compares the trailer's mutation-parameter
+  tokens against `group_prior_column_names`, which applies
+  `get_parameter_used_by_model` (`JK` → no `k`, `K2P`/`HKY` → `k1`, `TN` → `k1`
+  and `k2`). It is a no-op on a header with no `group priors` section, i.e. every
+  SNP dataset. Note **DIYABC writes the `mus_rate` prefix two ways** — `µ`
+  (U+00B5) on the `te2` family, plain ASCII `mu` on `toy_example1_ms` — and the
+  reftable always follows its own header, so the guard normalizes both.
+  `group_prior_column_names` hardcodes `µ`: on a `mu`-style header it returns
+  column names that match nothing, which is latent (see Open work).
 - **`DRAW UNTIL` exists if and only if `nconditions > 0`.** The
   `historical parameters priors (N,C)` header gives `C` order constraints;
   `readHeaderHistParam` (`header.cpp:274`) consumes the `DRAW UNTIL` line
@@ -310,9 +324,18 @@ locus/particle.
   the line; `toy_example1_ms` (0) does not. Same trap family as the trailer
   line: a line that looks decorative is in fact a **positional token** in a
   sequential `getline` read, and the format tolerates no offset.
-- **Freshness check after editing a header**: `stat -c '%y %n'` on
-  `headerRF.txt` vs `first_records_of_the_reference_table_0.txt` — the real
-  reftable must always be *newer* than the header it was generated from.
+- **Check a real reftable against its header by CONTENT, never by timestamp.**
+  `reftable_loop.check_real_reftable_matches_header` compares the reftable's own
+  first line — its column names, written by `bintotxt` from the header's trailer —
+  against that trailer, and is called from all three replay entry points. It
+  catches both a header edited *after* generation and a reftable produced from a
+  corrupt header, which no date can tell apart.
+  **The old timestamp rule was wrong and is retired**: it required the reftable to
+  be newer than `headerRF.txt`, but DIYABC rewrites `headerRF.txt` *after* the
+  reftable in the same run — measured at 6 s on `toy_example2_ms_dna_50loci_TN` —
+  so a correct run always fails it, and it distinguishes a 6-second-old pair from
+  a five-week-old one not at all. It caught neither of the two corruptions of
+  30/09; content did. Treat timestamps as a hint, never as a check.
 - **`reference/` is read-only ground truth.** Never modify it.
 - **Run scripts as modules from the repo root**: `python3 -m scripts.run_test`.
   `python3 scripts/run_test.py` fails with `ModuleNotFoundError: No module
@@ -399,7 +422,30 @@ under the date given.
   | 1500–4000 | 109–140 | −9.9% | −9.0% | −12.1% | −8.7% |
   | >4000 | 291–317 | −3.2% | −2.0% | −1.9% | −2.4% |
 
-  Monotone, reproducible within a couple of points per stratum. **The decisive
+  Monotone, and **confirmed on all three substitution models** — the cause being
+  coalescent-side, `JK` and `TN` must show the same gradient, and they do.
+  `toy_example2_ms_dna_50loci_{K2P,TN,JK}`, 2 DIYABC runs × 2 scenarios each,
+  12 cells, `MPD_2_1` relative error:
+
+  | `N1` | `K2P` | `TN` | `JK` |
+  |---|---|---|---|
+  | <160 | −71.8 / −66.8 / −61.9 / −71.1 | −82.1 / −78.6 / −63.2 / −60.3 | −56.8 / −84.0 / −33.9 / −54.4 |
+  | 160–500 | −52.8 / −53.4 / −54.4 / −49.5 | −59.6 / −34.2 / −44.8 / −45.6 | −51.1 / −42.2 / −52.8 / −55.4 |
+  | 500–1500 | −28.0 / −28.6 / −26.5 / −21.3 | −27.9 / −23.7 / −29.6 / −16.8 | −30.6 / −27.1 / −20.7 / −22.3 |
+  | 1500–4000 | −9.9 / −9.0 / −12.1 / −8.7 | −10.7 / −10.0 / −10.5 / −13.2 | −2.5 / −9.6 / −13.1 / −11.5 |
+  | >4000 | −3.2 / −2.0 / −1.9 / −2.4 | −3.7 / +0.1 / −2.5 / −3.7 | −1.0 / −1.6 / −2.8 / −3.0 |
+
+  Overall `MPD` amplitude overlaps completely across models (`JK` −1.9 to −5.4%,
+  `K2P` −4.1 to −5.1%, `TN` −2.1 to −6.6%), so there is **no model component on
+  top of the coalescent effect**. The `<160` stratum scatters because it holds
+  5–17 particles. Carry the divergence-of-sign argument through `MPD`, negative in
+  all 12 cells, rather than through `MNS`/`NSS`, whose excess is
+  scenario-dependent.
+  **First attempts on `TN` and `JK` had to be discarded**: both reftables came
+  from headers whose trailer line had been copied from the `K2P` variant, and a
+  `TN` analysis run on one of them was retracted — see the trailer-line rule under
+  Hard rules, now guarded by `check_header_trailer_line` and
+  `check_real_reftable_matches_header`. **The decisive
   quantity is π/`S`**, which depends on branch-length *shape* alone, not on the
   mutation rate or the loci count: ours is flat at ~0.24 across every stratum
   (the Kingman value), DIYABC's climbs 0.258 → 0.274 → 0.351 → 0.521 → 1.344 as
@@ -769,6 +815,42 @@ slips, kept because DIYABC's own output depends on them.
 
 ## Open work
 
+- **Write the mutation parameters (`nparamut`) into our reftables.** DIYABC's
+  reftable carries `µmic_1`, `pmic_1`, `snimic_1`, `µseq_2`, `k1seq_2`… ; ours
+  carries none of them. Measured on `toy_example1_ms`: our replay has 156 columns
+  against DIYABC's 162, the six missing ones being exactly
+  `mumic_1 pmic_1 snimic_1 mumic_2 pmic_2 snimic_2`, nothing extra on our side.
+  `write_reftable_bin`'s own docstring already flags it ("Ne gère PAS les
+  paramètres de mutation (absents de human) -- à ajouter … si un dataset avec
+  microsatellites/séquences est traité plus tard"); that "later" arrived when
+  MicroSat and DNA were validated, and the note stayed.
+
+  **Two distinct costs.** *(a) Structural*: the project's goal is a `reftable.bin`
+  equivalent to DIYABC's, and `abcranger` reads it expecting
+  `nparam[scenario] = nparamhist + nparamut` floats per record while ours writes
+  `nparamhist` only — a reader trusting the header would shift every row. It has
+  never bitten because validation goes through the **text** comparison of a
+  replay, never through `abcranger` on our output. *(b) A missing check*: in a
+  replay the historical priors are verifiable (KS p = 1 exactly, which is what
+  proves the pairing is real), but the mutation parameters are **injected without
+  ever being checked**. If `parse_real_reftable_params_with_group_priors` read a
+  shifted column — the positional-read risk noted under the `µ` prefix entry — the
+  simulation would use wrong µ/k1/k2 and nothing would show it; the prior check
+  would still pass. Emitting these columns turns that risk from silent into
+  visible.
+
+  **Three layers, in order.** `ParticleResult` gains a
+  `group_parameter_values: dict[str, float]` field — today the values are drawn
+  inside the worker, used for the mutation model and discarded, so the information
+  never reaches the writers. Then the six `_run_single_particle*` carry them up,
+  keeping the sibling symmetry (the `_from_values` variants receive DIYABC's real
+  values, the drawing variants draw their own; both must store the same thing).
+  Then `write_reftable_txt` and `write_reftable_bin` emit them **last, after the
+  demographic parameters**, as that docstring already states from
+  `readReftable.R`, in `group_prior_column_names` order — which is
+  scenario-independent, unlike `nparamhist`.
+  This touches validated originals, so the necessity is worth stating: it is real
+  for `write_reftable_bin` (structural equivalence) and arguable for the text one.
 - **Replicate DIYABC's discrete generation-by-generation coalescent.** This is
   the one known systematic difference between the two simulators, measured and
   reproducible — see the `evalcriterium` entry under Closed investigations for
@@ -949,6 +1031,26 @@ slips, kept because DIYABC's own output depends on them.
 - **`_genotypes_by_pop_and_individuals` not audited** for the `np.int64` leak
   that caused the `FST` bug. Harmless today (`LIK`'s formula does no boolean
   addition), but the next consumer of those tuples inherits the trap.
+- **`group_prior_column_names` hardcodes the `µ` prefix** (U+00B5) while DIYABC
+  also writes plain ASCII `mu` — `toy_example1_ms`'s trailer and reftable both use
+  `mumic_1`. **Verified 30/09 to be inert, not latent**: the names it returns are
+  never looked up by name anywhere.
+  `parse_real_reftable_params_with_group_priors` reads these columns **by
+  position** (`tokens[1 + len(priors_param_names) + i]`) and uses
+  `group_priors_names` only as the returned dict's keys; and
+  `write_reftable_txt` does not emit them at all — on `toy_example1_ms` our
+  replay has 156 columns against DIYABC's 162, the six missing ones being exactly
+  `mumic_1 pmic_1 snimic_1 mumic_2 pmic_2 snimic_2`, with nothing extra on our
+  side. So the spelling cannot cause a wrong read, and the comparison notebooks
+  drop those columns on both sides.
+  **The real exposure the positional read creates is different**: a wrong *count*
+  from `group_prior_column_names` shifts every value silently, labelling them with
+  keys that do not belong to them — which is exactly the 30/09 corruption
+  (`MODEL JK` with a `K2P` trailer: 7 names expected, 5 columns present). Nothing
+  downstream checks that the column read is the one intended. That is what
+  `check_header_trailer_line` and `check_real_reftable_matches_header` now guard,
+  upstream. Don't "fix" the `µ` spelling expecting to fix a bug; do reach for the
+  guards if a group-prior value ever looks shifted.
 - **`parse_group_priors`'s `else` branch** assumes any unrecognized line is a
   `MODEL` line, with no positive validation — a malformed line is silently
   mis-parsed rather than raising.

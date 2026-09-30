@@ -26,6 +26,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
+import re
 import struct
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -135,6 +136,149 @@ def _heritage_types_declared(header_text: str) -> set[str]:
         for heritage, count in loci.loci_counts_by_heritage.items()
         if count > 0
     }
+
+
+# Jetons de la ligne de queue correspondant à un paramètre mutationnel :
+# "µseq_2", "k1seq_2", "k2seq_3", "pmic_1", "snimic_1". Les noms de
+# statistiques ne peuvent pas collisionner (préfixe en capitales).
+_MUTATION_PARAM_TOKEN_RE = re.compile(r"^(µ|mu|k1|k2|p|sni)(seq|mic)_\d+$")
+
+# DIYABC écrit le préfixe mus_rate soit "µ" (U+00B5, cas des `te2`), soit "mu"
+# en ASCII (cas de `toy_example1_ms`) -- les deux apparaissent dans de la vraie
+# sortie, et le reftable suit toujours son header. On compare donc les jetons
+# sous forme normalisée. `group_prior_column_names` produit la variante "µ" ;
+# c'est une dette connue, un header écrit en "mu" en reçoit des noms de colonnes
+# qui ne correspondent à rien (voir Open work).
+# Les DEUX seules orthographes observées dans de la vraie sortie DIYABC :
+# "µ" = U+00B5 MICRO SIGN (7 headers de reference/) et "mu" en ASCII
+# (toy_example1_ms, 2 headers). Le mu grec U+03BC n'apparaît nulle part et
+# n'est DÉLIBÉRÉMENT pas normalisé : un header qui le contiendrait serait
+# auto-cohérent avec son propre reftable (bintotxt recopie la ligne de queue),
+# donc les deux gardes passeraient, mais `group_prior_column_names` code U+00B5
+# en dur et la chaîne de rejeu ne retrouverait jamais la colonne par son nom.
+# Mieux vaut que la garde lève sur ce caractère que de l'absorber.
+_MU_VARIANTS = ("µ", "mu")
+
+
+def _normalize_mu(token: str) -> str:
+    """Ramène le préfixe mus_rate d'un jeton à la variante "µ"."""
+    for variant in _MU_VARIANTS:
+        if token.startswith(variant):
+            return "µ" + token[len(variant) :]
+    return token
+
+
+def check_header_trailer_line(header_text: str) -> None:
+    """Vérifie que la ligne de queue du header est cohérente avec ses priors.
+
+    La dernière ligne de `header.txt` ressemble à de la documentation de
+    colonnes mais est **relue comme entrée** par
+    `HeaderC::readHeaderAllStat`, qui en dérive
+    `nparamhist = jetons - 1 - nstat - nparamut`. Un jeton parasite
+    décale ce compte, corrompt l'état interne de DIYABC et produit des
+    statistiques fausses de 300 % à 10000 % sans aucun message.
+
+    Cette garde compare les jetons de paramètres mutationnels de la ligne
+    de queue à ceux que le header implique réellement
+    (`group_prior_column_names`, qui applique
+    `get_parameter_used_by_model`). Exemple réel attrapé le 30/09 :
+    `reference/toy_example2_ms_dna_50loci_JK` déclare `MODEL JK`, donc
+    aucun `k1`, mais sa ligne de queue portait `k1seq_2` et `k1seq_3`
+    recopiés de la variante `K2P` -- deux jetons de trop, reftable
+    inexploitable.
+
+    Ne vérifie PAS les noms de statistiques : `_historical_columns_order`
+    couvre déjà les paramètres historiques lors de l'écriture d'un
+    reftable texte, et `stats_group_parser` les colonnes déclarées.
+
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Raises:
+        ValueError: Si les jetons mutationnels de la ligne de queue
+            diffèrent de ceux impliqués par les `group priors`.
+    """
+    try:
+        expected = group_prior_column_names(header_text)
+    except ValueError:
+        return  # pas de section `group priors` : rien à vérifier (datasets SNP)
+    trailer_tokens = header_text.splitlines()[-1].split()
+    in_trailer = [
+        _normalize_mu(tok)
+        for tok in trailer_tokens
+        if _MUTATION_PARAM_TOKEN_RE.match(tok)
+    ]
+    expected = [_normalize_mu(name) for name in expected]
+    if in_trailer == expected:
+        return
+    missing = [t for t in expected if t not in in_trailer]
+    unexpected = [t for t in in_trailer if t not in expected]
+    raise ValueError(
+        "Ligne de queue du header incohérente avec la section `group priors` : "
+        f"attendu {expected}, trouvé {in_trailer}"
+        + (f" -- en trop : {unexpected}" if unexpected else "")
+        + (f" -- manquants : {missing}" if missing else "")
+        + ". HeaderC::readHeaderAllStat dérive nparamhist du nombre de jetons de "
+        "cette ligne : un écart corrompt silencieusement l'état interne de DIYABC. "
+        "Régénérer la ligne de queue pour ce header, puis relancer DIYABC -- "
+        "un reftable déjà produit avec ce header ne se rattrape pas."
+    )
+
+
+def check_real_reftable_matches_header(
+    header_text: str, real_reftable_path: str | Path
+) -> None:
+    """Vérifie qu'un vrai reftable DIYABC a été produit avec CE header.
+
+    La première ligne d'un reftable texte porte ses noms de colonnes,
+    écrits par `reftable.cpp::bintotxt` depuis la ligne de queue du
+    header (`entetehist`, voir "Text-reftable column order" dans
+    CLAUDE.md). Comparer les deux détecte donc deux fautes qu'aucun
+    horodatage ne distingue : un header **édité après** la génération du
+    reftable, et un reftable **produit avec un header corrompu** dont la
+    correction ultérieure ne rattrape rien.
+
+    Préférer ce contrôle à une comparaison de dates : DIYABC réécrit
+    `headerRF.txt` APRÈS le reftable dans le même run (mesuré : 6 s
+    d'écart sur `toy_example2_ms_dna_50loci_TN`), donc un run correct a
+    toujours un header plus récent que son reftable.
+
+    Ne compare que les jetons de paramètres mutationnels, pour la même
+    raison que `check_header_trailer_line` : ce sont eux que le modèle
+    déclaré détermine, et ils ne peuvent pas collisionner avec un nom de
+    statistique. Les deux orthographes du préfixe mus_rate (`µ` et `mu`)
+    sont normalisées.
+
+    Args:
+        header_text: Texte complet de header.txt.
+        real_reftable_path: Chemin du reftable réel, au format texte.
+
+    Raises:
+        ValueError: Si les deux jeux de jetons diffèrent.
+    """
+    path = Path(real_reftable_path)
+    with path.open() as f:
+        first_line = f.readline()
+    in_reftable = [
+        _normalize_mu(tok)
+        for tok in first_line.split()
+        if _MUTATION_PARAM_TOKEN_RE.match(tok)
+    ]
+    in_trailer = [
+        _normalize_mu(tok)
+        for tok in header_text.splitlines()[-1].split()
+        if _MUTATION_PARAM_TOKEN_RE.match(tok)
+    ]
+    if in_reftable == in_trailer:
+        return
+    raise ValueError(
+        f"{path.name} n'a pas été produit avec ce header : la ligne de queue "
+        f"annonce {in_trailer}, le reftable porte {in_reftable}. Soit le header "
+        "a été édité après la génération, soit le reftable vient d'un header "
+        "corrompu -- dans les deux cas il faut relancer DIYABC, une correction "
+        "du header ne rattrape pas un reftable déjà écrit. Ne pas se fier aux "
+        "dates : DIYABC écrit headerRF.txt après le reftable."
+    )
 
 
 def raise_if_serial_with_sex_linked_loci(header_text: str) -> None:
@@ -298,6 +442,7 @@ def run_reftable_simulation(
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
     raise_if_serial_with_sex_linked_loci(header_text)
+    check_header_trailer_line(header_text)
     snp_filename = header_text.splitlines()[0].strip()
     snp_path = reference_directory / snp_filename
     loci_description = parse_loci_description(header_text)
@@ -736,6 +881,7 @@ def simulate_from_directory(
     """
     header_text = context.header_text
     raise_if_serial_with_sex_linked_loci(header_text)
+    check_header_trailer_line(header_text)
 
     priors, _ = parse_priors(header_text)
     print(f"{len(priors)} priors parsé depuis {test_directory}/header.txt")
@@ -932,6 +1078,7 @@ def replay_reftable_simulation(
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
     raise_if_serial_with_sex_linked_loci(header_text)
+    check_header_trailer_line(header_text)
     snp_filename = header_text.splitlines()[0].strip()
     snp_path = reference_directory / snp_filename
     loci_description = parse_loci_description(header_text)
@@ -967,6 +1114,7 @@ def replay_reftable_simulation(
     # On lit les sorties de diyabc (scénario tiré + valeurs de paramètres RÉELLEMENT tirées) pour
     # les rejouer ensuite côté msprime, afin de comparer les deux simulateurs sur EXACTEMENT
     # les mêmes tirages de priors.
+    check_real_reftable_matches_header(header_text, real_reftable_path)
     rows = parse_real_reftable_params(real_reftable_path, priors, scenarios)
 
     results_by_index: dict[int, ParticleResult] = {}
@@ -1090,6 +1238,7 @@ def run_reftable_simulation_dna(
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
     raise_if_serial_with_sex_linked_loci(header_text)
+    check_header_trailer_line(header_text)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
     list_loci = parse_loci_description(header_text)
@@ -1344,6 +1493,7 @@ def replay_reftable_simulation_dna(
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
     raise_if_serial_with_sex_linked_loci(header_text)
+    check_header_trailer_line(header_text)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
     list_loci = parse_loci_description(header_text)
@@ -1363,6 +1513,7 @@ def replay_reftable_simulation_dna(
     # les rejouer ensuite côté msprime, afin de comparer les deux simulateurs sur EXACTEMENT
     # les mêmes tirages de priors.
 
+    check_real_reftable_matches_header(header_text, real_reftable_path)
     rows = parse_real_reftable_params_with_group_priors(
         path=real_reftable_path,
         priors=priors,
@@ -1496,6 +1647,7 @@ def run_reftable_simulation_microsat(
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
     raise_if_serial_with_sex_linked_loci(header_text)
+    check_header_trailer_line(header_text)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
     list_loci = parse_loci_description(header_text)
@@ -1625,6 +1777,7 @@ def replay_reftable_simulation_microsat(
     )  # Normalise en path au cas où une str soit passée
     header_text = read_header_text(reference_directory)
     raise_if_serial_with_sex_linked_loci(header_text)
+    check_header_trailer_line(header_text)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
     list_loci = parse_loci_description(header_text)
@@ -1648,6 +1801,7 @@ def replay_reftable_simulation_microsat(
     # les rejouer ensuite côté msprime, afin de comparer les deux simulateurs sur EXACTEMENT
     # les mêmes tirages de priors.
 
+    check_real_reftable_matches_header(header_text, real_reftable_path)
     rows = parse_real_reftable_params_with_group_priors(
         path=real_reftable_path,
         priors=priors,
