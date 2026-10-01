@@ -293,7 +293,7 @@ def test_compute_summary_statistics_unknown_stats_filter_raises(snp_context_huma
 
 
 def test_compute_summary_statistics_dna(dna_context_te2):
-    stats, _ = compute_summary_statistics_dna(
+    stats, _, _ = compute_summary_statistics_dna(
         context=dna_context_te2,
         scenario_index=1,
         seed=42,

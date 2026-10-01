@@ -1117,7 +1117,7 @@ def test_build_group_local_param_per_locus(header_text_te2):
     Test de reproductibilité avec la même graine. Il manque un test pour
     vérifier lorsuqe le model est JK ou TN
     """
-    params_per_locus = build_group_local_param_per_locus(header_text_te2, seed=42)
+    params_per_locus, _ = build_group_local_param_per_locus(header_text_te2, seed=42)
 
     assert len(params_per_locus) == 10
     assert len(params_per_locus["Locus_S_A_11_"]) == 3
@@ -1130,7 +1130,7 @@ def test_build_group_local_param_per_locus(header_text_te2):
     assert len(set(all_mus_rate_values)) == 10  # Tous les mus_rate sont différents
 
     # test de reproductibilité avec la même graine
-    params_per_locus_2 = build_group_local_param_per_locus(header_text_te2, seed=42)
+    params_per_locus_2, _ = build_group_local_param_per_locus(header_text_te2, seed=42)
     assert params_per_locus == params_per_locus_2
 
 
@@ -1182,7 +1182,7 @@ def test_build_rate_map_per_locus(header_text_te2):
 
     Test de reproductibilité avec la même graine.
     """
-    rate_map_per_locus = build_rate_map_per_locus(header_text_te2, seed=42)
+    rate_map_per_locus, _ = build_rate_map_per_locus(header_text_te2, seed=42)
 
     assert len(rate_map_per_locus) == 10
     for rate_map in rate_map_per_locus.values():
@@ -1204,7 +1204,7 @@ def test_build_rate_map_per_locus(header_text_te2):
     assert list(rate_g2_locus1) != list(rate_g2_locus2)
 
     # test de reproductibilité avec la même graine
-    rate_map_per_locus_2 = build_rate_map_per_locus(header_text_te2, seed=42)
+    rate_map_per_locus_2, _ = build_rate_map_per_locus(header_text_te2, seed=42)
     for locus in rate_map_per_locus:
         assert rate_map_per_locus[locus] == rate_map_per_locus_2[locus]
 
@@ -1219,7 +1219,7 @@ def test_dna_mutation_simulation_per_locus(dna_context_te2, dna_context_te2_xy):
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
 
-    mutated_tree_sequences = dna_mutation_simulation_per_locus(
+    mutated_tree_sequences, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -1241,7 +1241,7 @@ def test_dna_mutation_simulation_per_locus(dna_context_te2, dna_context_te2_xy):
 
     # Reproductibilité : même graine de particule -> même résultat pour
     # chaque locus.
-    mutated_tree_sequences_2 = dna_mutation_simulation_per_locus(
+    mutated_tree_sequences_2, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -1259,7 +1259,7 @@ def test_dna_mutation_simulation_per_locus(dna_context_te2, dna_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated_tree_sequences = dna_mutation_simulation_per_locus(
+    mutated_tree_sequences, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2_xy,
         seed=42,
@@ -1316,7 +1316,7 @@ def test_dna_mutation_simulation_per_locus_ploidy_matches_heritage(dna_context_t
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
 
-    mutated_tree_sequences = dna_mutation_simulation_per_locus(
+    mutated_tree_sequences, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,

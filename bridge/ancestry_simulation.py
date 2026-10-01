@@ -1781,7 +1781,7 @@ def build_male_only_samples_argument_ms_dna(
 
 def build_group_local_param_per_locus(
     header_text: str, seed: int
-) -> dict[str, tuple[float, float, float]]:
+) -> tuple[dict[str, tuple[float, float, float]], dict[str, dict[str, float]]]:
     """Tire k1/k2/mus_rate par locus (hiérarchie à deux niveaux, groupe puis
     locus).
 
@@ -1795,10 +1795,13 @@ def build_group_local_param_per_locus(
         seed: La graine du tirage.
 
     Returns:
-        Un dict {nom_locus: (k1, k2, mus_rate)} -- triplet à arité
+        Un tuple de deux dictionnaires :
+        - Un dict {nom_locus: (k1, k2, mus_rate)} -- triplet à arité
         fixe pour chaque locus `[S]`, quel que soit le modèle de
         substitution utilisé par son groupe (0.0 pour les kappas non
         utilisés).
+        - Un dict {nom_groupe: {nom_param: valeur}} -- valeur pour chaque
+        group_prior ou du modèle
     """
     params_per_locus = {}
     group_priors = parse_group_priors(header_text)
@@ -1909,7 +1912,7 @@ def build_group_local_param_per_locus(
                     kappa2_values[locus.name],
                     mus_rate[locus.name],
                 )
-    return params_per_locus
+    return params_per_locus, values
 
 
 def build_matrix_per_locus(
@@ -1930,7 +1933,7 @@ def build_matrix_per_locus(
     """
     header_text = context.header_text
     list_loci = context.list_loci
-    params_per_locus = build_group_local_param_per_locus(header_text, seed)
+    params_per_locus, _ = build_group_local_param_per_locus(header_text, seed)
     frequencies_by_locus = context.frequencies_per_locus
     group_priors = parse_group_priors(header_text)
 
@@ -1948,7 +1951,9 @@ def build_matrix_per_locus(
     return matrix_per_locus
 
 
-def build_rate_map_per_locus(header_text: str, seed: int) -> dict[str, msprime.RateMap]:
+def build_rate_map_per_locus(
+    header_text: str, seed: int
+) -> tuple[dict[str, msprime.RateMap], dict[str, dict[str, float]]]:
     """Construit le profil de taux de mutation (msprime.RateMap) de chaque
     locus [S].
 
@@ -1957,10 +1962,14 @@ def build_rate_map_per_locus(header_text: str, seed: int) -> dict[str, msprime.R
         seed: La graine du tirage.
 
     Returns:
-        Un dict {nom_locus: msprime.RateMap} pour chaque locus [S].
+        Un tuple (rate_map_per_locus, group_priors) :
+        - rate_map_per_locus : un dict {nom_locus: msprime.RateMap} pour chaque locus [S].
+        - group_priors : un dict {nom_groupe: {nom_prior: valeur}} pour chaque groupe.
     """
     list_loci = parse_loci_description(header_text)
-    params_per_locus = build_group_local_param_per_locus(header_text, seed)
+    params_per_locus, group_priors_values = build_group_local_param_per_locus(
+        header_text, seed
+    )
     mus_rate_per_locus = {
         locus.name: params_per_locus[locus.name][2]
         for locus in list_loci
@@ -1980,7 +1989,7 @@ def build_rate_map_per_locus(header_text: str, seed: int) -> dict[str, msprime.R
             rate_map_per_locus[locus.name] = build_rate_map(
                 mus_rate=mus_rate, mutsit=mutsit, dnalength=locus.dnalength
             )
-    return rate_map_per_locus
+    return rate_map_per_locus, group_priors_values
 
 
 def simulate_dna_mutations(
@@ -2071,7 +2080,7 @@ def dna_mutation_simulation_per_locus(
     seed: int,
     *,
     sample_sets: list[msprime.SampleSet] | None = None,
-) -> dict[str, tskit.TreeSequence]:
+) -> tuple[dict[str, tskit.TreeSequence], dict[str, dict[str, float]]]:
     """Assemble le pipeline complet de simulation ADN, par locus.
 
     Pour chaque locus [S] : généalogie (msprime.sim_ancestry direct,
@@ -2098,7 +2107,9 @@ def dna_mutation_simulation_per_locus(
         sample_sets: liste des SampleSet, celle du scenario, communs à tous les loci
 
     Returns:
-        Un dict {nom_locus: TreeSequence mutée} pour chaque locus [S].
+        Un tuple (mutated_tree_sequences, group_priors_values) :
+        - mutated_tree_sequences : un dict {nom_locus: TreeSequence mutée} pour chaque locus [S].
+        - group_priors_values : un dict {nom_groupe: {nom_prior: valeur}} pour chaque groupe.
     """
     header_text = context.header_text
     mss_file_path = context.mss_path
@@ -2109,7 +2120,9 @@ def dna_mutation_simulation_per_locus(
     )
     sex_ratio = context.sex_ratio
 
-    rate_map_per_locus = build_rate_map_per_locus(header_text, seed)
+    rate_map_per_locus, group_priors_values = build_rate_map_per_locus(
+        header_text, seed
+    )
     matrix_per_locus = build_matrix_per_locus(context, seed)
 
     mutated_tree_sequences = {}
@@ -2164,7 +2177,7 @@ def dna_mutation_simulation_per_locus(
                 seed + _MUTATION_SEED_OFFSET + i,
             )
             mutated_tree_sequences[locus.name] = mutated_ts
-    return mutated_tree_sequences
+    return mutated_tree_sequences, group_priors_values
 
 
 # equivalent à partir des valeurs tirées via diyabc

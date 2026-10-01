@@ -121,7 +121,7 @@ def test_genotype_matrix_by_sample(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -156,7 +156,7 @@ def test_genotype_matrix_by_sample_with_same_layout(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -262,7 +262,7 @@ def test_mean_segregating_sites_per_group(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -300,7 +300,7 @@ def test_mean_distinct_haplotypes_per_group(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -339,7 +339,7 @@ def test_mean_pairwise_differences_per_group(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -384,7 +384,7 @@ def test_variance_pairwise_differences_per_group(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -429,7 +429,7 @@ def test_mean_tajima_d_per_group(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -474,7 +474,7 @@ def test_mean_private_segregating_sites_per_group(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -513,7 +513,7 @@ def test_mean_minor_allele_count_per_group(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -558,7 +558,7 @@ def test_variance_minor_allele_count_per_group(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -602,7 +602,7 @@ def test_mean_distinct_haplotypes_per_group_pairwize(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -640,7 +640,7 @@ def test_mean_segregating_sites_per_group_pairwize(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -678,7 +678,7 @@ def test_mean_pairwise_differences_per_group_pairwize(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -716,7 +716,7 @@ def test_mean_pairwise_differences_between_per_group_pairwize(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -754,7 +754,7 @@ def test_mean_hst_per_group_pairwize(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,
@@ -779,7 +779,7 @@ def test_compute_all_statistics_dna(dna_context_te2):
     demography, _ = build_random_demography_for_scenario_index(
         dna_context_te2.header_text, scenario_index=1, seed=42
     )
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, _ = dna_mutation_simulation_per_locus(
         demography=demography,
         context=dna_context_te2,
         seed=42,

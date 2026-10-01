@@ -800,7 +800,7 @@ def compute_summary_statistics_dna(
         scenario, values, context.samples_default
     )
 
-    mutated = dna_mutation_simulation_per_locus(
+    mutated, group_priors_values = dna_mutation_simulation_per_locus(
         context, demography, seed, sample_sets=sample_sets
     )
 
@@ -818,7 +818,7 @@ def compute_summary_statistics_dna(
     )
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 
-    return summary_stats, values
+    return summary_stats, values, group_priors_values
 
 
 # Calcul des stats ADN à partir de valeurs déjà connues : rejeu de tirages DIYABC

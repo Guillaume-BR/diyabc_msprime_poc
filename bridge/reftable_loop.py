@@ -1196,18 +1196,26 @@ def _run_single_particle_dna(
     seed = particle_index + 1
     drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
 
-    summary_statistics, parameter_values = compute_summary_statistics_dna(
-        context=context,
-        scenario_index=drawn_scenario.index,
-        seed=seed,
-        stats_filter=stats_filter,
+    summary_statistics, parameter_values, group_priors_values_nested = (
+        compute_summary_statistics_dna(
+            context=context,
+            scenario_index=drawn_scenario.index,
+            seed=seed,
+            stats_filter=stats_filter,
+        )
     )
+
+    group_priors_values = {
+        column: group_priors_values_nested[group][prior]
+        for column, group, prior in _group_prior_columns(context.header_text)
+    }
+
     return ParticleResult(
         particle_index=particle_index,
         scenario_index=drawn_scenario.index,
         parameter_values=parameter_values,
         summary_statistics=summary_statistics,
-        group_priors_values={},
+        group_priors_values=group_priors_values,
     )
 
 
