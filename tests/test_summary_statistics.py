@@ -853,7 +853,7 @@ def test_length_by_sample(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -959,7 +959,7 @@ def test_compute_NAL(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -980,7 +980,7 @@ def test_total_genes_copies_per_sample(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -999,7 +999,7 @@ def test_compute_HET(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1039,7 +1039,7 @@ def test_compute_VAR_constants(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1073,7 +1073,7 @@ def test_compute_VAR_for_one_sample(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1095,7 +1095,7 @@ def test_compute_VAR(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1126,7 +1126,7 @@ def test_compute_MGW_by_locus(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1144,7 +1144,7 @@ def test_compute_MGW(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1195,7 +1195,7 @@ def test_compute_N2P(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1263,7 +1263,7 @@ def test_compute_H2P(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1324,7 +1324,7 @@ def test_compute_V2P(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1366,7 +1366,7 @@ def test_compute_DAS(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1443,7 +1443,7 @@ def test_compute_DM2(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1475,7 +1475,7 @@ def test_length_by_sample_and_individuals(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1621,7 +1621,7 @@ def test_compute_FST(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1639,7 +1639,7 @@ def test_compute_FST_vs_scikit_allel(microsat_context_te1_modified):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te1_modified.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te1_modified,
         seed=42,
@@ -1676,7 +1676,7 @@ def test_genotypes_by_sample_and_individuals(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1813,7 +1813,7 @@ def test_compute_LIK(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,
@@ -1836,7 +1836,7 @@ def test_compute_all_statistics_microsat(microsat_context_te2_xy):
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, _ = microsat_mutation_simulation_per_locus(
         demography=demography,
         context=microsat_context_te2_xy,
         seed=42,

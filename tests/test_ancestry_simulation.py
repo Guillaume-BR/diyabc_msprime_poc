@@ -1558,7 +1558,9 @@ def test_build_microsat_local_param_per_locus(header_text_te2_XY):
     """Vérifie que la fonction buiomparaison directe de forme), le
     raleld_microsat_local_param_per_locus retourne le bon dictionnaire Test de
     reproductibilité avec la même graine."""
-    params_per_locus = build_microsat_local_param_per_locus(header_text_te2_XY, seed=42)
+    params_per_locus, parameter_values = build_microsat_local_param_per_locus(
+        header_text_te2_XY, seed=42
+    )
 
     list_loci = parse_loci_description(header_text_te2_XY)
 
@@ -1574,6 +1576,7 @@ def test_build_microsat_local_param_per_locus(header_text_te2_XY):
         )
         assert locus_type == "M", f"Locus {locus} n'est pas un microsatellite"
 
+    # test sur les valeurs des paramètres pour chaque locus
     assert len(params_per_locus) == 10
     all_mus_rate_values = [k[0] for k in params_per_locus.values()]
     assert len(set(all_mus_rate_values)) == 10  # Tous les mus_rate sont différents
@@ -1592,18 +1595,32 @@ def test_build_microsat_local_param_per_locus(header_text_te2_XY):
     assert params_per_locus["Locus_M_A_1_"][1] == 0.4820860729990509
     assert params_per_locus["Locus_M_A_1_"][2] == 3.1999081859003997e-07
 
+    # tests sur les valeurs des paramètres de groupes
+    assert len(parameter_values) == 3  # tous les groupes sont présents
+    group = "G1"
+    assert len(parameter_values[group]) == 6
+    assert parameter_values[group]["MEANMU"] > 0.0
+    assert (
+        parameter_values[group]["MEANP"] >= 0.0
+        and parameter_values[group]["MEANP"] <= 1.0
+    )
+    assert parameter_values[group]["MEANSNI"] >= 0.0
+
     # test de reproductibilité avec la même graine
-    params_per_locus_2 = build_microsat_local_param_per_locus(
+    params_per_locus_2, parameter_values_2 = build_microsat_local_param_per_locus(
         header_text_te2_XY, seed=42
     )
     assert params_per_locus == params_per_locus_2
+    assert parameter_values == parameter_values_2
 
 
 def test_build_matrix_microsat_per_locus(microsat_context_te2_xy):
     """Vérifie que la fonction build_matrix_microsat_per_locus retourne le bon
     dictionnaire."""
     list_loci = microsat_context_te2_xy.list_loci
-    matrix_per_locus = build_matrix_microsat_per_locus(microsat_context_te2_xy, seed=42)
+    matrix_per_locus, _, _ = build_matrix_microsat_per_locus(
+        microsat_context_te2_xy, seed=42
+    )
 
     for locus in matrix_per_locus:
         locus_type = next(
@@ -1618,7 +1635,7 @@ def test_build_matrix_microsat_per_locus(microsat_context_te2_xy):
     assert len(matrix_per_locus) == 10
     assert matrix_per_locus["Locus_M_A_1_"].transition_matrix.shape == (79, 79)
 
-    matrix_per_locus2 = build_matrix_microsat_per_locus(
+    matrix_per_locus2, _, _ = build_matrix_microsat_per_locus(
         microsat_context_te2_xy, seed=42
     )
     for locus in matrix_per_locus:
@@ -1644,7 +1661,7 @@ def test_microsat_mutation_simulation_per_locus(microsat_context_te2_xy):
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
 
-    mutated_tree_sequences = microsat_mutation_simulation_per_locus(
+    mutated_tree_sequences, _ = microsat_mutation_simulation_per_locus(
         context=microsat_context_te2_xy,
         demography=demography,
         seed=42,
@@ -1666,7 +1683,7 @@ def test_microsat_mutation_simulation_per_locus(microsat_context_te2_xy):
 
     # Reproductibilité : même graine de particule -> même résultat pour
     # chaque locus.
-    mutated_tree_sequences_2 = microsat_mutation_simulation_per_locus(
+    mutated_tree_sequences_2, _ = microsat_mutation_simulation_per_locus(
         context=microsat_context_te2_xy,
         demography=demography,
         seed=42,
@@ -1693,7 +1710,7 @@ def test_microsat_mutation_simulation_per_locus_ploidy_matches_heritage(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
     )
 
-    mutated_tree_sequences = microsat_mutation_simulation_per_locus(
+    mutated_tree_sequences, _ = microsat_mutation_simulation_per_locus(
         context=microsat_context_te2_xy,
         demography=demography,
         seed=42,

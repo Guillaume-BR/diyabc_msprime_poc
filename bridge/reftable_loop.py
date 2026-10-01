@@ -107,6 +107,7 @@ class ParticleResult:
     scenario_index: int
     parameter_values: dict[str, float]
     summary_statistics: dict[str, float]
+    group_priors_values: dict[str, float]
 
 
 # ----------------------------------------------------------------------------
@@ -396,6 +397,7 @@ def _run_single_particle(
         scenario_index=drawn_scenario.index,
         parameter_values=parameter_values,
         summary_statistics=summary_statistics,
+        group_priors_values={},
     )
 
 
@@ -652,7 +654,11 @@ def write_reftable_bin(
     nrecscen = [
         sum(1 for r in results if r.scenario_index == s.index) for s in scenarios
     ]
-    nparam = [len(kept_param_names_by_scenario[s.index]) for s in scenarios]
+    group_priors_names = list(results[0].group_priors_values)
+    nparam = [
+        len(kept_param_names_by_scenario[s.index]) + len(group_priors_names)
+        for s in scenarios
+    ]
     nstat = len(stat_names)
 
     with open(output_path, "wb") as f:
@@ -663,11 +669,12 @@ def write_reftable_bin(
         for n in nparam:
             f.write(struct.pack("<i", n))
         f.write(struct.pack("<i", nstat))
-
         for result in results:
             f.write(struct.pack("<i", result.scenario_index))
             for name in kept_param_names_by_scenario[result.scenario_index]:
                 f.write(struct.pack("<f", result.parameter_values[name]))
+            for name in group_priors_names:
+                f.write(struct.pack("<f", result.group_priors_values[name]))
             for name in stat_names:
                 f.write(struct.pack("<f", result.summary_statistics[name]))
 
@@ -740,6 +747,7 @@ def write_reftable_txt(
         name for names in kept_param_names_by_scenario.values() for name in names
     }
     all_param_names = [p.name for p in priors if p.name in used_by_any]
+    all_group_priors_names = list(results[0].group_priors_values)
     stat_names = list(results[0].summary_statistics.keys())
 
     def _centre(s: str, width: int = 14) -> str:
@@ -751,6 +759,7 @@ def write_reftable_txt(
         header = (
             _centre("scenario")
             + "".join(_centre(n) for n in all_param_names)
+            + "".join(_centre(n) for n in all_group_priors_names)
             + "".join(_centre(n) for n in stat_names)
         )
         f.write(header + "\n")
@@ -760,6 +769,8 @@ def write_reftable_txt(
             line = f"{r.scenario_index:3d}  "
             for name in all_param_names:
                 line += f"  {r.parameter_values.get(name, float('nan')):12.6f}"
+            for name in all_group_priors_names:
+                line += f"  {r.group_priors_values[name]:12.6f}"
             for name in stat_names:
                 line += f"  {r.summary_statistics[name]:12.6f}"
             f.write(line + "\n")
@@ -1034,6 +1045,7 @@ def _run_single_particle_from_values(
         scenario_index=scenario_index,
         parameter_values=values,
         summary_statistics=summary_statistics,
+        group_priors_values={},
     )
 
 
@@ -1195,6 +1207,7 @@ def _run_single_particle_dna(
         scenario_index=drawn_scenario.index,
         parameter_values=parameter_values,
         summary_statistics=summary_statistics,
+        group_priors_values={},
     )
 
 
@@ -1279,10 +1292,9 @@ def run_reftable_simulation_dna(
 
 
 # Rejeu des tirages réels de DIYABC pour les séquences ADN (comparaison appariée)
-
-
-def group_prior_column_names(header_text: str) -> list[str]:
-    """Liste ordonnée des noms de colonnes "priors de groupe" d'un vrai
+def _group_prior_columns(header_text: str) -> list[tuple[str, str, str]]:
+    """Liste ordonnée de triplets (nom_colonne, nom de groupe, nom du paramètre)
+    des noms de colonnes "priors de groupe" d'un vrai
     reftable DIYABC.
 
     Ex: `µseq_2`, `k1seq_2`, juste après les paramètres historiques et
@@ -1311,30 +1323,49 @@ def group_prior_column_names(header_text: str) -> list[str]:
         header_text: Texte complet de header.txt.
 
     Returns:
-        La liste ordonnée des noms de colonnes de priors de groupe.
+            Une liste de tuples (nom_colonne, nom_groupe, nom_paramètre).
     """
     group_priors = parse_group_priors(header_text)
-
-    names = []
+    columns = []
     for group_name, entries in group_priors.items():
         ms_or_seq = entries[0].ms_or_seq
         type_suffix = "seq" if ms_or_seq == "S" else "mic"
         group_number = group_name[1:]  # "G2" -> "2"
 
-        names.append(f"µ{type_suffix}_{group_number}")  # mus_rate, toujours présent
+        columns.append(
+            (f"µ{type_suffix}_{group_number}", group_name, "MEANMU")
+        )  # mus_rate
 
         if ms_or_seq == "S":
             model_entry = next(e for e in entries if e.model)
             k1_used, k2_used = get_parameter_used_by_model(model_entry)
             if k1_used:
-                names.append(f"k1{type_suffix}_{group_number}")
+                columns.append(
+                    (f"k1{type_suffix}_{group_number}", group_name, "MEANK1")
+                )
             if k2_used:
-                names.append(f"k2{type_suffix}_{group_number}")
+                columns.append(
+                    (f"k2{type_suffix}_{group_number}", group_name, "MEANK2")
+                )
         else:
-            names.append(f"p{type_suffix}_{group_number}")
-            names.append(f"sni{type_suffix}_{group_number}")
+            columns.append((f"p{type_suffix}_{group_number}", group_name, "MEANP"))
+            columns.append((f"sni{type_suffix}_{group_number}", group_name, "MEANSNI"))
 
-    return names
+    return columns
+
+
+def group_prior_column_names(header_text: str) -> list[str]:
+    """
+    Liste des noms sortant dans le reftable DIYABC pour les priors de groupe, dans l'ordre de la ligne d'en-tête du fichier réel.
+    Ex: `µseq_2`, `k1seq_2`, juste après les paramètres historiques et avant les colonnes de statistiques sur chaque ligne -- vérifiée caractère pour caractère contre la
+
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Returns:
+        Une liste de noms de colonnes (str) pour les priors de groupe, dans l'ordre exact de la ligne d'en-tête du reftable DIYABC.
+    """
+    return [column for column, _, _ in _group_prior_columns(header_text)]
 
 
 def parse_real_reftable_params_with_group_priors(
@@ -1454,6 +1485,7 @@ def _run_single_particle_dna_from_values(
         scenario_index=scenario_index,
         parameter_values=values,
         summary_statistics=summary_statistics,
+        group_priors_values=group_priors_values,
     )
 
 
@@ -1593,17 +1625,25 @@ def _run_single_particle_microsat(
     seed = particle_index + 1
     drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
 
-    summary_statistics, parameter_values = compute_summary_statistics_microsat(
-        context=context,
-        scenario_index=drawn_scenario.index,
-        seed=seed,
-        stats_filter=stats_filter,
+    summary_statistics, parameter_values, group_priors_values_nested = (
+        compute_summary_statistics_microsat(
+            context=context,
+            scenario_index=drawn_scenario.index,
+            seed=seed,
+            stats_filter=stats_filter,
+        )
     )
+
+    group_priors_values = {
+        column: group_priors_values_nested[group][prior]
+        for column, group, prior in _group_prior_columns(context.header_text)
+    }
     return ParticleResult(
         particle_index=particle_index,
         scenario_index=drawn_scenario.index,
         parameter_values=parameter_values,
         summary_statistics=summary_statistics,
+        group_priors_values=group_priors_values,
     )
 
 
@@ -1736,6 +1776,7 @@ def _run_single_particle_microsat_from_values(
         scenario_index=scenario_index,
         parameter_values=values,
         summary_statistics=summary_statistics,
+        group_priors_values=group_priors_values,
     )
 
 

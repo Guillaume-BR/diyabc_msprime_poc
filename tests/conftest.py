@@ -46,7 +46,7 @@ OBSERVED_MSS_FILE_TE1 = (
 
 OBSERVED_MSS_FILE_TE2 = (
     REFERENCE_DIR
-    / "toy_example2_ms_dna"
+    / "toy_example2_ms_dna_K2P"
     / "pseudo_observed_DATASET_toy_example2_microsatellites_DNAsequences_ancestral_admixture_unsampled_pops_001.mss"
 )
 
@@ -116,7 +116,7 @@ def header_text_te1_modified() -> str:
 
 @pytest.fixture
 def header_text_te2() -> str:
-    path_te2 = REFERENCE_DIR / "toy_example2_ms_dna" / "headerRF.txt"
+    path_te2 = REFERENCE_DIR / "toy_example2_ms_dna_K2P" / "headerRF.txt"
     return path_te2.read_text()
 
 

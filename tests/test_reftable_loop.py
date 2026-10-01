@@ -19,12 +19,14 @@ from bridge.prior_parser import is_constant_prior, parse_priors
 from bridge.reftable_loop import (
     _historical_columns_order,
     _kept_param_names_by_scenario,
+    check_header_trailer_line,
     group_prior_column_names,
     parse_real_reftable_params,
     parse_real_reftable_params_with_group_priors,
     raise_if_serial_with_sex_linked_loci,
     run_reftable_simulation,
     run_reftable_simulation_dna,
+    run_reftable_simulation_microsat,
     simulate_from_directory,
     write_reftable_bin,
     write_reftable_txt,
@@ -123,7 +125,7 @@ def test_run_reftable_simulation_draws_multiple_scenarios(header_text):
     assert [r.scenario_index for r in results] == [3, 3, 5, 3, 1, 3]
 
 
-def test_write_reftable_bin(tmp_path, header_text):
+def test_write_reftable_bin_without_group_priors(tmp_path, header_text):
     """Vérifie l'écriture du reftable.bin, et sa relecture (vérification
     manuelle du format, sans dépendre de readReftable.R pour ce test
     Python -- juste une vérification structurelle du binaire produit)."""
@@ -136,6 +138,29 @@ def test_write_reftable_bin(tmp_path, header_text):
         reference_directory=REFERENCE_DIR / "human",
         scenarios=[scenario1],
         num_loci=10,
+        nrec=nrec,
+        stats_filter="ALL",
+    )
+
+    output_file = tmp_path / "reftable.bin"
+    write_reftable_bin(results, priors, [scenario1], output_file)
+
+    assert output_file.exists()
+    assert output_file.stat().st_size > 0
+
+
+def test_write_reftable_bin_with_group_priors(tmp_path, microsat_context_te1):
+    """Vérifie l'écriture du reftable.bin, et sa relecture (vérification
+    manuelle du format, sans dépendre de readReftable.R pour ce test
+    Python -- juste une vérification structurelle du binaire produit)."""
+    priors, _ = parse_priors(microsat_context_te1.header_text)
+    scenarios = parse_header_scenarios(microsat_context_te1.header_text)
+    scenario1 = next(s for s in scenarios if s.index == 1)
+
+    nrec = 3
+    results = run_reftable_simulation_microsat(
+        reference_directory=REFERENCE_DIR / "toy_example1_ms",
+        scenarios=[scenario1],
         nrec=nrec,
         stats_filter="ALL",
     )
@@ -413,7 +438,7 @@ def test_run_reftable_simulation_dna_scenario1(header_text_te2):
 
     nrec = 4
     results = run_reftable_simulation_dna(
-        reference_directory=REFERENCE_DIR / "toy_example2_ms_dna",
+        reference_directory=REFERENCE_DIR / "toy_example2_ms_dna_K2P",
         scenarios=[scenario1],
         nrec=nrec,
         stats_filter="ALL",
@@ -451,7 +476,7 @@ def test_run_reftable_simulation_dna_draws_multiple_scenarios(header_text_te2):
 
     nrec = 6
     results = run_reftable_simulation_dna(
-        reference_directory=REFERENCE_DIR / "toy_example2_ms_dna",
+        reference_directory=REFERENCE_DIR / "toy_example2_ms_dna_K2P",
         scenarios=scenarios,
         nrec=nrec,
         stats_filter="ALL",
@@ -479,7 +504,7 @@ def test_is_serial_scenario_distingue_seriel_et_non_seriel():
         (REFERENCE_DIR / "toy_example5" / "headerRF.txt").read_text()
     )
     te2 = parse_header_scenarios(
-        (REFERENCE_DIR / "toy_example2_ms_dna" / "headerRF.txt").read_text()
+        (REFERENCE_DIR / "toy_example2_ms_dna_K2P" / "headerRF.txt").read_text()
     )
 
     assert [is_serial_scenario(s) for s in seriel] == [True, True]
@@ -531,3 +556,64 @@ def test_raise_if_serial_with_sex_linked_loci_ignore_le_seriel_sans_xy():
     header_text = (REFERENCE_DIR / "human_seriel" / "headerRF.txt").read_text()
 
     raise_if_serial_with_sex_linked_loci(header_text)
+
+
+# ── Garde « ligne de queue du header » ─────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "dataset",
+    [
+        "toy_example2_ms_dna_K2P",  # µ + K2P : k1 seul
+        "toy_example2_ms_dna_JK",  # JK : ni k1 ni k2
+        "toy_example2_ms_dna_TN",  # TN : k1 ET k2
+        "toy_example1_ms",  # préfixe "mu" ASCII, pas "µ"
+        "human",  # dataset SNP : aucune section `group priors`
+    ],
+)
+def test_check_header_trailer_line_accepte_les_datasets_sains(dataset):
+    """Les quatre familles de header valides doivent passer : les trois modèles
+    de substitution (qui impliquent 0, 1 ou 2 paramètres `k`), le préfixe
+    `mumic_1` en ASCII que DIYABC écrit sur toy_example1_ms au lieu de
+    `µmic_1`, et un header SNP sans section `group priors` du tout -- sur
+    lequel la garde doit être un no-op, pas une erreur."""
+    header_text = (REFERENCE_DIR / dataset / "headerRF.txt").read_text()
+
+    check_header_trailer_line(header_text)
+
+
+def test_check_header_trailer_line_leve_sur_un_k_manquant():
+    """Cas réel attrapé le 30/09 : les lignes de queue de
+    toy_example2_ms_dna_50loci_TN et _50loci_JK avaient été recopiées de la
+    variante K2P, donc `k1seq` présent et `k2seq` absent alors que `MODEL TN`
+    exige les deux -- deux jetons manquants faussent le
+    `nparamhist = jetons - 1 - nstat - nparamut` de
+    HeaderC::readHeaderAllStat et rendent le reftable inexploitable (son
+    en-tête ne contenait effectivement aucune colonne `k2seq`).
+
+    La corruption est reconstruite ici plutôt que lue depuis reference/ :
+    ces headers ont été réparés, et un test qui dépend d'un fichier cassé
+    disparaît le jour où on le répare."""
+    header_text = (
+        REFERENCE_DIR / "toy_example2_ms_dna_TN" / "headerRF.txt"
+    ).read_text()
+    lines = header_text.splitlines()
+    lines[-1] = lines[-1].replace(" k2seq_2", "").replace(" k2seq_3", "")
+    corrupted = "\n".join(lines)
+
+    with pytest.raises(ValueError, match="k2seq_2"):
+        check_header_trailer_line(corrupted)
+
+
+def test_check_header_trailer_line_leve_sur_un_jeton_en_trop(tmp_path):
+    """Symétrique : un `k1seq` de trop sur un header JK -- la faute commise sur
+    50loci_JK, corrigée depuis. Le message doit nommer le jeton parasite."""
+    header_text = (
+        REFERENCE_DIR / "toy_example2_ms_dna_JK" / "headerRF.txt"
+    ).read_text()
+    lines = header_text.splitlines()
+    lines[-1] = lines[-1].replace("µseq_2", "µseq_2 k1seq_2")
+    corrupted = "\n".join(lines)
+
+    with pytest.raises(ValueError, match="k1seq_2"):
+        check_header_trailer_line(corrupted)

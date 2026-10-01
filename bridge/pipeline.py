@@ -908,7 +908,7 @@ def compute_summary_statistics_microsat(
     *,
     seed: int,
     stats_filter: str = "ALL",
-) -> tuple[dict[str, float], dict[str, float]]:
+) -> tuple[dict[str, float], dict[str, float], dict[str, dict[str, float]]]:
     """Calcule les statistiques résumées microsat
     (compute_all_statistics_microsat) sur des données SIMULÉES par msprime --
     équivalent microsat de compute_summary_statistics (chemin IND/PoolSeq),
@@ -916,15 +916,15 @@ def compute_summary_statistics_microsat(
     `G4`/`G5`... de header.txt) plutôt que des SNP.
 
     Tire les paramètres historiques (N1, ta, ts...) ET les priors de
-    groupe (mus_rate,Pgeom) par groupe microsat, en interne à
+    groupe (mus_rate,Pgeom,SNI_rate) par groupe microsat, en interne à
     microsat_mutation_simulation_per_locus) depuis `seed` -- voir
     compute_summary_statistics_microsat_from_values pour la variante qui
     rejoue des valeurs déjà connues plutôt que d'en tirer de nouvelles
     (paired comparison avec un vrai reftable DIYABC).
 
     `values` (le second élément du tuple retourné) ne contient QUE les
-    paramètres historiques, pas les priors de groupe -- microsat_mutation_
-    simulation_per_locus ne renvoie nulle part les valeurs de mut_rate,Pgeom
+    valeurs des priors historiques, pas les priors de groupe -- microsat_mutation_
+    simulation_per_locus ne renvoie nulle part les valeurs de mut_rate,Pgeom,sni_rate
     qu'elle a tirées en interne, donc ce `values` seul ne
     suffirait pas à rejouer exactement cette même particule (contrairement
     au chemin SNP, où `values` capture tout ce qui a été tiré).
@@ -942,9 +942,12 @@ def compute_summary_statistics_microsat(
             (seulement celles déclarées dans header.txt, voir
             compute_summary_statistics pour le détail).
     Returns:
-        (summary_stats, values) -- summary_stats est le dict {nom_
-        colonne_diyabc: valeur} de compute_all_statistics_microsat (ex.
-        "NSS_2_1"), values est {nom_paramètre_historique: valeur}.
+        (summary_stats, values, group_values) :
+        - summary_stats est le dict {nom_colonne_diyabc: valeur} de compute_all_statistics_microsat (ex.
+        "NSS_2_1"),
+        - values est {nom_paramètre_historique: valeur} et
+        - group_priors_values est le dictionnaire {nom_groupe: {nom_param_groupe: valeur}}
+        des valeurs de priors de groupe microsat tirées en interne.
     """
     header_text = context.header_text
 
@@ -958,7 +961,7 @@ def compute_summary_statistics_microsat(
         scenario, values, context.samples_default
     )
 
-    mutated = microsat_mutation_simulation_per_locus(
+    mutated, group_priors_values = microsat_mutation_simulation_per_locus(
         context, demography, seed, sample_sets=sample_sets
     )
 
@@ -980,7 +983,7 @@ def compute_summary_statistics_microsat(
     )
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 
-    return summary_stats, values
+    return summary_stats, values, group_priors_values
 
 
 # rejeu de tirages DIYABC pour microsats : on ne tire plus rien, on rejoue les valeurs déjà connues

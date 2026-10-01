@@ -312,7 +312,7 @@ def test_compute_summary_statistics_dna(dna_context_te2):
 
 def test_compute_summary_statistics_microsat(microsat_context_te2_xy):
 
-    summary_stats, _ = compute_summary_statistics_microsat(
+    summary_stats, _, _ = compute_summary_statistics_microsat(
         context=microsat_context_te2_xy,
         scenario_index=1,
         seed=42,

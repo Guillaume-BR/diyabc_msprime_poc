@@ -1805,7 +1805,7 @@ def build_group_local_param_per_locus(
     list_loci = parse_loci_description(header_text)
 
     list_loci_seq = [locus for locus in list_loci if locus.ms_or_seq == "S"]
-    nloc_per_group = count_loci_per_group(list_loci_seq)
+    nloci_per_group = count_loci_per_group(list_loci_seq)
 
     # Un seul appel pour tous les groupes -- draw_group_parameter_values gère
     # déjà en interne son propre décalage de graine (_GROUP_PRIOR_SEED_OFFSET),
@@ -1829,13 +1829,13 @@ def build_group_local_param_per_locus(
     kappa1_rng = random.Random(seed + _KAPPA1_SEED_OFFSET)
     kappa2_rng = random.Random(seed + _KAPPA2_SEED_OFFSET)
 
-    for group in nloc_per_group:
+    for group in nloci_per_group:
         list_locus_in_group = [locus for locus in list_loci_seq if locus.group == group]
         # calcul du mus_rate par locus
         mus_rate = sampling_group_local_param(
             next(gp for gp in group_priors[group] if gp.name == "GAMMU"),
             k_moy=values[group]["MEANMU"],
-            n_loci=nloc_per_group[group],
+            n_loci=nloci_per_group[group],
             check_nloc=True,
             list_loci=list_locus_in_group,
             rng=mus_rate_rng,
@@ -1859,7 +1859,7 @@ def build_group_local_param_per_locus(
             kappa1_values = sampling_group_local_param(
                 gp_gamk1,
                 k_moy=k1_moy,
-                n_loci=nloc_per_group[group],
+                n_loci=nloci_per_group[group],
                 check_nloc=True,
                 list_loci=list_locus_in_group,
                 rng=kappa1_rng,
@@ -1890,7 +1890,7 @@ def build_group_local_param_per_locus(
             kappa1_values = sampling_group_local_param(
                 gp_gamk1,
                 k_moy=k1_moy,
-                n_loci=nloc_per_group[group],
+                n_loci=nloci_per_group[group],
                 check_nloc=True,
                 list_loci=list_locus_in_group,
                 rng=kappa1_rng,
@@ -1898,7 +1898,7 @@ def build_group_local_param_per_locus(
             kappa2_values = sampling_group_local_param(
                 gp_gamk2,
                 k_moy=k2_moy,
-                n_loci=nloc_per_group[group],
+                n_loci=nloci_per_group[group],
                 check_nloc=False,
                 list_loci=list_locus_in_group,
                 rng=kappa2_rng,
@@ -2248,7 +2248,7 @@ def build_group_local_param_per_locus_from_values(
     list_loci = parse_loci_description(header_text)
 
     list_loci_seq = [locus for locus in list_loci if locus.ms_or_seq == "S"]
-    nloc_per_group = count_loci_per_group(list_loci_seq)
+    nloci_per_group = count_loci_per_group(list_loci_seq)
 
     # Un seul appel pour tous les groupes -- draw_group_parameter_values gère
     # déjà en interne son propre décalage de graine (_GROUP_PRIOR_SEED_OFFSET),
@@ -2268,13 +2268,13 @@ def build_group_local_param_per_locus_from_values(
     kappa1_rng = random.Random(seed + _KAPPA1_SEED_OFFSET)
     kappa2_rng = random.Random(seed + _KAPPA2_SEED_OFFSET)
 
-    for group in nloc_per_group:
+    for group in nloci_per_group:
         list_locus_in_group = [locus for locus in list_loci_seq if locus.group == group]
         # calcul du mus_rate par locus
         mus_rate = sampling_group_local_param(
             next(gp for gp in group_priors[group] if gp.name == "GAMMU"),
             k_moy=values[group]["MEANMU"],
-            n_loci=nloc_per_group[group],
+            n_loci=nloci_per_group[group],
             check_nloc=True,
             list_loci=list_locus_in_group,
             rng=mus_rate_rng,
@@ -2298,7 +2298,7 @@ def build_group_local_param_per_locus_from_values(
             kappa1_values = sampling_group_local_param(
                 gp_gamk1,
                 k_moy=k1_moy,
-                n_loci=nloc_per_group[group],
+                n_loci=nloci_per_group[group],
                 check_nloc=True,
                 list_loci=list_locus_in_group,
                 rng=kappa1_rng,
@@ -2329,7 +2329,7 @@ def build_group_local_param_per_locus_from_values(
             kappa1_values = sampling_group_local_param(
                 gp_gamk1,
                 k_moy=k1_moy,
-                n_loci=nloc_per_group[group],
+                n_loci=nloci_per_group[group],
                 check_nloc=True,
                 list_loci=list_locus_in_group,
                 rng=kappa1_rng,
@@ -2337,7 +2337,7 @@ def build_group_local_param_per_locus_from_values(
             kappa2_values = sampling_group_local_param(
                 gp_gamk2,
                 k_moy=k2_moy,
-                n_loci=nloc_per_group[group],
+                n_loci=nloci_per_group[group],
                 check_nloc=False,
                 list_loci=list_locus_in_group,
                 rng=kappa2_rng,
@@ -2815,7 +2815,7 @@ def build_microsat_transition_matrix(
 
 def build_microsat_local_param_per_locus(
     header_text, seed
-) -> dict[str, tuple[float, float, float]]:
+) -> tuple[dict[str, tuple[float, float, float]], dict[str, dict[str, float]]]:
     """Construit les paramètres locaux (mut_rate, Pgeom, sni_rate) de chaque
     locus [M].
 
@@ -2824,14 +2824,15 @@ def build_microsat_local_param_per_locus(
         seed: La graine du tirage.
 
     Returns:
-        Un dict {nom_locus: (mut_rate,Pgeom)} pour chaque locus microsat.
+        Un tuple de deux dict : le premier contient {nom_locus: (mut_rate,Pgeom)} pour
+        chaque locus microsat, le second contient {nom_groupe: {nom_prior: valeur}}.
     """
     params_per_locus = {}
     group_priors = parse_group_priors(header_text)
     list_loci = parse_loci_description(header_text)
 
     list_loci_microsat = [locus for locus in list_loci if locus.ms_or_seq == "M"]
-    nloc_per_group = count_loci_per_group(list_loci_microsat)
+    nloci_per_group = count_loci_per_group(list_loci_microsat)
 
     values = draw_group_parameter_values(group_priors, seed)
 
@@ -2839,14 +2840,14 @@ def build_microsat_local_param_per_locus(
     Pgeom_rng = random.Random(seed + _MICROSAT_PGEOM_SEED_OFFSET)
     sni_rate_rng = random.Random(seed + _MICROSAT_SNI_SEED_OFFSET)
 
-    for group in nloc_per_group:
+    for group in nloci_per_group:
         list_locus_in_group = [
             locus for locus in list_loci_microsat if locus.group == group
         ]
         mut_rate_values = sampling_group_local_param(
             next(gp for gp in group_priors[group] if gp.name == "GAMMU"),
             k_moy=values[group]["MEANMU"],
-            n_loci=nloc_per_group[group],
+            n_loci=nloci_per_group[group],
             check_nloc=True,
             list_loci=list_locus_in_group,
             rng=mut_rate_rng,
@@ -2854,7 +2855,7 @@ def build_microsat_local_param_per_locus(
         Pgeom_values = sampling_group_local_param(
             next(gp for gp in group_priors[group] if gp.name == "GAMP"),
             k_moy=values[group]["MEANP"],
-            n_loci=nloc_per_group[group],
+            n_loci=nloci_per_group[group],
             check_nloc=True,
             list_loci=list_locus_in_group,
             rng=Pgeom_rng,
@@ -2862,7 +2863,7 @@ def build_microsat_local_param_per_locus(
         sni_rate_values = sampling_group_local_param(
             next(gp for gp in group_priors[group] if gp.name == "GAMSNI"),
             k_moy=values[group]["MEANSNI"],
-            n_loci=nloc_per_group[group],
+            n_loci=nloci_per_group[group],
             check_nloc=True,
             list_loci=list_locus_in_group,
             rng=sni_rate_rng,
@@ -2873,12 +2874,16 @@ def build_microsat_local_param_per_locus(
                 Pgeom_values[locus.name],
                 sni_rate_values[locus.name],
             )
-    return params_per_locus
+    return params_per_locus, values
 
 
 def build_matrix_microsat_per_locus(
     context: MicrosatReplayContext, seed: int
-) -> dict[str, msprime.MatrixMutationModel]:
+) -> tuple[
+    dict[str, msprime.MatrixMutationModel],
+    dict[str, tuple[float, float, float]],
+    dict[str, dict[str, float]],
+]:
     """Construit la matrice de transition de chaque locus microsatellite [M].
 
     Args:
@@ -2887,10 +2892,16 @@ def build_matrix_microsat_per_locus(
         seed: La graine du tirage.
 
     Returns:
-        Un dict {nom_locus: msprime.MatrixMutationModel} pour chaque locus microsatellite [M].
+        Un tuple de trois dict :
+        - le premier contient {nom_locus: msprime.MatrixMutationModel} pour chaque locus microsatellite [M],
+        - le deuxième contient {nom_locus: (mut_rate, Pgeom, sni_rate)} pour chaque locus microsatellite [M],
+        - le troisième contient {nom_groupe: {nom_prior: valeur}} pour chaque groupe de locus microsatellite [M].
     """
+
     list_loci = context.list_loci
-    params_per_locus = build_microsat_local_param_per_locus(context.header_text, seed)
+    params_per_locus, group_priors_values = build_microsat_local_param_per_locus(
+        context.header_text, seed
+    )
     bounds_per_locus = context.bounds_per_locus
 
     matrix_per_locus = {}
@@ -2906,7 +2917,7 @@ def build_matrix_microsat_per_locus(
                 sni_rate=sni_rate,
                 mut_rate=mut_rate,
             )
-    return matrix_per_locus
+    return matrix_per_locus, params_per_locus, group_priors_values
 
 
 def microsat_mutation_simulation_per_locus(
@@ -2915,7 +2926,7 @@ def microsat_mutation_simulation_per_locus(
     seed: int,
     *,
     sample_sets: list[msprime.SampleSet] | None = None,
-) -> dict[str, tskit.TreeSequence]:
+) -> tuple[dict[str, tskit.TreeSequence], dict[str, dict[str, float]]]:
     """Assemble le pipeline complet de simulation microsatellite, par locus.
 
     Pour chaque locus [M] : généalogie (msprime.sim_ancestry direct,
@@ -2929,7 +2940,9 @@ def microsat_mutation_simulation_per_locus(
         seed: La graine de la simulation.
         sample_sets: liste des sample_sets commun à tous les loci.
     Returns:
-        Un dict {nom_locus: arbre_généalogique} pour chaque locus microsatellite [M].
+        Un tuple de deux éléments :
+        - le premier est un dict {nom_locus: arbre_généalogique} pour chaque locus microsatellite [M].
+        - le deuxième est un dict {nom_groupe: {nom_prior: valeur}} pour chaque groupe de locus microsatellite [M].
     """
     mss_file_path = context.mss_path
     list_loci = context.list_loci
@@ -2938,11 +2951,11 @@ def microsat_mutation_simulation_per_locus(
     )
     sex_ratio = context.sex_ratio
 
-    matrix_per_locus = build_matrix_microsat_per_locus(context, seed)
+    matrix_per_locus, params_per_locus, group_priors_values = (
+        build_matrix_microsat_per_locus(context, seed)
+    )
 
     mutated_tree_sequences = {}
-    # appel redondant !? modifier build_matrix_microsat_per_locus où l'on pourrait récupérer mut_rate
-    params_per_locus = build_microsat_local_param_per_locus(context.header_text, seed)
 
     for i, locus in enumerate(list_loci):
         if locus.ms_or_seq != "M":
@@ -2981,6 +2994,7 @@ def microsat_mutation_simulation_per_locus(
             random_seed=seed_offset,
             ploidy=ploidy,
         )
+
         mutated_ts = msprime.sim_mutations(
             tree_sequences,
             rate=params_per_locus[locus.name][0],
@@ -2992,7 +3006,7 @@ def microsat_mutation_simulation_per_locus(
             ),
         )
         mutated_tree_sequences[locus.name] = mutated_ts
-    return mutated_tree_sequences
+    return mutated_tree_sequences, group_priors_values
 
 
 # Version "from values" pour rejouer exactement les mêmes valeurs par groupe que DIYABC
@@ -3073,7 +3087,7 @@ def build_group_local_param_per_locus_microsat_from_values(
     list_loci = parse_loci_description(header_text)
 
     list_loci_ms = [locus for locus in list_loci if locus.ms_or_seq == "M"]
-    nloc_per_group = count_loci_per_group(list_loci_ms)
+    nloci_per_group = count_loci_per_group(list_loci_ms)
 
     # Un seul appel pour tous les groupes -- draw_group_parameter_values gère
     # déjà en interne son propre décalage de graine (_GROUP_PRIOR_SEED_OFFSET),
@@ -3091,13 +3105,13 @@ def build_group_local_param_per_locus_microsat_from_values(
     Pgeom_rng = random.Random(seed + _MICROSAT_PGEOM_SEED_OFFSET)
     sni_rng = random.Random(seed + _MICROSAT_SNI_SEED_OFFSET)
 
-    for group in nloc_per_group:
+    for group in nloci_per_group:
         list_locus_in_group = [locus for locus in list_loci_ms if locus.group == group]
         # calcul du mut_rate par locus
         mut_rate_values = sampling_group_local_param(
             next(gp for gp in group_priors[group] if gp.name == "GAMMU"),
             k_moy=values[group]["MEANMU"],
-            n_loci=nloc_per_group[group],
+            n_loci=nloci_per_group[group],
             check_nloc=True,
             list_loci=list_locus_in_group,
             rng=mut_rate_rng,
@@ -3107,7 +3121,7 @@ def build_group_local_param_per_locus_microsat_from_values(
         Pgeom_values = sampling_group_local_param(
             next(gp for gp in group_priors[group] if gp.name == "GAMP"),
             k_moy=values[group]["MEANP"],
-            n_loci=nloc_per_group[group],
+            n_loci=nloci_per_group[group],
             check_nloc=True,
             list_loci=list_locus_in_group,
             rng=Pgeom_rng,
@@ -3115,7 +3129,7 @@ def build_group_local_param_per_locus_microsat_from_values(
         sni_values = sampling_group_local_param(
             next(gp for gp in group_priors[group] if gp.name == "GAMSNI"),
             k_moy=values[group]["MEANSNI"],
-            n_loci=nloc_per_group[group],
+            n_loci=nloci_per_group[group],
             check_nloc=True,
             list_loci=list_locus_in_group,
             rng=sni_rng,
