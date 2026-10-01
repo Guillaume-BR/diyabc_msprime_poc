@@ -69,6 +69,13 @@ on both sides (KS p = 1 exactly), and they only add coin flips. That
 prior check is itself worth keeping as a two-line sanity test — if a prior
 column departs from p = 1, the replay is not paired and nothing downstream
 means anything.
+**Since 01/10 the mutation-parameter columns (`µmic_N`, `pmic_N`, `snimic_N`,
+`µseq_N`, `k1seq_N`, `k2seq_N`) belong to that same family** — we now emit them,
+and in a replay they are DIYABC's own injected values, so they come out at
+`rdiff_mean = 0` and `ks_stat = 0` exactly. Exclude them from `n` too, and keep
+them as the **second** pairing sanity test: a departure from zero there means the
+mutation-parameter replay chain is broken, which the historical-prior check
+cannot see (see the `nparamut` entry under Closed investigations).
 
 `reference/` holds ground truth produced by the real DIYABC binary —
 **never modify these files.**
@@ -259,7 +266,11 @@ Each stage is a separate module with no cross-cutting logic:
     (`parameter_sampling.draw_scenario`, matching `ParticleC::drawscenario`),
     and `write_reftable_bin` writes a variable-length record per row (only
     that row's own scenario's `nparam` columns, no NA-padding), matching
-    `reftable.cpp`.
+    `reftable.cpp`. Both writers emit the mutation-parameter columns between the
+    historical parameters and the statistics; `nparam[i]` in the binary header
+    counts **both** families (`nparamhist + nparamut`, `reftable.cpp:64`) and
+    there is no separate header field for `nparamut` — see Closed
+    investigations.
 
 ### Two generations of architecture — mind the drift
 
@@ -517,6 +528,41 @@ under the date given.
   symmetric difference on a trailer typo rather than silently shifting every
   value. The `.bin` format is different (scenario's own `histparam` order,
   constants excluded) and was left untouched.
+
+- **Mutation parameters (`nparamut`) absent from our reftables (01/10)** —
+  implemented and validated; was the long-standing Open work item. The values
+  were drawn inside the worker, used for the mutation model and discarded.
+  `ParticleResult.group_priors_values` now carries the **flat**
+  `{column_name: float}` dict: the two SNP runners pass `{}` (a SNP header has no
+  `group priors` section, and `group_prior_column_names` **raises** there rather
+  than returning `[]` — `check_header_trailer_line` catches that `ValueError`
+  deliberately), the four DNA/MicroSat ones fill it.
+  Chain: `build_{group,microsat}_local_param_per_locus` return
+  `(params_per_locus, values)`; the MicroSat path carries them up through
+  `build_matrix_microsat_per_locus` (now a **triplet**), the DNA path through
+  `build_rate_map_per_locus` — DNA has **two** branches and
+  `build_matrix_per_locus` is the one that drops the value.
+  `_group_prior_columns` returns `(column, group, prior)` triplets and
+  `group_prior_column_names` is now only its projection on the first element:
+  **one authority decides which columns exist**, so writer and reader can no
+  longer disagree on the count — which was the whole point, since
+  `parse_real_reftable_params_with_group_priors` reads by position.
+  **The `.bin` format carries no column names and no separate `nparamut` field**:
+  `nparam[i]` absorbs both families (`reftable.cpp:64` checks
+  `nparam[i] == nparamvar + nparamut`, and the write loop at `reftable.cpp:199`
+  has a single counter). Writing an extra header int shifts the whole file — it
+  was done once and caught by `test_write_reftable_bin_multi_scenario`.
+  Validated by **strict identity** (`rdiff_mean = 0`, `ks_stat = 0`) on a replay
+  of `toy_example1_ms` (6 columns, pure MicroSat) and
+  `toy_example2_ms_dna_TN` (9 columns — the richest case: `k1` *and* `k2`, plus
+  the inter-type ordering). The *drawing* path cannot be validated by identity and
+  rests on a unit test only.
+  Two traps met on the way, both worth knowing: `group_priors` is the **parsed
+  declaration** (lists of `GroupPrior`) while `values`/`group_priors_values` are
+  the **drawn values** (nested `{group: {prior: float}}`) — both live at once
+  inside `build_rate_map_per_locus`; and `draw_group_parameter_values` does **not**
+  filter by type, so a DNA run also carries a mixed dataset's MicroSat columns,
+  with identical values (same seed). That is correct, not a bug.
 
 ## Domain knowledge
 
@@ -815,42 +861,6 @@ slips, kept because DIYABC's own output depends on them.
 
 ## Open work
 
-- **Write the mutation parameters (`nparamut`) into our reftables.** DIYABC's
-  reftable carries `µmic_1`, `pmic_1`, `snimic_1`, `µseq_2`, `k1seq_2`… ; ours
-  carries none of them. Measured on `toy_example1_ms`: our replay has 156 columns
-  against DIYABC's 162, the six missing ones being exactly
-  `mumic_1 pmic_1 snimic_1 mumic_2 pmic_2 snimic_2`, nothing extra on our side.
-  `write_reftable_bin`'s own docstring already flags it ("Ne gère PAS les
-  paramètres de mutation (absents de human) -- à ajouter … si un dataset avec
-  microsatellites/séquences est traité plus tard"); that "later" arrived when
-  MicroSat and DNA were validated, and the note stayed.
-
-  **Two distinct costs.** *(a) Structural*: the project's goal is a `reftable.bin`
-  equivalent to DIYABC's, and `abcranger` reads it expecting
-  `nparam[scenario] = nparamhist + nparamut` floats per record while ours writes
-  `nparamhist` only — a reader trusting the header would shift every row. It has
-  never bitten because validation goes through the **text** comparison of a
-  replay, never through `abcranger` on our output. *(b) A missing check*: in a
-  replay the historical priors are verifiable (KS p = 1 exactly, which is what
-  proves the pairing is real), but the mutation parameters are **injected without
-  ever being checked**. If `parse_real_reftable_params_with_group_priors` read a
-  shifted column — the positional-read risk noted under the `µ` prefix entry — the
-  simulation would use wrong µ/k1/k2 and nothing would show it; the prior check
-  would still pass. Emitting these columns turns that risk from silent into
-  visible.
-
-  **Three layers, in order.** `ParticleResult` gains a
-  `group_parameter_values: dict[str, float]` field — today the values are drawn
-  inside the worker, used for the mutation model and discarded, so the information
-  never reaches the writers. Then the six `_run_single_particle*` carry them up,
-  keeping the sibling symmetry (the `_from_values` variants receive DIYABC's real
-  values, the drawing variants draw their own; both must store the same thing).
-  Then `write_reftable_txt` and `write_reftable_bin` emit them **last, after the
-  demographic parameters**, as that docstring already states from
-  `readReftable.R`, in `group_prior_column_names` order — which is
-  scenario-independent, unlike `nparamhist`.
-  This touches validated originals, so the necessity is worth stating: it is real
-  for `write_reftable_bin` (structural equivalence) and arguable for the text one.
 - **Replicate DIYABC's discrete generation-by-generation coalescent.** This is
   the one known systematic difference between the two simulators, measured and
   reproducible — see the `evalcriterium` entry under Closed investigations for
@@ -1033,16 +1043,23 @@ slips, kept because DIYABC's own output depends on them.
   addition), but the next consumer of those tuples inherits the trap.
 - **`group_prior_column_names` hardcodes the `µ` prefix** (U+00B5) while DIYABC
   also writes plain ASCII `mu` — `toy_example1_ms`'s trailer and reftable both use
-  `mumic_1`. **Verified 30/09 to be inert, not latent**: the names it returns are
-  never looked up by name anywhere.
+  `mumic_1`. **The 30/09 verdict "inert, not latent" is RETIRED — since 01/10 the
+  spelling is active in the text path.** It rested on "the names it returns are
+  never looked up by name anywhere", and that stopped being true when
+  `write_reftable_txt` began emitting these columns: its header line carries our
+  `µ` spelling, and the comparison against a real reftable is **by column name**.
+  Measured on `toy_example1_ms`: 4 of the 6 columns match by name, the two `µ`
+  ones do not (`mumic_1`/`mumic_2` on DIYABC's side).
+  **Normalize in the comparator, not in `bridge/`** — `_normalize_mu` already
+  exists for it. The decisive reason: the `.bin`, which is the project's
+  structural deliverable and what `abcranger` reads, contains **no column names at
+  all**, so the spelling cannot affect it. Making `_group_prior_columns` follow the
+  header's own spelling would be needed only to make our text file diffable as is.
+  Still true, and still the reason not to "fix" the spelling hoping to fix a bug:
   `parse_real_reftable_params_with_group_priors` reads these columns **by
   position** (`tokens[1 + len(priors_param_names) + i]`) and uses
-  `group_priors_names` only as the returned dict's keys; and
-  `write_reftable_txt` does not emit them at all — on `toy_example1_ms` our
-  replay has 156 columns against DIYABC's 162, the six missing ones being exactly
-  `mumic_1 pmic_1 snimic_1 mumic_2 pmic_2 snimic_2`, with nothing extra on our
-  side. So the spelling cannot cause a wrong read, and the comparison notebooks
-  drop those columns on both sides.
+  `group_priors_names` only as the returned dict's keys. So the spelling cannot
+  cause a wrong *read*.
   **The real exposure the positional read creates is different**: a wrong *count*
   from `group_prior_column_names` shifts every value silently, labelling them with
   keys that do not belong to them — which is exactly the 30/09 corruption
