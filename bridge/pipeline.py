@@ -467,7 +467,7 @@ def compute_summary_statistics(
 # ── Valeurs de paramètres DÉJÀ CONNUES (rejeu, voir reftable_loop) ─────────
 
 
-def build_demography_for_scenario_index(
+def build_demography_for_scenario_index_from_values(
     header_text: str,
     scenario_index: int,
     values: dict[str, float],
@@ -533,7 +533,7 @@ def simulate_particle_genotypes_from_values(
     """
     header_text = context.header_text
 
-    demography = build_demography_for_scenario_index(
+    demography = build_demography_for_scenario_index_from_values(
         header_text, scenario_index, values
     )
 
@@ -717,7 +717,7 @@ def simulate_particle_reads_from_values(
     """
     header_text = context.header_text
 
-    demography = build_demography_for_scenario_index(
+    demography = build_demography_for_scenario_index_from_values(
         header_text, scenario_index, values
     )
     scenario = next(
@@ -863,7 +863,7 @@ def compute_summary_statistics_dna_from_values(
     """
     header_text = context.header_text
 
-    demography = build_demography_for_scenario_index(
+    demography = build_demography_for_scenario_index_from_values(
         header_text, scenario_index, values
     )
 
@@ -993,7 +993,7 @@ def compute_summary_statistics_microsat_from_values(
     context: MicrosatReplayContext,
     scenario_index: int,
     values: dict[str, float],
-    group_priors_values: dict[str, float],
+    group_priors_values: dict[str, dict[str, float]],
     *,
     seed: int,
     stats_filter: str = "ALL",
@@ -1028,7 +1028,7 @@ def compute_summary_statistics_microsat_from_values(
         Le dict summary_statistics (pas de `values` en retour,
         puisqu'ils sont déjà connus de l'appelant).
     """
-    demography = build_demography_for_scenario_index(
+    demography = build_demography_for_scenario_index_from_values(
         context.header_text, scenario_index, values
     )
 
@@ -1061,3 +1061,331 @@ def compute_summary_statistics_microsat_from_values(
     summary_stats = _filter_statistics(summary_stats, context.header_text, stats_filter)
 
     return summary_stats
+
+
+# ---------------------------------------------------------------------------------------
+# Microsat et DNA combined
+# ---------------------------------------------------------------------------------------
+def _extract_common_data(
+    context: DnaReplayContext | MicrosatReplayContext, scenario_index: int, seed: int
+) -> tuple[msprime.Demography, list[msprime.SampleSet], dict[str, float]]:
+    """Helper pour extraire les données communes nécessaires à la simulation et
+    au calcul des statistiques pour les scénarios ADN et microsat.
+
+    Args:
+        - context: Le contexte de rejeu pour les séquences ADN ou microsats.
+        - scenario_index: L'index 1-based du scénario à utiliser.
+        - seed: La graine du tirage par-locus (second niveau, généalogie, mutation).
+    Returns:
+        Un tuple contenant :
+        - demography: La démographie construite à partir des valeurs de paramètres.
+        - sample_sets: La liste des SampleSet construits à partir du scénario et des valeurs de paramètres.
+        - values: Le dictionnaire des valeurs de paramètres.
+    """
+    header_text = context.header_text
+
+    demography, values = build_random_demography_for_scenario_index(
+        header_text, scenario_index, seed
+    )
+
+    scenarios = parse_header_scenarios(header_text)
+    scenario = next(s for s in scenarios if s.index == scenario_index)
+    sample_sets = build_sample_sets_from_scenario(
+        scenario, values, context.samples_default
+    )
+    return demography, sample_sets, values
+
+
+# Dictionnaires nécessaires à _compute_statistics pour dispatcher les fonctions de mutation et de calcul des statistiques selon le type de données (ADN ou microsat).
+_MUTATION_BY_TYPE = {
+    "dna": dna_mutation_simulation_per_locus,
+    "microsat": microsat_mutation_simulation_per_locus,
+}
+
+_MUTATION_FROM_VALUES_BY_TYPE = {
+    "dna": dna_mutation_simulation_per_locus_from_values,
+    "microsat": microsat_mutation_simulation_per_locus_from_values,
+}
+
+_STATS_BY_TYPE = {
+    "dna": compute_all_statistics_dna,
+    "microsat": compute_all_statistics_microsat,
+}
+
+
+def _compute_statistics(
+    context: DnaReplayContext | MicrosatReplayContext,
+    demography: msprime.Demography,
+    sample_sets: list[msprime.SampleSet],
+    *,
+    type_of_data: str,
+    seed: int,
+) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
+    """Helper permettant de calculer les statistiques résumées pour un type de
+    données donné (ADN ou microsat).
+
+    Args:
+        - context: Le contexte de rejeu pour les séquences ADN ou microsats.
+        - demography: La démographie construite à partir des valeurs de paramètres.
+        - sample_sets: La liste des SampleSet construits à partir du scénario et des valeurs de paramètres.
+        - type_of_data: Le type de données ("dna" ou "microsat").
+        - seed: La graine du tirage par-locus (second niveau, généalogie, mutation).
+    Returns:
+        Un tuple contenant :
+        - Le dictionnaire des statistiques résumées.
+        - Le dictionnaire des valeurs de paramètres pour chaque groupe.
+    """
+    if type_of_data.lower() not in ["dna", "microsat"]:
+        raise ValueError(
+            f"Type de données {type_of_data} non pris en charge. "
+            "Seuls 'dna' et 'microsat' sont pris en charge insensiblement à la casse."
+        )
+
+    func_mutation = _MUTATION_BY_TYPE.get(type_of_data.lower())
+
+    mutated, group_priors_values = func_mutation(
+        context, demography, seed, sample_sets=sample_sets
+    )
+
+    locus_by_name = {locus.name: locus for locus in context.list_loci}
+    layouts_by_locus = {
+        name: compute_sample_layout(
+            ts, counts_by_sample_for_locus(context, locus_by_name[name])
+        )
+        for name, ts in mutated.items()
+    }
+
+    sample_names = list(context.samples_default.keys())
+
+    func_stats = _STATS_BY_TYPE.get(type_of_data.lower())
+    summary_stats = func_stats(
+        context.header_text,
+        mutated,
+        sample_names,
+        layouts_by_locus=layouts_by_locus,
+        seed=seed,
+    )
+
+    return summary_stats, group_priors_values
+
+
+def compute_summary_statistics_mixed(
+    context_dna: DnaReplayContext,
+    context_microsat: MicrosatReplayContext,
+    scenario_index: int,
+    *,
+    seed: int,
+    stats_filter: str = "ALL",
+) -> tuple[dict[str, float], dict[str, float], dict[str, dict[str, float]]]:
+    """Calcule les statistiques résumées pour un dataset combiné ADN +
+    microsat.
+
+    Args:
+        context_dna: Le contexte de rejeu pour les séquences ADN.
+        context_microsat: Le contexte de rejeu pour les microsats.
+        scenario_index: L'index 1-based du scénario à utiliser.
+        seed: La graine du tirage par-locus (second niveau, généalogie,
+            mutation).
+        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics.
+    Returns:
+        Un tuple de trois dictionnaires :
+        - summary_stats : le dictionnaire des statistiques résumées combinées ADN + microsat.
+        - values : le dictionnaire des valeurs de paramètres historiques.
+        - group_priors_values : le dictionnaire des valeurs de paramètres pour chaque groupe ADN et
+    """
+    # Vérification que les deux contextes ont le même header.txt et le même scénario_index
+    if context_dna.header_text != context_microsat.header_text:
+        raise ValueError(
+            "Les contextes ADN et microsat doivent avoir le même header.txt."
+        )
+
+    # Vérification que les deux contextes ont le même samples_default
+    if context_dna.samples_default != context_microsat.samples_default:
+        raise ValueError(
+            "Les contextes ADN et microsat doivent avoir le même samples_default."
+        )
+
+    # partie commune aux deux contextes
+    demography, sample_sets, values = _extract_common_data(
+        context_dna, scenario_index, seed
+    )
+
+    # partie simulation mutation ADN
+    summary_stats_dna, group_priors_values_dna = _compute_statistics(
+        context_dna, demography, sample_sets, type_of_data="dna", seed=seed
+    )
+
+    summary_stats_microsat, group_priors_values_microsat = _compute_statistics(
+        context_microsat, demography, sample_sets, type_of_data="microsat", seed=seed
+    )
+
+    if group_priors_values_dna != group_priors_values_microsat:
+        raise ValueError(
+            "Les valeurs de paramètres pour les groupes ADN et microsat ne correspondent pas."
+        )
+
+    # Fusionner les deux dictionnaires de statistiques résumées
+    combined_summary_stats_before_filter = {
+        **summary_stats_dna,
+        **summary_stats_microsat,
+    }
+
+    combined_summary_stats = _filter_statistics(
+        combined_summary_stats_before_filter,
+        context_dna.header_text,  # Utiliser le header ADN pour le filtrage
+        stats_filter,
+    )
+
+    return combined_summary_stats, values, group_priors_values_dna
+
+
+# A partir des valeurs déjà connues, on peut rejouer exactement la même particule (même tirage de paramètres historiques et de priors de groupe) pour les deux types de données ADN et microsat.
+def _extract_common_data_from_values(
+    context: DnaReplayContext | MicrosatReplayContext,
+    scenario_index: int,
+    values: dict[str, float],
+) -> tuple[msprime.Demography, list[msprime.SampleSet]]:
+    """Helper pour extraire les données communes nécessaires à la simulation et
+    au calcul des statistiques pour les scénarios ADN et microsat.
+
+    Args:
+        - context: Le contexte de rejeu pour les séquences ADN ou microsats.
+        - scenario_index: L'index 1-based du scénario à utiliser.
+        - values: Le dictionnaire des valeurs de paramètres.
+    Returns:
+        Un tuple contenant :
+        - demography: La démographie construite à partir des valeurs de paramètres.
+        - sample_sets: La liste des SampleSet construits à partir du scénario et des valeurs de paramètres.
+    """
+    header_text = context.header_text
+
+    demography = build_demography_for_scenario_index_from_values(
+        header_text, scenario_index, values
+    )
+
+    scenarios = parse_header_scenarios(header_text)
+    scenario = next(s for s in scenarios if s.index == scenario_index)
+    sample_sets = build_sample_sets_from_scenario(
+        scenario, values, context.samples_default
+    )
+    return demography, sample_sets
+
+
+def _compute_statistics_from_values(
+    context: DnaReplayContext | MicrosatReplayContext,
+    demography: msprime.Demography,
+    sample_sets: list[msprime.SampleSet],
+    *,
+    type_of_data: str,
+    group_priors_values: dict[str, float],
+    seed: int,
+) -> dict[str, float]:
+    """Helper permettant de calculer les statistiques résumées pour un type de
+    données donné (ADN ou microsat) à partir de valeurs déjà connues.
+
+    Args:
+        - context: Le contexte de rejeu pour les séquences ADN ou microsats.
+        - demography: La démographie construite à partir des valeurs de paramètres.
+        - sample_sets: La liste des SampleSet construits à partir du scénario et des valeurs de paramètres.
+        - type_of_data: Le type de données ("dna" ou "microsat").
+        - group_priors_values: Le dictionnaire des valeurs de paramètres pour chaque groupe.
+        - seed: La graine du tirage par-locus (second niveau, généalogie, mutation).
+    Returns:
+        Le dictionnaire des statistiques résumées.
+    """
+
+    if type_of_data.lower() not in ["dna", "microsat"]:
+        raise ValueError(
+            f"Type de données {type_of_data} non pris en charge. "
+            "Seuls 'dna' et 'microsat' sont pris en charge insensiblement à la casse."
+        )
+
+    func_mutation_from_values = _MUTATION_FROM_VALUES_BY_TYPE.get(type_of_data.lower())
+
+    mutated = func_mutation_from_values(
+        context, demography, group_priors_values, seed, sample_sets=sample_sets
+    )
+
+    locus_by_name = {locus.name: locus for locus in context.list_loci}
+    layouts_by_locus = {
+        name: compute_sample_layout(
+            ts, counts_by_sample_for_locus(context, locus_by_name[name])
+        )
+        for name, ts in mutated.items()
+    }
+
+    sample_names = list(context.samples_default.keys())
+
+    func_stats = _STATS_BY_TYPE.get(type_of_data.lower())
+    summary_stats = func_stats(
+        context.header_text,
+        mutated,
+        sample_names,
+        layouts_by_locus=layouts_by_locus,
+        seed=seed,
+    )
+
+    return summary_stats
+
+
+def compute_summary_statistics_mixed_from_values(
+    context_dna: DnaReplayContext,
+    context_microsat: MicrosatReplayContext,
+    scenario_index: int,
+    values: dict[str, float],
+    group_priors_values: dict[str, float],
+    *,
+    seed: int,
+    stats_filter: str = "ALL",
+) -> dict[str, float]:
+
+    # Vérification que les deux contextes ont le même header.txt et le même scénario_index
+    if context_dna.header_text != context_microsat.header_text:
+        raise ValueError(
+            "Les contextes ADN et microsat doivent avoir le même header.txt."
+        )
+
+    # Vérification que les deux contextes ont le même samples_default
+    if context_dna.samples_default != context_microsat.samples_default:
+        raise ValueError(
+            "Les contextes ADN et microsat doivent avoir le même samples_default."
+        )
+
+    # partie commune aux deux contextes
+    demography, sample_sets = _extract_common_data_from_values(
+        context_dna, scenario_index, values
+    )
+
+    # Statistiques ADN à partir de valeurs déjà connues
+    summary_stats_dna = _compute_statistics_from_values(
+        context_dna,
+        demography,
+        sample_sets,
+        type_of_data="dna",
+        group_priors_values=group_priors_values,
+        seed=seed,
+    )
+
+    # Statistiques microsat à partir de valeurs déjà connues
+    summary_stats_microsat = _compute_statistics_from_values(
+        context_microsat,
+        demography,
+        sample_sets,
+        type_of_data="microsat",
+        group_priors_values=group_priors_values,
+        seed=seed,
+    )
+
+    # Fusionner les deux dictionnaires de statistiques résumées
+    combined_summary_stats_before_filter = {
+        **summary_stats_dna,
+        **summary_stats_microsat,
+    }
+
+    combined_summary_stats = _filter_statistics(
+        combined_summary_stats_before_filter,
+        context_dna.header_text,  # Utiliser le header ADN pour le filtrage
+        stats_filter,
+    )
+
+    return combined_summary_stats

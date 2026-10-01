@@ -64,6 +64,8 @@ from bridge.pipeline import (
     compute_summary_statistics_from_values,
     compute_summary_statistics_microsat,
     compute_summary_statistics_microsat_from_values,
+    compute_summary_statistics_mixed,
+    compute_summary_statistics_mixed_from_values,
     read_header_text,
 )
 from bridge.prior_parser import (
@@ -1301,9 +1303,9 @@ def run_reftable_simulation_dna(
 
 # Rejeu des tirages réels de DIYABC pour les séquences ADN (comparaison appariée)
 def _group_prior_columns(header_text: str) -> list[tuple[str, str, str]]:
-    """Liste ordonnée de triplets (nom_colonne, nom de groupe, nom du paramètre)
-    des noms de colonnes "priors de groupe" d'un vrai
-    reftable DIYABC.
+    """Liste ordonnée de triplets (nom_colonne, nom de groupe, nom du
+    paramètre) des noms de colonnes "priors de groupe" d'un vrai reftable
+    DIYABC.
 
     Ex: `µseq_2`, `k1seq_2`, juste après les paramètres historiques et
     avant les colonnes de statistiques sur chaque ligne -- vérifiée
@@ -1868,6 +1870,336 @@ def replay_reftable_simulation_microsat(
                 _run_single_particle_microsat_from_values,
                 particle_index,
                 context,
+                scenario_index,
+                values,
+                group_priors_values,
+                stats_filter=stats_filter,
+            ): particle_index
+            for particle_index, (
+                scenario_index,
+                values,
+                group_priors_values,
+            ) in enumerate(rows)
+        }
+
+        for future in as_completed(futures):
+            particle_index = futures[future]
+            results_by_index[particle_index] = future.result()
+            done += 1
+            if done % 100 == 0 or done == len(rows):
+                print(
+                    f"Rejeu des tirages réels : {done}/{len(rows)} particules terminées"
+                )
+    return [results_by_index[i] for i in range(len(rows))]
+
+
+# ---------------------------------------------------------------------------------------
+# Microsat et DNA combined
+# ---------------------------------------------------------------------------------------
+
+# Version par tirage de scénario, tirage de paramètres et calcul de statistiques pour une particule microsat+DNA
+
+
+def _run_single_particle_mixed(
+    particle_index: int,
+    context_dna: DnaReplayContext,
+    context_microsat: MicrosatReplayContext,
+    scenarios: list[Scenario],
+    *,
+    stats_filter: str,
+) -> ParticleResult:
+    """Calcule une seule particule microsat+DNA (équivalent microsat+DNA de _run_single_particle).
+
+    Fonction top-level (picklable), appelée par chaque worker du
+    ProcessPoolExecutor.
+
+    La seed utilisée est dérivée de particle_index, garantissant un
+    tirage distinct et reproductible par particule (même particle_index
+    -> même résultat, peu importe l'ordre d'exécution des workers).
+
+    IMPORTANT : seed = particle_index + 1, jamais particle_index seul.
+    msprime.sim_ancestry rejette explicitement seed=0 (ValueError "seeds
+    must be greater than 0 and less than 2^32") -- vérifié empiriquement.
+    Donc particle_index=0 (le cas le plus probable, première particule)
+    utilise seed=1, pas seed=0.
+
+    Args:
+        particle_index: L'index de la particule (0-based).
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        scenarios: Les scénarios candidats (chaque particule tire le
+            sien).
+        stats_filter: "ALL" ou "HEADER".
+
+    Returns:
+        Le ParticleResult de cette particule.
+    """
+
+    seed = particle_index + 1
+    drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
+
+    summary_statistics, parameter_values, group_priors_values_nested = (
+        compute_summary_statistics_mixed(
+            context_dna=context_dna,
+            context_microsat=context_microsat,
+            scenario_index=drawn_scenario.index,
+            seed=seed,
+            stats_filter=stats_filter,
+        )
+    )
+
+    group_priors_values = {
+        column: group_priors_values_nested[group][prior]
+        for column, group, prior in _group_prior_columns(context_dna.header_text)
+    }
+
+    return ParticleResult(
+        particle_index=particle_index,
+        scenario_index=drawn_scenario.index,
+        parameter_values=parameter_values,
+        summary_statistics=summary_statistics,
+        group_priors_values=group_priors_values,
+    )
+
+
+def run_reftable_simulation_mixed(
+    reference_directory: str | Path,
+    scenarios: list[Scenario],
+    *,
+    nrec: int,
+    stats_filter: str = "ALL",
+    max_workers: int | None = None,
+) -> list[ParticleResult]:
+    """Produit nrec particules microsat+DNA (lignes de reftable.bin) en parallèle.
+
+    N'écrit rien sur disque par particule (compute_summary_statistics_mixed
+    est 100% Python, en mémoire).
+
+    Les résultats sont retournés DANS L'ORDRE de particle_index (0 à
+    nrec-1), pas dans l'ordre de complétion des workers -- important
+    pour la reproductibilité de l'ordre des lignes du reftable final.
+
+    Args:
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        scenarios: La liste des scénarios candidats (typiquement TOUS
+            les scénarios déclarés dans header.txt) : chaque particule
+            tire le SIEN au hasard, pondéré par son `weight` (voir
+            parameter_sampling.draw_scenario, sémantique vérifiée
+            contre particuleC.cpp::ParticleC::drawscenario) -- une même
+            particule peut donc finir sur n'importe lequel des
+            scénarios de la liste, pas forcément le même pour toutes.
+        nrec: Le nombre de particules à produire.
+        stats_filter: "ALL" ou "HEADER".
+        max_workers: Le nombre de process en parallèle (défaut : laissé
+            à ProcessPoolExecutor, généralement le nombre de cœurs
+            disponibles).
+
+    Returns:
+        La liste des ParticleResult, dans l'ordre de particle_index (0
+        à nrec-1).
+    """
+    # commun à DNA et Microsat
+    reference_directory = Path(reference_directory)
+    header_text = read_header_text(reference_directory)
+    raise_if_serial_with_sex_linked_loci(header_text)
+    check_header_trailer_line(header_text)
+    mss_filename = header_text.splitlines()[0].strip()
+    mss_path = reference_directory / mss_filename
+    list_loci = parse_loci_description(header_text)
+    sex_ratio = parse_sex_ratio(mss_path)
+    samples_default = observed_count_sample(mss_path)
+
+    # Contexte ADN
+    sequences_observed = observed_sequences(mss_path, list_loci)
+    context_dna = DnaReplayContext(
+        header_text=header_text,
+        mss_path=mss_path,
+        list_loci=list_loci,
+        dna_observed=sequences_observed,
+        frequencies_per_locus=base_frequency_by_locus(sequences_observed),
+        samples_default=samples_default,
+        sex_ratio=sex_ratio,
+    )
+
+    # conteste microsat
+    microsat_observed = observed_microsatellites(mss_path, list_loci)
+    context_microsat = MicrosatReplayContext(
+        header_text=header_text,
+        mss_path=mss_path,
+        list_loci=list_loci,
+        microsat_observed=microsat_observed,
+        bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
+        samples_default=samples_default,
+        sex_ratio=sex_ratio,
+    )
+
+    results_by_index: dict[int, ParticleResult] = {}
+    done = 0
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _run_single_particle_mixed,
+                particle_index,
+                context_dna,
+                context_microsat,
+                scenarios,
+                stats_filter=stats_filter,
+            ): particle_index
+            for particle_index in range(nrec)
+        }
+
+        for future in as_completed(futures):
+            particle_index = futures[future]
+            results_by_index[particle_index] = future.result()
+            done += 1
+            if done % 100 == 0 or done == nrec:
+                print(f"  {done}/{nrec} particules ADN simulées")
+
+    return [results_by_index[i] for i in range(nrec)]
+
+
+# Version par rejou de tirages réels de DIYABC pour les particules microsat+DNA (comparaison appariée)
+
+
+def _run_single_particle_mixed_from_values(
+    particle_index: int,
+    context_dna: DnaReplayContext,
+    context_microsat: MicrosatReplayContext,
+    scenario_index: int,
+    values: dict[str, float],
+    group_priors_values: dict[str, float],
+    *,
+    stats_filter: str,
+) -> ParticleResult:
+    """Variante de _run_single_particle_mixed qui NE TIRE AUCUN paramètre.
+
+    Rejoue (scenario_index, values, group_priors_values) tels que
+    fournis -- typiquement issus de
+    parse_real_reftable_params_with_group_priors.
+
+    Args:
+        particle_index: L'index de la particule (0-based).
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        scenario_index: L'index 1-based du scénario déjà tiré par
+            DIYABC pour cette particule.
+        values: Les valeurs de paramètres historiques déjà connues,
+            {nom: valeur}.
+        group_priors_values: Les valeurs de priors de groupe déjà
+            connues, {nom_colonne: valeur} (voir
+            compute_summary_statistics_dna_from_values).
+        stats_filter: "ALL" ou "HEADER".
+
+    Returns:
+        Le ParticleResult de cette particule.
+    """
+    seed = particle_index + 1
+    summary_statistics = compute_summary_statistics_mixed_from_values(
+        context_dna=context_dna,
+        context_microsat=context_microsat,
+        scenario_index=scenario_index,
+        values=values,
+        group_priors_values=group_priors_values,
+        seed=seed,
+        stats_filter=stats_filter,
+    )
+    return ParticleResult(
+        particle_index=particle_index,
+        scenario_index=scenario_index,
+        parameter_values=values,
+        summary_statistics=summary_statistics,
+        group_priors_values=group_priors_values,
+    )
+
+
+def replay_reftable_simulation_mixed(
+    reference_directory: str | Path,
+    priors: list,
+    group_priors_names: list[str],
+    scenarios: list[Scenario],
+    real_reftable_path: str | Path,
+    stats_filter: str = "ALL",
+    max_workers: int | None = None,
+) -> list[ParticleResult]:
+    """Rejoue, particule par particule, les tirages RÉELS de DIYABC (équivalent
+    microsat+DNA de replay_reftable_simulation).
+
+    Lit un reftable réel existant (scénario, paramètres historiques ET
+    priors de groupe RÉELLEMENT tirés par DIYABC) et rejoue chaque
+    particule côté msprime avec EXACTEMENT les mêmes valeurs -- permet
+    une comparaison appariée ligne à ligne, pas seulement une
+    comparaison de distributions agrégées.
+
+    Args:
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        priors: Les priors historiques déclarés dans header.txt.
+        group_priors_names: Les noms de colonnes de priors de groupe
+            (voir group_prior_column_names).
+        scenarios: Les scénarios candidats.
+        real_reftable_path: Chemin du reftable réel à rejouer.
+        stats_filter: "ALL" ou "HEADER".
+        max_workers: Le nombre de process en parallèle.
+
+    Returns:
+        Les ParticleResult dans le MÊME ORDRE que les lignes du fichier
+        réel.
+    """
+    # commun à DNA et Microsat
+    reference_directory = Path(
+        reference_directory
+    )  # Normalise en path au cas où une str soit passée
+    header_text = read_header_text(reference_directory)
+    raise_if_serial_with_sex_linked_loci(header_text)
+    check_header_trailer_line(header_text)
+    mss_filename = header_text.splitlines()[0].strip()
+    mss_path = reference_directory / mss_filename
+    list_loci = parse_loci_description(header_text)
+    sex_ratio = parse_sex_ratio(mss_path)
+    samples_default = observed_count_sample(mss_path)
+
+    # Contexte ADN
+    sequences_observed = observed_sequences(mss_path, list_loci)
+    context_dna = DnaReplayContext(
+        header_text=header_text,
+        mss_path=mss_path,
+        list_loci=list_loci,
+        dna_observed=sequences_observed,
+        frequencies_per_locus=base_frequency_by_locus(sequences_observed),
+        samples_default=samples_default,
+        sex_ratio=sex_ratio,
+    )
+
+    # contexte microsat
+    microsat_observed = observed_microsatellites(mss_path, list_loci)
+    context_microsat = MicrosatReplayContext(
+        header_text=header_text,
+        mss_path=mss_path,
+        list_loci=list_loci,
+        microsat_observed=microsat_observed,
+        bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
+        samples_default=samples_default,
+        sex_ratio=sex_ratio,
+    )
+
+    check_real_reftable_matches_header(header_text, real_reftable_path)
+    rows = parse_real_reftable_params_with_group_priors(
+        path=real_reftable_path,
+        priors=priors,
+        scenarios=scenarios,
+        group_priors_names=group_priors_names,
+    )
+
+    results_by_index: dict[int, ParticleResult] = {}
+    done = 0
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _run_single_particle_mixed_from_values,
+                particle_index,
+                context_dna,
+                context_microsat,
                 scenario_index,
                 values,
                 group_priors_values,

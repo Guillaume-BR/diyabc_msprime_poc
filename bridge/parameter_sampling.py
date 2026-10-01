@@ -72,8 +72,9 @@ def draw_scenario(scenarios: list[Scenario], seed: int) -> Scenario:
 
 
 def _draw_one_value(prior: Prior, rng: random.Random) -> float:
-    """Tire une valeur pour un prior donné, selon sa loi et ses bornes. Pour
-    les lois normale, log-normale et gamma, on retire les valeurs hors bornes
+    """Tire une valeur pour un prior donné, selon sa loi et ses bornes.
+
+    Pour les lois normale, log-normale et gamma, on retire les valeurs hors bornes
     comme DIYABC.
 
     Args:

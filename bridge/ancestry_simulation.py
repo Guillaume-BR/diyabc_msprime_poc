@@ -2498,7 +2498,7 @@ def dna_mutation_simulation_per_locus_from_values(
     `demography` reste un paramètre déjà construit par l'appelant, comme
     dans la version d'origine -- rien à changer ici pour les paramètres
     historiques (N1, ta, ts...), leur propre rejeu "from values" est géré
-    en amont par pipeline.build_demography_for_scenario_index, réutilisée
+    en amont par pipeline.build_demography_for_scenario_index_from_values, réutilisée
     telle quelle (générique, ne sait rien de SNP vs ADN).
 
     Pour les loci [S] de type <A>, on tire une graine différente pour chaque
@@ -2910,7 +2910,6 @@ def build_matrix_microsat_per_locus(
         - le deuxième contient {nom_locus: (mut_rate, Pgeom, sni_rate)} pour chaque locus microsatellite [M],
         - le troisième contient {nom_groupe: {nom_prior: valeur}} pour chaque groupe de locus microsatellite [M].
     """
-
     list_loci = context.list_loci
     params_per_locus, group_priors_values = build_microsat_local_param_per_locus(
         context.header_text, seed
