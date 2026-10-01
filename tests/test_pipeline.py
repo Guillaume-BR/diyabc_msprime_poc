@@ -11,14 +11,20 @@ from conftest import (
 
 from bridge.header_dataclasses import SnpReplayContext
 from bridge.pipeline import (
+    _compute_statistics,
+    _compute_statistics_from_values,
+    _extract_common_data,
     build_random_demography_for_scenario_index,
     compute_summary_statistics,
     compute_summary_statistics_dna,
     compute_summary_statistics_from_values,
     compute_summary_statistics_microsat,
+    compute_summary_statistics_mixed,
+    compute_summary_statistics_mixed_from_values,
     read_header_text,
     simulate_particle_genotypes,
 )
+from bridge.reftable_loop import _group_prior_columns
 
 
 def test_pipeline_scenario1(header_text):
@@ -322,3 +328,173 @@ def test_compute_summary_statistics_microsat(microsat_context_te2_xy):
     assert summary_stats["FST_1_1.2"] == pytest.approx(0.03084132131276057)
     assert summary_stats["LIK_1_1.2"] == pytest.approx(1.8034866005525414)
     assert summary_stats["LIK_1_2.1"] == pytest.approx(1.833674600989042)
+
+
+# -------------------------------------------------------------
+# Tests pour la partie Microsat + DNA
+# -------------------------------------------------------------
+
+
+def test_extract_common_data(microsat_context_te2_xy):
+    """Vérifie que _extract_common_data extrait correctement les données
+    communes nécessaires à la simulation et au calcul des statistiques pour
+    les scénarios ADN et microsat."""
+    demography, sample_sets, values = _extract_common_data(
+        context=microsat_context_te2_xy,
+        scenario_index=1,
+        seed=42,
+    )
+
+    assert isinstance(demography, msprime.Demography)
+    assert isinstance(sample_sets, list)
+    assert all(isinstance(s, msprime.SampleSet) for s in sample_sets)
+    assert "N1" in values
+
+
+def test_compute_statistics(microsat_context_te2_xy):
+    """Vérifie que _compute_statistics calcule correctement les statistiques
+    résumées pour les scénarios ADN et microsat."""
+    demography, sample_sets, values = _extract_common_data(
+        context=microsat_context_te2_xy,
+        scenario_index=1,
+        seed=42,
+    )
+
+    summary_stats, _ = _compute_statistics(
+        context=microsat_context_te2_xy,
+        demography=demography,
+        sample_sets=sample_sets,
+        type_of_data="microsat",
+        seed=42,
+    )
+
+    assert isinstance(summary_stats, dict)
+    assert "FST_1_1.2" in summary_stats
+    assert "LIK_1_1.2" in summary_stats
+    assert "LIK_1_2.1" in summary_stats
+
+
+def test_compute_statistics_with_wrong_type(microsat_context_te2_xy):
+    """Vérifie que _compute_statistics lève une ValueError si le type de données
+    est incorrect."""
+    demography, sample_sets, values = _extract_common_data(
+        context=microsat_context_te2_xy,
+        scenario_index=1,
+        seed=42,
+    )
+
+    with pytest.raises(ValueError, match="Type de données"):
+        _compute_statistics(
+            context=microsat_context_te2_xy,
+            demography=demography,
+            sample_sets=sample_sets,
+            type_of_data="invalid_type",
+            seed=42,
+        )
+
+
+def test_compute_summary_statistics_mixed(microsat_context_te2_xy, dna_context_te2_xy):
+    """Vérifie que le calcul des statistiques résumées mixtes (ADN + microsat) fonctionne correctement et que les résultats sont cohérents avec les calculs séparés pour chaque type de données."""
+    summary_stats_microsat, _, _ = compute_summary_statistics_microsat(
+        context=microsat_context_te2_xy,
+        scenario_index=1,
+        seed=42,
+    )
+
+    summary_stats_dna, _, _ = compute_summary_statistics_dna(
+        context=dna_context_te2_xy,
+        scenario_index=1,
+        seed=42,
+    )
+
+    summary_stats_mixed, _, _ = compute_summary_statistics_mixed(
+        context_dna=dna_context_te2_xy,
+        context_microsat=microsat_context_te2_xy,
+        scenario_index=1,
+        seed=42,
+    )
+
+    assert summary_stats_mixed == {**summary_stats_dna, **summary_stats_microsat}
+
+
+def test_compute_summary_statistics_mixed_with_stats_filter_Header(
+    microsat_context_te2_xy,
+    dna_context_te2_xy,
+):
+    """Vérifie que le statistics filter 'HEADER' fonctionne correctement pour le calcul des statistiques résumées mixtes (ADN + microsat)."""
+    summary_stats_mixed, _, _ = compute_summary_statistics_mixed(
+        context_dna=dna_context_te2_xy,
+        context_microsat=microsat_context_te2_xy,
+        scenario_index=1,
+        seed=42,
+        stats_filter="HEADER",
+    )
+
+    assert "HST_3_1.2" in summary_stats_mixed
+    assert "LIK_1_1.2" in summary_stats_mixed
+    assert len(summary_stats_mixed) == 58
+
+
+def test_compute_summary_statistics_mixed_values_with_different_header(
+    microsat_context_te2_xy,
+    dna_context_te2,
+):
+    """Vérifie que l'erreur est bien levé par compute_summary_statistics_mixed si les deux contextes n'ont pas le même header.txt"""
+
+    with pytest.raises(ValueError, match="doivent avoir le même header.txt"):
+        compute_summary_statistics_mixed(
+            context_dna=dna_context_te2,
+            context_microsat=microsat_context_te2_xy,
+            scenario_index=1,
+            seed=42,
+        )
+
+
+def test_compute_summary_statistics_mixed_from_values(
+    microsat_context_te2_xy, dna_context_te2_xy
+):
+    """Vérifie que compute_summary_statistics_mixed_from_values fonctionne correctement et que les résultats sont cohérents avec les calculs séparés pour chaque type de données."""
+
+    demography, sample_sets, values = _extract_common_data(
+        microsat_context_te2_xy, 1, seed=42
+    )
+    _, nested = _compute_statistics(
+        microsat_context_te2_xy,
+        demography,
+        sample_sets,
+        type_of_data="microsat",
+        seed=42,
+    )
+    group_priors_values = {
+        c: nested[g][p]
+        for c, g, p in _group_prior_columns(microsat_context_te2_xy.header_text)
+    }
+
+    summary_stats_microsat = _compute_statistics_from_values(
+        context=microsat_context_te2_xy,
+        demography=demography,
+        sample_sets=sample_sets,
+        type_of_data="microsat",
+        group_priors_values=group_priors_values,
+        seed=42,
+    )
+
+    summary_stats_dna = _compute_statistics_from_values(
+        context=dna_context_te2_xy,
+        demography=demography,
+        sample_sets=sample_sets,
+        type_of_data="dna",
+        group_priors_values=group_priors_values,
+        seed=42,
+    )
+
+    summary_stats_mixed = compute_summary_statistics_mixed_from_values(
+        context_dna=dna_context_te2_xy,
+        context_microsat=microsat_context_te2_xy,
+        scenario_index=1,
+        values=values,
+        group_priors_values=group_priors_values,
+        seed=42,
+    )
+
+    assert summary_stats_mixed == {**summary_stats_dna, **summary_stats_microsat}
