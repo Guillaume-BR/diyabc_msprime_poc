@@ -3,7 +3,7 @@ Rejoue, particule par particule, les tirages de priors RÉELLEMENT
 effectués par DIYABC dans un reftable existant (ex:
 first_records_of_the_reference_table_0.txt) -- au lieu d'en tirer de
 nouveaux indépendamment côté msprime (voir reftable_loop.
-run_reftable_simulation pour ça).
+run_reftable_simulation_snp pour ça).
 
 Permet une comparaison appariée DIYABC/msprime : chaque particule
 msprime utilise EXACTEMENT le même (N1,N2,N3,ta,ts,...) que la
@@ -21,15 +21,15 @@ from bridge.loci_parser import parse_loci_description
 from bridge.prior_parser import parse_group_priors, parse_priors
 from bridge.reftable_loop import (
     group_prior_column_names,
-    replay_reftable_simulation_dna,
+    replay_reftable_simulation_mixed,
     write_reftable_txt,
 )
 from bridge.scenario_parser import parse_header_scenarios
 
 suffix = "1"
-model = "TN"
+model = "K2P"
 
-REFERENCE_DIR = Path(f"reference/toy_example2_ms_dna_{model}")
+REFERENCE_DIR = Path(f"reference/toy_example2_ms_dna_50loci_{model}")
 REAL_REFTABLE_PATH = (
     REFERENCE_DIR / f"first_records_of_the_reference_table_{suffix}.txt"
 )
@@ -68,7 +68,7 @@ total_loci = len(parse_loci_description(header_text))
 print(
     f"Début de la simulation des {total_loci} loci pour rejouer les tirages de priors DIYABC..."
 )
-results = replay_reftable_simulation_dna(
+results = replay_reftable_simulation_mixed(
     reference_directory=WORK_DIR,
     priors=priors,
     group_priors_names=group_priors_names,
