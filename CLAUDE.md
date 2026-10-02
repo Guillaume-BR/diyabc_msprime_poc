@@ -27,9 +27,10 @@ structurally and statistically equivalent to the real DIYABC's output.
 | Serial/temporal sampling (MicroSat) | complete | `toy_example1_ms` (1 population, 4 sampling times) |
 | Serial/temporal sampling (SNP IndSeq) | complete | `human_seriel` (1 population, 4 sampling times, 130 stats, 0/130 significant) |
 | Serial/temporal sampling (SNP PoolSeq) | complete | `toy_example4_seriel` (100 loci, `<MRC=5>`, 4/133 vs ~6.7 expected) |
+| Mixed MicroSat + DNA in one header | complete | `toy_example2_ms_dna_TN` (73 columns, 2 replays × 2 scenarios) |
 
 Validation means a *paired* comparison: the real DIYABC priors are replayed
-particle-by-particle through our pipeline (`replay_reftable_simulation*`,
+particle-by-particle through our pipeline (`replay_reftable_simulation_snp*`,
 `scripts/replay_diyabc_priors*.py`) and the two reftables compared
 column-by-column with a two-sample Kolmogorov-Smirnov test. That test is
 **conservative** on a paired replay: both sides share the same prior draws, so
@@ -231,7 +232,7 @@ Each stage is a separate module with no cross-cutting logic:
    alphabetical sort would silently break it). Also `parse_sex_ratio`,
    `parse_maf_ratio`, `parse_mrc_ratio`, and the `.mss` readers
    (`observed_sequences`, `observed_microsatellites`,
-   `base_frequency_by_locus`, `observed_count_population`,
+   `base_frequency_by_locus`, `observed_count_sample`,
    `individual_sexes_from_locus_genotype`). `.mss` is genepop-format (`POP` as
    a block separator), structurally different from `.snp`'s column format —
    the two families never share a reader.
@@ -255,7 +256,7 @@ Each stage is a separate module with no cross-cutting logic:
     function it transcribes — **check there before changing a formula.**
 
 11. **`pipeline.py`** — orchestrates 1-10, no logic of its own.
-    `compute_summary_statistics` (+ `_dna` / `_microsat` / `_from_values`
+    `compute_summary_statistics_snp` (+ `_dna` / `_microsat` / `_from_values`
     variants) is the high-level entry point.
 
 12. **`reftable_loop.py`** — runs `nrec` particles in parallel
@@ -287,10 +288,10 @@ simulated particles).
 (`header_dataclasses.py`) are built **once per run**, not once per particle,
 and hold everything previously re-read from disk. Consequence: most per-locus
 builders took `(header_text, mss_file_path, ...)` and now take
-`(context, ...)` — e.g. `build_matrix_per_locus`,
+`(context, ...)` — e.g. `build_matrix_dna_per_locus`,
 `build_matrix_microsat_per_locus`, `microsat_mutation_simulation_per_locus`,
 `dna_mutation_simulation_per_locus`. Not all moved:
-`build_group_local_param_per_locus`, `build_microsat_local_param_per_locus`
+`build_local_param_dna_per_locus`, `build_local_param_microsat_per_locus`
 and `build_rate_map_per_locus` still take `(header_text, seed)` since they
 read nothing off disk. **Any signature quoted in an older note may be stale —
 check the real one before calling it from a notebook or script.**
@@ -392,8 +393,8 @@ under the date given.
   is a **logical OR**, not an integer sum, so `nA = sum((p[0]==al)+(p[1]==al))`
   undercounted every homozygote. Catastrophic on `<M>` (haploid duplication
   makes every individual a "homozygote" → negative FST). Fixed at both layers
-  (`int()` in `_length_by_pop_and_individuals` *and* in
-  `_compute_ni_nA_AA_for_one_population`); all 11 MicroSat stats now match
+  (`int()` in `_length_by_sample_and_individuals` *and* in
+  `_compute_ni_nA_AA_for_one_sample`); all 11 MicroSat stats now match
   real DIYABC within noise. **Not** the genealogy, **not** admixture,
   **not** the formula — all six re-verifications of `cal_Fst2p` were correct.
 - **SNI as the cause of the `FST` gap** — falsified twice, from both
@@ -489,7 +490,7 @@ under the date given.
   asserted the old behaviour was "exactly the C++'s `nal` since this project
   only has 2 populations" — that claim was wrong in a second way too: the
   `count_i ∪ count_j` union it described is a **no-op**, since
-  `_length_by_population` gives every population the same key list (taken from
+  `_length_by_sample` gives every population the same key list (taken from
   `variant.alleles`). Fixed by summing counts across all populations of
   `length_by_pop` and keeping only non-zero ones. Golden `LIK` values
   regenerated.
@@ -505,7 +506,7 @@ under the date given.
   *more* sensitive, not less. Do not treat a sign-test bias on a small-loci
   dataset as a port defect; check the loci count first.
 - **PoolSeq replay simulated twice the gene copies (25/09)** —
-  `compute_summary_statistics_from_values` built `counts_by_sample` **before**
+  `compute_summary_statistics_snp_from_values` built `counts_by_sample` **before**
   the IND/POOL branch, with the IndSeq formula
   (`count_per_samples.values()`, no `// 2`), and its PoolSeq branch used it as is.
   On a POOL file `count_per_samples` already counts **haploid gene copies**, so the
@@ -541,7 +542,7 @@ under the date given.
   `(params_per_locus, values)`; the MicroSat path carries them up through
   `build_matrix_microsat_per_locus` (now a **triplet**), the DNA path through
   `build_rate_map_per_locus` — DNA has **two** branches and
-  `build_matrix_per_locus` is the one that drops the value.
+  `build_matrix_dna_per_locus` is the one that drops the value.
   `_group_prior_columns` returns `(column, group, prior)` triplets and
   `group_prior_column_names` is now only its projection on the first element:
   **one authority decides which columns exist**, so writer and reader can no
@@ -563,6 +564,52 @@ under the date given.
   inside `build_rate_map_per_locus`; and `draw_group_parameter_values` does **not**
   filter by type, so a DNA run also carries a mixed dataset's MicroSat columns,
   with identical values (same seed). That is correct, not a bug.
+
+- **A mixed MicroSat + DNA header produced only half its statistics (02/10)** —
+  implemented and validated. The two stat paths are **structurally disjoint**:
+  `compute_all_statistics_dna` skips every `ms_or_seq != "S"` locus
+  (`summary_statistics.py:3994`), `compute_all_statistics_microsat` every `!= "M"`
+  (`:4096`), and no runner called both. Measured on `toy_example2_ms_dna_TN`: the
+  header declares **58** statistics (16 on G1 microsat, 42 on G2+G3 DNA), a
+  MicroSat run produced 16, a DNA run 42, **never 58**. So the `.bin` was not
+  structurally equivalent on this dataset family, and every past validation of
+  `toy_example2_ms_dna_*` covered a subset — true separately, false in
+  conjunction. `stats_filter="HEADER"` was simply unusable there (it raises on the
+  42 missing).
+  **Five properties made the merge possible, all measured before writing code**:
+  the two families' column names never collide; 16 + 42 = exactly the 58 the
+  header asks for; and at equal seed both paths draw **identical** historical and
+  group parameters. Above all, the four simulation loops enumerate the **full**
+  `list_loci` and skip with `continue` (`ancestry_simulation.py:2130, 2544, 2973,
+  3244`), so `i` is the locus index in the header — a `[M]` and an `[S]` locus can
+  never share it, hence **no seed collision between families** and values
+  identical to what the separate runs produced.
+  Shape: `compute_summary_statistics_mixed{,_from_values}` run steps 1-2-3
+  (demography, scenario, sample sets) **once**, then 4-5-6 per family, then
+  `_filter_statistics` **once** on the merged dict — that final filter is what
+  guarantees header order and turns any missing statistic into a `ValueError`.
+  The single draw is not a performance matter (the duplicate cost 0.12 ms against
+  160 ms per particle, 0.075 %) but a **correctness** one: both halves of a
+  reftable row now describe the same demographic history by construction, not by
+  reproducible coincidence.
+  Four helpers, drawing and replay kept as **siblings** per the project rule — a
+  `from_values: bool` flag was tried and hid three divergences at once (the
+  function called, its argument list, and its return arity); only the first had
+  been wired.
+  Validated by replay, 2 independent DIYABC runs × 2 scenarios: **73 columns**
+  (1 + 5 historical + 9 mutation + 58 statistics), historical and mutation columns
+  at `rdiff = 0` (the pairing proof), and 10/232 KS flags (4.3 % against 5 %
+  expected). **9 of the 10 are in G2**, all in `MPD`/`VPD`/`DTA`/`MNS`, and the
+  only two passing the persistence criterion (`VPD_2_1`, `MPD_2_1`, flagged in
+  both replays) belong to that family — i.e. the documented G2 residual, see Open
+  work. The lone non-G2 flag, `MGW_1_1`, appears in 1 cell of 4: noise. G1 being
+  clean at 15/16 is the point, since the MicroSat half is the one whose call path
+  changed.
+  **`values` fell out of the replay chain four times** while building this (the
+  drawing helper used instead of the replay one, `values` overwritten by an
+  unpack, then absent from the signature altogether). It is the one datum the
+  replay variant *receives* and the drawing variant *produces*, so copying the
+  drawing shape drops it every time. Only three of the four failures were loud.
 
 ## Domain knowledge
 
@@ -605,15 +652,15 @@ their type (`simulate_shared_ancestry_loci`, `particuleC.cpp:2422-2435`
   per dense state; the naive version cost ~34x, this one ~1.5x.
   Validating `sni_rate=0` against the GSM-only matrix is **not** a same-shape
   comparison — extract the dense rows/columns matching
-  `build_microsat_transition_matrix(...).alleles` first.
+  `build_transition_matrix_microsat(...).alleles` first.
 - **Statistics.** Two distinct data representations are required, not one:
-  `_length_by_pop_and_individuals` (for `FST`) returns a 2-tuple per
+  `_length_by_sample_and_individuals` (for `FST`) returns a 2-tuple per
   individual, duplicating a haploid's single allele into `(taille, taille)` —
   safe because `cal_Fst2p` itself treats a haploid copy as a doubled
   diploid-like pair, making the ANOVA ploidy-invariant. `_genotypes_by_pop_and_
   individuals` (for `LIK`) keeps **true** ploidy, because `cal_lik2p` applies a
   genuinely different formula per ploidy. Every other stat uses the flat
-  `_length_by_population` `(taille, compte)` table.
+  `_length_by_sample` `(taille, compte)` table.
   `LIK` is the only **asymmetric** stat — it iterates all ordered pairs
   `i != j` (the header declares `LIK 1.2 2.1` explicitly).
   Aggregation falls into three families, easy to conflate: mean of per-locus
@@ -651,7 +698,7 @@ their type (`simulate_shared_ancestry_loci`, `particuleC.cpp:2422-2435`
 - **`gams == 0` is a valid, non-error input** to `sample_site_rates`: `MwcGen::ggamma3` (`randomgenerator.cpp:199-204`) returns `mean` (`1.0`) directly when `shape == 0.0` rather than dividing by it. Raising `ZeroDivisionError` there would be wrong behaviour, not an unhandled edge case.
 - **DIYABC's Jukes-Cantor token is `JK`**, not `JC`/`JC69`. Got this wrong
   twice.
-- `build_transition_matrix`'s row-sum normalization needs
+- `build_transition_matrix_dna`'s row-sum normalization needs
   `axis=1, keepdims=True` — omitting `keepdims` divides along the wrong numpy
   axis and yields rows that don't sum to 1, with no error raised.
 - **Mutation placement is delegated to `msprime.sim_mutations`** with a generic
@@ -1020,6 +1067,11 @@ slips, kept because DIYABC's own output depends on them.
   G2 is where it surfaces because its mutation rate is **10x lower** than G3's
   (`UN[1e-8,1e-6]` vs `UN[1e-7,1e-5]`): few mutations per locus, so the
   statistics are dominated by genealogy shape instead of saturating.
+  **Confirmed again 02/10 on `toy_example2_ms_dna_TN` (5 loci/group), through the
+  mixed path**: 2 replays × 2 scenarios, 10/232 KS flags, **9 in G2** and all in
+  `MPD`/`VPD`/`DTA`/`MNS`; `VPD_2_1` and `MPD_2_1` persist across both replays.
+  So the family is stable across loci counts and substitution models, and it is
+  what any residual on this dataset family should be checked against first.
   **`DTA` carries no usable amplitude** — real 0.0200 vs simulated 0.0459 is an
   absolute shift of +0.026 on a mean-of-per-locus-D that nearly cancels to zero,
   hence `rdiff` of +130%. Judge this family on `MPD`. **Never read a `rdiff` on a
@@ -1035,10 +1087,10 @@ slips, kept because DIYABC's own output depends on them.
   Twelve measurements at 5 loci ranged −0.76 % to +4.69 %, which is why two
   successive verdicts were written and retracted on that dataset before the loci
   count was raised. **Do not read a global bias off a 5-loci-per-group dataset.**
-  The `JK` and `TN` branches of `build_transition_matrix` are validated by the
+  The `JK` and `TN` branches of `build_transition_matrix_dna` are validated by the
   per-column agreement at 5 loci (14 flags / 504 comparisons = 2.8 % against
   25.2 expected), which never depended on the global shift.
-- **`_genotypes_by_pop_and_individuals` not audited** for the `np.int64` leak
+- **`_genotypes_by_sample_and_individuals` not audited** for the `np.int64` leak
   that caused the `FST` bug. Harmless today (`LIK`'s formula does no boolean
   addition), but the next consumer of those tuples inherits the trap.
 - **`group_prior_column_names` hardcodes the `µ` prefix** (U+00B5) while DIYABC
