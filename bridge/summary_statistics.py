@@ -1403,6 +1403,11 @@ def compute_MPD(
     -- lève un KeyError si ce n'est pas le cas, comme les autres
     fonctions `compute_*` de ce module.
 
+    Reproduit depuis le 02/10 un BUG de DIYABC : un locus sans aucune
+        mutation est exclu du dénominateur, alors qu'il devrait y compter
+        avec une contribution nulle. Voir le bloc de commentaires dans le
+        corps de la fonction, et "G2 `MPD`/`VPD` residual" dans CLAUDE.md.
+
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
@@ -1418,6 +1423,32 @@ def compute_MPD(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
+        # ---------------------------------------------------------------
+        # BUG DIYABC REPRODUIT -- voir "G2 `MPD`/`VPD` residual" dans
+        # CLAUDE.md (Open work) et notes/exploration.md, 02/10 (suite).
+        #
+        # Sur un locus où la simulation n'a tiré AUCUNE mutation, DIYABC
+        # produit des séquences VIDES : `init_dnaseq` (particuleC.cpp:1777)
+        # part de `string dna = ""` et sa branche `else` ne remplit la
+        # séquence que si `dnatrue` -- ce qui est faux sur le chemin
+        # reftable. Or la chaîne vide EST son marqueur de donnée manquante
+        # (`#define SEQMISSING ""`, particuleC.hpp:17). `cal_mpdpl` ne retient
+        # donc aucune paire (`ndd = 0`) et `cal_mpd1p` exclut le locus de son
+        # dénominateur (`if (nd > 0)`). `cal_nss1p`, lui, le compte quand même,
+        # parce que son `OK` vient de `samplesize()`, qui lit les données
+        # OBSERVÉES et non les séquences simulées.
+        # Résultat : MPD est moyenné sur les seuls loci polymorphes, NSS sur
+        # tous. Quand theta -> 0, MPD -> 1/a_79 = 0.202 au lieu de 0.
+        #
+        # VERSION CORRECTE, à restaurer en supprimant les deux lignes
+        # `if ts.num_sites == 0: continue` ci-dessous : un locus sans
+        # mutation est un locus réellement monomorphe ; il doit compter au
+        # dénominateur avec une contribution nulle, ce que la théorie exige
+        # (E[pi] = theta, qui tend vers 0 avec theta) et ce que ce code
+        # faisait avant le 02/10.
+        # ---------------------------------------------------------------
+        if ts.num_sites == 0:
+            continue
         genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for samp_name in sample_names:
             matrix = genotype_matrices[samp_name]
@@ -1462,6 +1493,11 @@ def compute_VPD(
     -- lève un KeyError si ce n'est pas le cas, comme les autres
     fonctions `compute_*` de ce module.
 
+    Reproduit depuis le 02/10 un BUG de DIYABC : un locus sans aucune
+        mutation est exclu du dénominateur, alors qu'il devrait y compter
+        avec une contribution nulle. Voir le bloc de commentaires dans le
+        corps de la fonction, et "G2 `MPD`/`VPD` residual" dans CLAUDE.md.
+
     Args:
         tree_sequences: Les TreeSequences mutées du groupe (un locus [S]
             chacune).
@@ -1477,6 +1513,32 @@ def compute_VPD(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
+        # ---------------------------------------------------------------
+        # BUG DIYABC REPRODUIT -- voir "G2 `MPD`/`VPD` residual" dans
+        # CLAUDE.md (Open work) et notes/exploration.md, 02/10 (suite).
+        #
+        # Sur un locus où la simulation n'a tiré AUCUNE mutation, DIYABC
+        # produit des séquences VIDES : `init_dnaseq` (particuleC.cpp:1777)
+        # part de `string dna = ""` et sa branche `else` ne remplit la
+        # séquence que si `dnatrue` -- ce qui est faux sur le chemin
+        # reftable. Or la chaîne vide EST son marqueur de donnée manquante
+        # (`#define SEQMISSING ""`, particuleC.hpp:17). `cal_vpd1p` ne retient
+        # donc aucune paire (`ndd = 0`) et `cal_vpd1p` exclut le locus de son
+        # dénominateur (`if (nd > 1)`, un cran plus strict encore). `cal_nss1p`, lui, le compte quand même,
+        # parce que son `OK` vient de `samplesize()`, qui lit les données
+        # OBSERVÉES et non les séquences simulées.
+        # Résultat : VPD est moyennée sur les seuls loci polymorphes, donc
+        # gonflée du même facteur que MPD.
+        #
+        # VERSION CORRECTE, à restaurer en supprimant les deux lignes
+        # `if ts.num_sites == 0: continue` ci-dessous : un locus sans
+        # mutation est un locus réellement monomorphe ; il doit compter au
+        # dénominateur avec une contribution nulle, ce que la théorie exige
+        # (E[pi] = theta, qui tend vers 0 avec theta) et ce que ce code
+        # faisait avant le 02/10.
+        # ---------------------------------------------------------------
+        if ts.num_sites == 0:
+            continue
         genotype_matrices = _genotype_matrix_by_sample(ts, layout=layout)
         for samp_name in sample_names:
             matrix = genotype_matrices[samp_name]

@@ -694,12 +694,25 @@ def write_reftable_txt(
       - Ligne 1 : noms de colonnes, chacun centré sur 14 caractères
         (fonction C++ centre(s1, 14)).
       - Lignes suivantes : "%3d  " pour le numéro de scénario, puis
-        "  %12.6f" pour chaque paramètre et statistique.
+        "  %12.6g" pour chaque paramètre (historique ou mutationnel) et
+        "  %12.8f" pour chaque statistique.
 
-    Note sur le format des paramètres : le C++ distingue categ<2 (%12.0f,
-    entiers) vs categ>=2 (%12.3f, flottants), mais cette catégorie n'est
-    pas exposée dans les priors Python. On utilise %12.6f uniformément --
-    suffisant pour la comparaison statistique des distributions.
+    Note sur le format : le C++ distingue categ<2 (%12.0f, entiers) vs
+    categ>=2 (%12.3f, flottants), mais cette catégorie n'est pas exposée
+    dans les priors Python. On écrit donc les paramètres en %.6g (6
+    chiffres SIGNIFICATIFS, notation scientifique si besoin) et les
+    statistiques en %12.8f (8 chiffres APRÈS la virgule).
+
+    NE PAS unifier les deux. Un %f à décimales fixes a une précision
+    ABSOLUE, donc il détruit les petites valeurs -- et les taux de
+    mutation sont petits. Mesuré sur toy_example2_ms_dna_50loci_K2P,
+    µseq_2 ~ UN[1e-8,1e-6], 1000 particules : %12.6f ne laissait que 2
+    valeurs distinctes dont 508 écrasées à exactement 0 ; %12.8f en laisse
+    100, avec jusqu'à 19 % d'erreur relative sur les plus petites ; %.6g
+    les garde toutes exactement. C'est la notation que DIYABC emploie
+    lui-même pour ces colonnes (8.749e-07 dans son propre fichier texte).
+    Les statistiques, elles, valent de 0,02 à 12 sur ce jeu : %12.8f y est
+    exact et garde les colonnes alignées.
 
     Le texte utilise un jeu de colonnes de paramètres FIXE : l'UNION
     (dans l'ordre de déclaration des priors) des paramètres utilisés par
@@ -770,12 +783,50 @@ def write_reftable_txt(
         for r in results:
             line = f"{r.scenario_index:3d}  "
             for name in all_param_names:
-                line += f"  {r.parameter_values.get(name, float('nan')):12.6f}"
+                line += f"  {r.parameter_values.get(name, float('nan')):>12.6g}"
             for name in all_group_priors_names:
-                line += f"  {r.group_priors_values[name]:12.6f}"
+                line += f"  {r.group_priors_values[name]:>12.6g}"
             for name in stat_names:
-                line += f"  {r.summary_statistics[name]:12.6f}"
+                line += f"  {r.summary_statistics[name]:12.8f}"
             f.write(line + "\n")
+
+
+def _split_mutation_and_stat_names(names: list[str]) -> tuple[list[str], list[str]]:
+    """Sépare les colonnes de paramètres mutationnels des statistiques.
+
+    Dans la ligne de trailer de DIYABC, les paramètres mutationnels
+    (`µmic_1`, `pmic_1`, `snimic_1`, `µseq_2`, `k1seq_2`, `k2seq_3`...)
+    précèdent toujours les statistiques. On ne peut pas les compter depuis
+    `priors`/`scenarios`, qui ne portent pas la section `group priors` --
+    d'où cette lecture du nom : un nom de statistique commence toujours
+    par une MAJUSCULE ASCII (`NAL_1_1`, `MPD_2_1`, `ML3p_1.2.3`, `FST_1_1.2`),
+    un nom de paramètre mutationnel jamais (minuscule, ou `µ` U+00B5).
+
+    Args:
+        names: Les noms de colonnes qui suivent les paramètres
+            historiques, dans l'ordre du fichier.
+
+    Returns:
+        Le couple (noms de paramètres mutationnels, noms de statistiques).
+
+    Raises:
+        ValueError: Si un nom de paramètre apparaît APRÈS le début des
+            statistiques, c.-à-d. si l'hypothèse d'ordre est fausse. On
+            lève plutôt que de décaler silencieusement les formats, même
+            trap que `_historical_columns_order`.
+    """
+    is_stat = [bool(n) and n[0].isascii() and n[0].isupper() for n in names]
+    first_stat = next((i for i, s in enumerate(is_stat) if s), len(names))
+    tail = names[first_stat:]
+    intruders = [n for n, s in zip(tail, is_stat[first_stat:], strict=True) if not s]
+    if intruders:
+        raise ValueError(
+            "Noms de paramètres mutationnels trouvés APRÈS le début des "
+            f"statistiques : {intruders}. L'ordre supposé (paramètres puis "
+            "statistiques) est faux, ou une statistique ne commence pas par "
+            "une majuscule ASCII."
+        )
+    return names[:first_stat], tail
 
 
 def rewrite_real_reftable_txt(
@@ -821,7 +872,9 @@ def rewrite_real_reftable_txt(
     lines = [line for line in Path(input_path).read_text().splitlines() if line.strip()]
     all_param_names = _historical_columns_order(lines[0], priors, scenarios)
     header_tokens = lines[0].split()
-    stat_names = header_tokens[1 + len(all_param_names) :]
+    mutation_names, stat_names = _split_mutation_and_stat_names(
+        header_tokens[1 + len(all_param_names) :]
+    )
     data_lines = lines[1:]
 
     def _centre(s: str, width: int = 14) -> str:
@@ -831,6 +884,7 @@ def rewrite_real_reftable_txt(
         header = (
             _centre("scenario")
             + "".join(_centre(n) for n in all_param_names)
+            + "".join(_centre(n) for n in mutation_names)
             + "".join(_centre(n) for n in stat_names)
         )
         f.write(header + "\n")
@@ -842,16 +896,21 @@ def rewrite_real_reftable_txt(
             param_names = [name for name in all_param_names if name in kept]
             n_params = len(param_names)
             param_values = dict(zip(param_names, tokens[1 : 1 + n_params], strict=True))
-            stat_values = dict(zip(stat_names, tokens[1 + n_params :], strict=True))
+            rest = tokens[1 + n_params :]
+            n_mut = len(mutation_names)
+            mutation_values = dict(zip(mutation_names, rest[:n_mut], strict=True))
+            stat_values = dict(zip(stat_names, rest[n_mut:], strict=True))
 
             out_line = f"{scenario_index:3d}  "
             for name in all_param_names:
                 value = (
                     float(param_values[name]) if name in param_values else float("nan")
                 )
-                out_line += f"  {value:12.6f}"
+                out_line += f"  {value:>12.6g}"
+            for name in mutation_names:
+                out_line += f"  {float(mutation_values[name]):>12.6g}"
             for name in stat_names:
-                out_line += f"  {float(stat_values[name]):12.6f}"
+                out_line += f"  {float(stat_values[name]):12.8f}"
             f.write(out_line + "\n")
 
 

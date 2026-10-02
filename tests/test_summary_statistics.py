@@ -344,10 +344,18 @@ def test_mean_pairwise_differences_per_group(dna_context_te2):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
+    # Valeurs mises à jour le 02/10 avec la reproduction du bug DIYABC sur le
+    # dénominateur (voir compute_MPD/compute_VPD et "G2 `MPD`/`VPD` residual"
+    # dans CLAUDE.md). G2 a 5 loci dont **1 sans aucune mutation** : il sort
+    # désormais du dénominateur, d'où un facteur exactement 5/4 = 1.25 sur les
+    # deux populations. G3 a ses 5 loci polymorphes, donc ses valeurs sont
+    # inchangées -- c'est cette asymétrie qui vérifie que le garde porte bien
+    # sur l'absence de mutation et pas sur autre chose.
+    # NE PAS restaurer les anciennes valeurs sans retirer le garde.
     mean_g2 = compute_MPD(tree_sequences_for_group("G2"), sample_names)
     assert mean_g2 == {
-        "pop1": pytest.approx(1.1997435897435897),
-        "pop2": pytest.approx(1.2999999999999998),
+        "pop1": pytest.approx(1.4996794871794872),
+        "pop2": pytest.approx(1.6249999999999998),
     }
 
     mean_g3 = compute_MPD(tree_sequences_for_group("G3"), sample_names)
@@ -389,10 +397,18 @@ def test_variance_pairwise_differences_per_group(dna_context_te2):
         names = [locus.name for locus in loci_description if locus.group == group_name]
         return [mutated[name] for name in names]
 
+    # Valeurs mises à jour le 02/10 avec la reproduction du bug DIYABC sur le
+    # dénominateur (voir compute_MPD/compute_VPD et "G2 `MPD`/`VPD` residual"
+    # dans CLAUDE.md). G2 a 5 loci dont **1 sans aucune mutation** : il sort
+    # désormais du dénominateur, d'où un facteur exactement 5/4 = 1.25 sur les
+    # deux populations. G3 a ses 5 loci polymorphes, donc ses valeurs sont
+    # inchangées -- c'est cette asymétrie qui vérifie que le garde porte bien
+    # sur l'absence de mutation et pas sur autre chose.
+    # NE PAS restaurer les anciennes valeurs sans retirer le garde.
     variance_g2 = compute_VPD(tree_sequences_for_group("G2"), sample_names)
     assert variance_g2 == {
-        "pop1": pytest.approx(2.0666373720417366),
-        "pop2": pytest.approx(1.7601968335472828),
+        "pop1": pytest.approx(2.5832967150521706),
+        "pop2": pytest.approx(2.2002460419341037),
     }
 
     variance_g3 = compute_VPD(tree_sequences_for_group("G3"), sample_names)
