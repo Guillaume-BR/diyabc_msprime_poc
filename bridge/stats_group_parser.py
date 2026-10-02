@@ -1,7 +1,7 @@
 """Parseur de la section 'group summary statistics' de header.txt : la liste
 des statistiques que DIYABC calcule réellement pour ce dataset.
 
-Sert à filtrer summary_statistics.compute_all_statistics (qui calcule
+Sert à filtrer summary_statistics.compute_all_statistics_indseq/poolseq (qui calcule
 TOUTES les statistiques implémentées) pour ne garder que celles
 réellement déclarées par header.txt -- sinon reftable_msprime.txt/.bin
 a des colonnes en trop (ou en moins, pour un header.txt au vocabulaire

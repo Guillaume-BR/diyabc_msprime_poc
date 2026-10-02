@@ -306,7 +306,7 @@ def _male_counts_from_sexes(
             return {name: sexes.count("M") for name, sexes in sexes_per_sample.items()}
 
 
-def build_sex_stratified_samples_argument(
+def build_sex_stratified_samples_argument_snp(
     snp_file_path: str,
 ) -> list[msprime.SampleSet]:
     """Construit l'argument `samples` de msprime.sim_ancestry pour un locus
@@ -365,7 +365,7 @@ def build_sex_stratified_samples_argument(
     return _sample_sets_from_sexes(sexes_per_sample)
 
 
-def build_male_only_samples_argument(snp_file_path: str) -> dict[str, int]:
+def build_male_only_samples_argument_snp(snp_file_path: str) -> dict[str, int]:
     """Construit l'argument `samples` de msprime.sim_ancestry pour un locus
     <Y>.
 
@@ -457,7 +457,7 @@ def simulate_independent_loci(
             uniforme -- <A>/<M>, voir build_samples_argument) ou
             list[msprime.SampleSet] (ploidy hétérogène par sous-groupe
             au sein d'une population -- <X>, voir
-            build_sex_stratified_samples_argument). Les deux formes
+            build_sex_stratified_samples_argument_snp). Les deux formes
             sont transmises telles quelles à msprime.sim_ancestry, qui
             les accepte indifféremment.
         num_loci: Le nombre de généalogies indépendantes à simuler.
@@ -472,7 +472,7 @@ def simulate_independent_loci(
             observed_data.py) suppose cette combinaison ploidy=1 + Ne
             rescalé, pas ploidy=2 + Ne d'origine. Pour <X>, passer
             aussi ploidy=1 (voir
-            build_sex_stratified_samples_argument : c'est le ploidy
+            build_sex_stratified_samples_argument_snp : c'est le ploidy
             PAR SampleSet, pas ce paramètre global, qui donne 2
             copies aux femelles et 1 aux mâles -- ce paramètre-ci ne
             fixe que le taux de coalescence, via la Demography déjà
@@ -995,14 +995,14 @@ def simulate_genotypes_for_locus_type(
       - "H" : build_samples_argument, demography rescalée par
         coalescence_coefficient("H", sex_ratio) / 2, ploidy=1,
         with_maf_filter.
-      - "X" : build_sex_stratified_samples_argument, demography
+      - "X" : build_sex_stratified_samples_argument_snp, demography
         rescalée par coalescence_coefficient("X", sex_ratio) / 2,
         ploidy=1, with_maf_filter.
-      - "Y" : build_male_only_samples_argument, demography rescalée par
+      - "Y" : build_male_only_samples_argument_snp, demography rescalée par
         coalescence_coefficient("Y", sex_ratio) / 2, ploidy=1,
         with_maf_filter_shared_ancestry (arbre unique partagé).
       - "M" : build_samples_argument (TOUT le monde, pas mâles seuls --
-        voir la docstring de build_male_only_samples_argument sur ce
+        voir la docstring de build_male_only_samples_argument_snp sur ce
         point précis), demography rescalée par
         coalescence_coefficient("M", sex_ratio) / 2, ploidy=1,
         with_maf_filter_shared_ancestry.
@@ -1060,7 +1060,7 @@ def simulate_genotypes_for_locus_type(
     snp_file_path = context.snp_path
 
     if locus_type == "Y":
-        samples = build_male_only_samples_argument(snp_file_path)
+        samples = build_male_only_samples_argument_snp(snp_file_path)
         rescaled_demography = rescale_demography(
             demography, coalescence_coefficient(locus_type, sex_ratio) / 2
         )
@@ -1119,7 +1119,7 @@ def simulate_genotypes_for_locus_type(
             counts_per_sample=counts_per_sample,
         )
     elif locus_type == "X":
-        samples = build_sex_stratified_samples_argument(snp_file_path)
+        samples = build_sex_stratified_samples_argument_snp(snp_file_path)
         rescaled_demography = rescale_demography(
             demography, coalescence_coefficient(locus_type, sex_ratio) / 2
         )
@@ -1552,7 +1552,7 @@ def simulate_poolseq_reads_with_mrc_filter(
 
 
 # Simulation des mutations pour les séquences ADN
-def build_transition_matrix(
+def build_transition_matrix_dna(
     name_model: str, kappas: tuple[float, float], frequences_by_locus: dict[str, float]
 ) -> np.ndarray:
     """Calcule la matrice de transition (matQ) pour un modèle donné et un
@@ -1779,7 +1779,7 @@ def build_male_only_samples_argument_ms_dna(
     return _male_counts_from_sexes(sexes_per_sample)
 
 
-def build_group_local_param_per_locus(
+def build_local_param_dna_per_locus(
     header_text: str, seed: int
 ) -> tuple[dict[str, tuple[float, float, float]], dict[str, dict[str, float]]]:
     """Tire k1/k2/mus_rate par locus (hiérarchie à deux niveaux, groupe puis
@@ -1915,14 +1915,14 @@ def build_group_local_param_per_locus(
     return params_per_locus, values
 
 
-def build_matrix_per_locus(
+def build_matrix_dna_per_locus(
     context: DnaReplayContext, seed: int
 ) -> dict[str, np.ndarray]:
     """Construit la matrice de transition (matQ) de chaque locus [S].
 
     Pipeline complet header.txt + .mss + seed -> {nom_locus: matQ},
-    en composant build_group_local_param_per_locus (k1/k2 par locus),
-    base_frequency_by_locus (pi par locus) et build_transition_matrix.
+    en composant build_local_param_dna_per_locus (k1/k2 par locus),
+    base_frequency_by_locus (pi par locus) et build_transition_matrix_dna.
 
     Args:
         context: Contexte d'information sur le reftable et les loci ADN.
@@ -1933,7 +1933,7 @@ def build_matrix_per_locus(
     """
     header_text = context.header_text
     list_loci = context.list_loci
-    params_per_locus, _ = build_group_local_param_per_locus(header_text, seed)
+    params_per_locus, _ = build_local_param_dna_per_locus(header_text, seed)
     frequencies_by_locus = context.frequencies_per_locus
     group_priors = parse_group_priors(header_text)
 
@@ -1945,7 +1945,7 @@ def build_matrix_per_locus(
             name_model = gp_model.name_model
             kappas = params_per_locus[locus.name][0], params_per_locus[locus.name][1]
             frequencies = frequencies_by_locus[locus.name]
-            matrix_per_locus[locus.name] = build_transition_matrix(
+            matrix_per_locus[locus.name] = build_transition_matrix_dna(
                 name_model, kappas, frequencies
             )
     return matrix_per_locus
@@ -1967,7 +1967,7 @@ def build_rate_map_per_locus(
         - group_priors : un dict {nom_groupe: {nom_prior: valeur}} pour chaque groupe.
     """
     list_loci = parse_loci_description(header_text)
-    params_per_locus, group_priors_values = build_group_local_param_per_locus(
+    params_per_locus, group_priors_values = build_local_param_dna_per_locus(
         header_text, seed
     )
     mus_rate_per_locus = {
@@ -2123,7 +2123,7 @@ def dna_mutation_simulation_per_locus(
     rate_map_per_locus, group_priors_values = build_rate_map_per_locus(
         header_text, seed
     )
-    matrix_per_locus = build_matrix_per_locus(context, seed)
+    matrix_per_locus = build_matrix_dna_per_locus(context, seed)
 
     mutated_tree_sequences = {}
 
@@ -2183,7 +2183,7 @@ def dna_mutation_simulation_per_locus(
 # equivalent à partir des valeurs tirées via diyabc
 
 
-def _group_prior_values_from_columns(
+def _group_prior_values_dna_from_columns(
     group_priors_values: dict[str, float], group_priors: dict
 ) -> dict[str, dict[str, float]]:
     """Reconstruit le dict nested {groupe: {prior: valeur}} depuis les colonnes
@@ -2192,8 +2192,8 @@ def _group_prior_values_from_columns(
     Reshape les colonnes plates du vrai reftable DIYABC (ex:
     "µseq_2", "k1seq_2") dans la forme nested que
     draw_group_parameter_values produit normalement, pour que
-    build_group_local_param_per_locus_from_values puisse réutiliser
-    tel quel le corps de build_group_local_param_per_locus.
+    build_local_param_dna_per_locus_from_values puisse réutiliser
+    tel quel le corps de build_local_param_dna_per_locus.
 
     Args:
         group_priors_values: Dict {nom_colonne: valeur} tel que lu
@@ -2234,14 +2234,14 @@ def _group_prior_values_from_columns(
     return group_values
 
 
-def build_group_local_param_per_locus_from_values(
+def build_local_param_dna_per_locus_from_values(
     header_text: str, group_priors_values: dict[str, float], seed: int
 ) -> dict[str, tuple[float, float, float]]:
-    """Variante replay de build_group_local_param_per_locus (tier 1 = valeurs réelles).
+    """Variante replay de build_local_param_dna_per_locus (tier 1 = valeurs réelles).
 
     Le tirage par-groupe (premier niveau) est remplacé par les valeurs
     réellement tirées par DIYABC (`group_priors_values`, via
-    `_group_prior_values_from_columns`) ; le tirage par-locus (second
+    `_group_prior_values_dna_from_columns`) ; le tirage par-locus (second
     niveau, dispersion autour de la moyenne) N'EST PAS remplacé -- il
     continue de dépendre de `seed`, car DIYABC n'enregistre pas cette
     dispersion dans le reftable, il n'y a donc rien à rejouer pour elle.
@@ -2254,7 +2254,7 @@ def build_group_local_param_per_locus_from_values(
 
     Returns:
         Un dict {nom_locus: (k1, k2, mus_rate)}, même contrat que
-        build_group_local_param_per_locus.
+        build_local_param_dna_per_locus.
     """
     params_per_locus = {}
     group_priors = parse_group_priors(header_text)
@@ -2268,11 +2268,11 @@ def build_group_local_param_per_locus_from_values(
     # distinct de _KAPPA1_SEED_OFFSET/_KAPPA2_SEED_OFFSET utilisés plus bas
     # pour le tirage par locus -- pas besoin (et pas correct) de la rappeler
     # une fois par groupe/par kappa avec une graine décalée différente.
-    values = _group_prior_values_from_columns(
+    values = _group_prior_values_dna_from_columns(
         group_priors_values=group_priors_values, group_priors=group_priors
     )
 
-    # Voir le commentaire équivalent dans build_group_local_param_per_locus :
+    # Voir le commentaire équivalent dans build_local_param_dna_per_locus :
     # un random.Random(seed + OFFSET) créé À CHAQUE ITÉRATION du groupe fait
     # rejouer la même séquence de tirages à tous les groupes partageant le
     # même modèle (ex: G2/G3 tous deux K2P sur toy_example2_ms_dna) --
@@ -2364,15 +2364,15 @@ def build_group_local_param_per_locus_from_values(
     return params_per_locus
 
 
-def build_matrix_per_locus_from_values(
+def build_matrix_dna_per_locus_from_values(
     context: DnaReplayContext,
     group_priors_values: dict[str, float],
     seed: int,
 ) -> dict[str, np.ndarray]:
-    """Variante replay de build_matrix_per_locus (premier niveau = valeurs réelles).
+    """Variante replay de build_matrix_dna_per_locus (premier niveau = valeurs réelles).
 
     Ne tire PAS les k1/k2 moyens par groupe (premier niveau, voir
-    build_group_local_param_per_locus_from_values) : elle réutilise des
+    build_local_param_dna_per_locus_from_values) : elle réutilise des
     valeurs déjà connues, typiquement les tirages RÉELS d'un reftable
     DIYABC existant (voir reftable_loop.
     parse_real_reftable_params_with_group_priors) -- pour comparer DIYABC
@@ -2381,13 +2381,13 @@ def build_matrix_per_locus_from_values(
 
     Le tirage par-locus (second niveau, la dispersion de k1/k2 autour de
     la moyenne du groupe, via sampling_group_local_param à l'intérieur de
-    build_group_local_param_per_locus_from_values) N'EST PAS remplacé --
+    build_local_param_dna_per_locus_from_values) N'EST PAS remplacé --
     il continue d'être tiré depuis `seed`, car cette valeur par-locus
     n'est jamais enregistrée dans le vrai reftable DIYABC (seule la
     moyenne de groupe l'est) : il n'y a donc rien à rejouer pour lui.
 
-    Sinon identique à build_matrix_per_locus (même construction de
-    matrice de transition via build_transition_matrix, mêmes fréquences
+    Sinon identique à build_matrix_dna_per_locus (même construction de
+    matrice de transition via build_transition_matrix_dna, mêmes fréquences
     de bases observées).
 
     Args:
@@ -2398,11 +2398,11 @@ def build_matrix_per_locus_from_values(
 
     Returns:
         Un dict {nom_locus: matQ} pour chaque locus [S], même contrat
-        que build_matrix_per_locus.
+        que build_matrix_dna_per_locus.
     """
     header_text = context.header_text
     list_loci = context.list_loci
-    params_per_locus = build_group_local_param_per_locus_from_values(
+    params_per_locus = build_local_param_dna_per_locus_from_values(
         header_text, group_priors_values, seed
     )
 
@@ -2417,7 +2417,7 @@ def build_matrix_per_locus_from_values(
             name_model = gp_model.name_model
             kappas = params_per_locus[locus.name][0], params_per_locus[locus.name][1]
             frequencies = frequencies_by_locus[locus.name]
-            matrix_per_locus[locus.name] = build_transition_matrix(
+            matrix_per_locus[locus.name] = build_transition_matrix_dna(
                 name_model, kappas, frequencies
             )
     return matrix_per_locus
@@ -2430,7 +2430,7 @@ def build_rate_map_per_locus_from_values(
 
     Ne tire PAS le mus_rate moyen par groupe (premier niveau) :
     réutilise group_priors_values, comme
-    build_matrix_per_locus_from_values -- même principe, voir sa
+    build_matrix_dna_per_locus_from_values -- même principe, voir sa
     docstring pour le détail complet.
 
     Le tirage de `mutsit` (sample_site_rates, la dispersion du taux de
@@ -2452,7 +2452,7 @@ def build_rate_map_per_locus_from_values(
         même contrat que build_rate_map_per_locus.
     """
     list_loci = parse_loci_description(header_text)
-    params_per_locus = build_group_local_param_per_locus_from_values(
+    params_per_locus = build_local_param_dna_per_locus_from_values(
         header_text, group_priors_values, seed
     )
     mus_rate_per_locus = {
@@ -2488,9 +2488,9 @@ def dna_mutation_simulation_per_locus_from_values(
     """Variante replay de dna_mutation_simulation_per_locus (rejeu apparié
     DIYABC/msprime).
 
-    Voir build_matrix_per_locus_from_values pour le principe général :
+    Voir build_matrix_dna_per_locus_from_values pour le principe général :
     appelle build_rate_map_per_locus_from_values/
-    build_matrix_per_locus_from_values au lieu des originales, pour que
+    build_matrix_dna_per_locus_from_values au lieu des originales, pour que
     les k1/k2/mus_rate moyens par groupe soient ceux RÉELLEMENT tirés
     par DIYABC (group_priors_values) plutôt que tirés à nouveau depuis
     `seed`.
@@ -2535,7 +2535,7 @@ def dna_mutation_simulation_per_locus_from_values(
     rate_map_per_locus = build_rate_map_per_locus_from_values(
         header_text, group_priors_values, seed
     )
-    matrix_per_locus = build_matrix_per_locus_from_values(
+    matrix_per_locus = build_matrix_dna_per_locus_from_values(
         context, group_priors_values, seed
     )
 
@@ -2607,7 +2607,7 @@ def _distribution_from_position(
 ) -> np.ndarray:
     """Construit la ligne GSM (stepwise) recentrée sur `position`, sur la grille LOCALE espacée de `motif_size`.
 
-    Généralise `build_microsat_transition_matrix` (qui recentre toujours sur
+    Généralise `build_transition_matrix_microsat` (qui recentre toujours sur
     `root`) à un état courant arbitraire — nécessaire pour construire, état
     par état, la matrice de mélange GSM+SNI sur la grille dense (voir
     `_place_gsm_row_on_dense_grid`, qui étale ensuite ce résultat sur cette
@@ -2680,7 +2680,7 @@ def _sni_row_on_dense_grid(position: int, kmin: int, kmax: int) -> np.ndarray:
     nécessaire : le pas SNI (±1) tombe déjà sur la grille dense. Aux bords
     (`position == kmin` ou `kmax`), le côté qui sortirait de `[kmin, kmax]`
     replie sa masse de probabilité sur `position` lui-même (auto-mutation),
-    même convention que le clamp GSM de `build_microsat_transition_matrix`.
+    même convention que le clamp GSM de `build_transition_matrix_microsat`.
 
     Args:
         position: État allélique sur lequel centrer la ligne SNI.
@@ -2726,7 +2726,7 @@ def _mix_sni_gsm_rows(
     return gsm_row * (1 - p_sni) + sni_row * p_sni
 
 
-def build_microsat_transition_matrix_with_sni(
+def build_transition_matrix_microsat_with_sni(
     kmin: int,
     kmax: int,
     motif_size: int,
@@ -2790,7 +2790,7 @@ def build_microsat_transition_matrix_with_sni(
 
 
 # fonction obsolète, conservée pour compatibilité avec l'ancienne interface de simulation microsatellite
-def build_microsat_transition_matrix(
+def build_transition_matrix_microsat(
     kmin: int, kmax: int, motif_size: int, Pgeom: float, epsilon: float = 1e-16
 ) -> msprime.MatrixMutationModel:
     """Construit la matrice de transition d'un locus microsatellite [M].
@@ -2826,7 +2826,7 @@ def build_microsat_transition_matrix(
     )
 
 
-def build_microsat_local_param_per_locus(
+def build_local_param_microsat_per_locus(
     header_text, seed
 ) -> tuple[dict[str, tuple[float, float, float]], dict[str, dict[str, float]]]:
     """Construit les paramètres locaux (mut_rate, Pgeom, sni_rate) de chaque
@@ -2911,7 +2911,7 @@ def build_matrix_microsat_per_locus(
         - le troisième contient {nom_groupe: {nom_prior: valeur}} pour chaque groupe de locus microsatellite [M].
     """
     list_loci = context.list_loci
-    params_per_locus, group_priors_values = build_microsat_local_param_per_locus(
+    params_per_locus, group_priors_values = build_local_param_microsat_per_locus(
         context.header_text, seed
     )
     bounds_per_locus = context.bounds_per_locus
@@ -2921,7 +2921,7 @@ def build_matrix_microsat_per_locus(
         if locus.ms_or_seq == "M":
             mut_rate, Pgeom, sni_rate = params_per_locus[locus.name]
             bounds = bounds_per_locus[locus.name]
-            matrix_per_locus[locus.name] = build_microsat_transition_matrix_with_sni(
+            matrix_per_locus[locus.name] = build_transition_matrix_microsat_with_sni(
                 kmin=bounds[0],
                 kmax=bounds[1],
                 motif_size=locus.motif_size,
@@ -3033,8 +3033,8 @@ def _group_prior_values_microsat_from_columns(
         Reshape les colonnes plates du vrai reftable DIYABC (ex:
         "mut_rate", "Pgeom") dans la forme nested que
         draw_group_parameter_values produit normalement, pour que
-        build_group_local_param_per_locus_from_values puisse réutiliser
-        tel quel le corps de build_group_local_param_per_locus.
+        build_local_param_dna_per_locus_from_values puisse réutiliser
+        tel quel le corps de build_local_param_dna_per_locus.
 
         Args:
             group_priors_values: Dict {nom_colonne: valeur} tel que lu
@@ -3072,14 +3072,14 @@ def _group_prior_values_microsat_from_columns(
     return group_values
 
 
-def build_group_local_param_per_locus_microsat_from_values(
+def build_local_param_microsat_per_locus_from_values(
     header_text: str, group_priors_values: dict[str, float], seed: int
 ) -> dict[str, tuple[float, float]]:
-    """Variante replay de build_group_local_param_per_locus (tier 1 = valeurs réelles).
+    """Variante replay de build_local_param_microsat_per_locus (tier 1 = valeurs réelles).
 
     Le tirage par-groupe (premier niveau) est remplacé par les valeurs
     réellement tirées par DIYABC (`group_priors_values`, via
-    `_group_prior_values_from_columns`) ; le tirage par-locus (second
+    `_group_prior_values_dna_from_columns`) ; le tirage par-locus (second
     niveau, dispersion autour de la moyenne) N'EST PAS remplacé -- il
     continue de dépendre de `seed`, car DIYABC n'enregistre pas cette
     dispersion dans le reftable, il n'y a donc rien à rejouer pour elle.
@@ -3092,7 +3092,7 @@ def build_group_local_param_per_locus_microsat_from_values(
 
     Returns:
         Un dict {nom_locus: (mut_rate,Pgeom)}, même contrat que
-        build_group_local_param_per_locus_from_values.
+        build_local_param_microsat_per_locus_from_values.
     """
     params_per_locus = {}
     group_priors = parse_group_priors(header_text)
@@ -3109,7 +3109,7 @@ def build_group_local_param_per_locus_microsat_from_values(
         group_priors_values=group_priors_values, group_priors=group_priors
     )
 
-    # Voir le commentaire équivalent dans build_group_local_param_per_locus :
+    # Voir le commentaire équivalent dans build_local_param_dna_per_locus :
     # un random.Random(seed + OFFSET) créé À CHAQUE ITÉRATION du groupe fait
     # rejouer la même séquence de tirages à tous les groupes partageant le
     # même modèle en créant chaque rng UNE SEULE FOIS avant la boucle.
@@ -3176,7 +3176,7 @@ def build_matrix_microsat_per_locus_from_values(
     list_loci = context.list_loci
     bounds_per_locus = context.bounds_per_locus
 
-    params_per_locus = build_group_local_param_per_locus_microsat_from_values(
+    params_per_locus = build_local_param_microsat_per_locus_from_values(
         header_text, group_priors_values, seed
     )
 
@@ -3185,7 +3185,7 @@ def build_matrix_microsat_per_locus_from_values(
         if locus.ms_or_seq == "M":
             mut_rate, Pgeom, sni_rate = params_per_locus[locus.name]
             bounds = bounds_per_locus[locus.name]
-            matrix_per_locus[locus.name] = build_microsat_transition_matrix_with_sni(
+            matrix_per_locus[locus.name] = build_transition_matrix_microsat_with_sni(
                 kmin=bounds[0],
                 kmax=bounds[1],
                 motif_size=locus.motif_size,
@@ -3236,7 +3236,7 @@ def microsat_mutation_simulation_per_locus_from_values(
     mutated_tree_sequences = {}
 
     # appel redondant !? modifier build_matrix_microsat_per_locus où l'on pourrait récupérer mut_rate
-    params_per_locus = build_group_local_param_per_locus_microsat_from_values(
+    params_per_locus = build_local_param_microsat_per_locus_from_values(
         header_text, group_priors_values, seed
     )
 

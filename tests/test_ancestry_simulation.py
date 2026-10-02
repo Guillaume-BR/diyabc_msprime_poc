@@ -14,26 +14,26 @@ from conftest import (
 
 from bridge.ancestry_simulation import (
     _distribution_from_position,
-    _group_prior_values_from_columns,
+    _group_prior_values_dna_from_columns,
     _place_gsm_row_on_dense_grid,
     _reindex_reads_by_msprime_name,
     _sni_row_on_dense_grid,
-    build_group_local_param_per_locus,
-    build_group_local_param_per_locus_from_values,
-    build_male_only_samples_argument,
+    build_local_param_dna_per_locus,
+    build_local_param_dna_per_locus_from_values,
+    build_local_param_microsat_per_locus,
     build_male_only_samples_argument_ms_dna,
+    build_male_only_samples_argument_snp,
+    build_matrix_dna_per_locus,
     build_matrix_microsat_per_locus,
-    build_matrix_per_locus,
-    build_microsat_local_param_per_locus,
-    build_microsat_transition_matrix,
-    build_microsat_transition_matrix_with_sni,
     build_rate_map,
     build_rate_map_per_locus,
     build_sample_sets_from_scenario,
     build_samples_argument,
-    build_sex_stratified_samples_argument,
     build_sex_stratified_samples_argument_ms_dna,
-    build_transition_matrix,
+    build_sex_stratified_samples_argument_snp,
+    build_transition_matrix_dna,
+    build_transition_matrix_microsat,
+    build_transition_matrix_microsat_with_sni,
     compute_population_layout,
     compute_sample_layout,
     count_loci_per_group,
@@ -233,17 +233,17 @@ def test_simulate_snp_genotypes_grouped_by_sample(header_text):
         assert set(all_genotypes) == {0, 1}
 
 
-def test_build_sex_stratified_samples_argument():
+def test_build_sex_stratified_samples_argument_snp():
     """Vérifie que build_samples_argument construit bien le dict attendu par
     msprime.sim_ancestry, avec les bons noms de populations et le bon nombre
     d'individus par population, en tenant compte du sexe des individus (pour
     les loci <X>/<Y>/<M>)."""
     with pytest.raises(ValueError, match="sexe inconnu"):
-        build_sex_stratified_samples_argument(
+        build_sex_stratified_samples_argument_snp(
             OBSERVED_SNP_FILE_HUMAN
         )  # sexe non renseigné
 
-    liste_samples = build_sex_stratified_samples_argument(OBSERVED_SNP_FILE_TE5)
+    liste_samples = build_sex_stratified_samples_argument_snp(OBSERVED_SNP_FILE_TE5)
     assert len(liste_samples) == 6  # 3 populations x 2 sexes (M/F)
     for sample_set in liste_samples:
         assert sample_set.population in {"pop1", "pop2", "pop3"}
@@ -251,16 +251,18 @@ def test_build_sex_stratified_samples_argument():
         assert sample_set.ploidy in {1, 2}  # M=1, F=2
 
 
-def test_build_male_only_samples_argument():
-    """Vérifie que build_male_only_samples_argument construit bien un dict
+def test_build_male_only_samples_argument_snp():
+    """Vérifie que build_male_only_samples_argument_snp construit bien un dict
     {population: nombre_de_mâles} (PAS une liste de SampleSet, contrairement à
-    build_sex_stratified_samples_argument) -- <Y> n'a besoin que d'un ploidy
+    build_sex_stratified_samples_argument_snp) -- <Y> n'a besoin que d'un ploidy
     uniforme=1 parmi les mâles, pas d'hétérogénéité au sein d'une
     population."""
     with pytest.raises(ValueError, match="sexe inconnu"):
-        build_male_only_samples_argument(OBSERVED_SNP_FILE_HUMAN)  # sexe non renseigné
+        build_male_only_samples_argument_snp(
+            OBSERVED_SNP_FILE_HUMAN
+        )  # sexe non renseigné
 
-    samples = build_male_only_samples_argument(OBSERVED_SNP_FILE_TE5)
+    samples = build_male_only_samples_argument_snp(OBSERVED_SNP_FILE_TE5)
     assert samples == {"pop1": 10, "pop2": 10, "pop3": 10}
 
 
@@ -665,7 +667,7 @@ def test_with_maf_filter_shared_ancestry_no_filter_matches_direct_call(
         header_text_te5, scenario_index=1, seed=42
     )
     sex_ratio = parse_sex_ratio(OBSERVED_SNP_FILE_TE5)
-    samples = build_male_only_samples_argument(OBSERVED_SNP_FILE_TE5)
+    samples = build_male_only_samples_argument_snp(OBSERVED_SNP_FILE_TE5)
     rescaled_demography = rescale_demography(
         demography, coalescence_coefficient("Y", sex_ratio) / 2
     )
@@ -700,7 +702,7 @@ def test_with_maf_filter_shared_ancestry_rejects_low_maf_loci(header_text_te5):
         header_text_te5, scenario_index=1, seed=42
     )
     sex_ratio = parse_sex_ratio(OBSERVED_SNP_FILE_TE5)
-    samples = build_male_only_samples_argument(OBSERVED_SNP_FILE_TE5)
+    samples = build_male_only_samples_argument_snp(OBSERVED_SNP_FILE_TE5)
     rescaled_demography = rescale_demography(
         demography, coalescence_coefficient("Y", sex_ratio) / 2
     )
@@ -1004,7 +1006,9 @@ def test_transition_matrix_jk():
     frequences_by_locus = {"pi_A": 0.1, "pi_C": 0.2, "pi_G": 0.3, "pi_T": 0.4}
     # test pour le modèle JK
     name_model = "JK"
-    transition_matrix = build_transition_matrix(name_model, kappas, frequences_by_locus)
+    transition_matrix = build_transition_matrix_dna(
+        name_model, kappas, frequences_by_locus
+    )
     expected_matrix = np.array(
         [
             [0, 1 / 3, 1 / 3, 1 / 3],
@@ -1023,7 +1027,9 @@ def test_transition_matrix_k2p():
     frequences_by_locus = {"pi_A": 0.1, "pi_C": 0.2, "pi_G": 0.3, "pi_T": 0.4}
     # test pour le modèle K2P
     name_model = "K2P"
-    transition_matrix = build_transition_matrix(name_model, kappas, frequences_by_locus)
+    transition_matrix = build_transition_matrix_dna(
+        name_model, kappas, frequences_by_locus
+    )
     before_normalisation = np.array(
         [[0, 1, 2, 1], [1, 0, 1, 2], [2, 1, 0, 1], [1, 2, 1, 0]]
     )
@@ -1046,7 +1052,9 @@ def test_transition_matrix_hky():
     expected_matrix = before_normalisation / before_normalisation.sum(
         axis=1, keepdims=True
     )
-    transition_matrix = build_transition_matrix(name_model, kappas, frequences_by_locus)
+    transition_matrix = build_transition_matrix_dna(
+        name_model, kappas, frequences_by_locus
+    )
     assert np.allclose(transition_matrix, expected_matrix)
 
 
@@ -1063,17 +1071,19 @@ def test_transition_matrix_tn():
     expected_matrix = before_normalisation / before_normalisation.sum(
         axis=1, keepdims=True
     )
-    transition_matrix = build_transition_matrix(name_model, kappas, frequences_by_locus)
+    transition_matrix = build_transition_matrix_dna(
+        name_model, kappas, frequences_by_locus
+    )
     assert np.allclose(transition_matrix, expected_matrix)
 
 
 def test_transition_matrix_invalid_model():
-    """Vérifie que la fonction build_transition_matrix lève une exception pour
+    """Vérifie que la fonction build_transition_matrix_dna lève une exception pour
     un modèle invalide."""
     kappas = (2, 3)
     frequences_by_locus = {"pi_A": 0.1, "pi_C": 0.2, "pi_G": 0.3, "pi_T": 0.4}
     with pytest.raises(NotImplementedError, match="Modèle de"):
-        build_transition_matrix("INVALID_MODEL", kappas, frequences_by_locus)
+        build_transition_matrix_dna("INVALID_MODEL", kappas, frequences_by_locus)
 
 
 def test_count_loci_per_group(header_text_te2):
@@ -1109,15 +1119,15 @@ def test_count_loci_per_group(header_text_te2):
         count_loci_per_group(list_loci_invalid)
 
 
-def test_build_group_local_param_per_locus(header_text_te2):
-    """Vérifie que la fonction build_group_local_param_per_locus retourne le
+def test_build_local_param_dna_per_locus(header_text_te2):
+    """Vérifie que la fonction build_local_param_dna_per_locus retourne le
     bon dictionnaire de kappa1 et kappa2 par locus pour le fichier toy_example2
     (dataset <A>+<M> avec 3 populations).
 
     Test de reproductibilité avec la même graine. Il manque un test pour
     vérifier lorsuqe le model est JK ou TN
     """
-    params_per_locus, _ = build_group_local_param_per_locus(header_text_te2, seed=42)
+    params_per_locus, _ = build_local_param_dna_per_locus(header_text_te2, seed=42)
 
     assert len(params_per_locus) == 10
     assert len(params_per_locus["Locus_S_A_11_"]) == 3
@@ -1130,18 +1140,18 @@ def test_build_group_local_param_per_locus(header_text_te2):
     assert len(set(all_mus_rate_values)) == 10  # Tous les mus_rate sont différents
 
     # test de reproductibilité avec la même graine
-    params_per_locus_2, _ = build_group_local_param_per_locus(header_text_te2, seed=42)
+    params_per_locus_2, _ = build_local_param_dna_per_locus(header_text_te2, seed=42)
     assert params_per_locus == params_per_locus_2
 
 
-def test_build_matrix_per_locus(dna_context_te2):
-    """Vérifie que la fonction build_matrix_per_locus retourne le bon
+def test_build_matrix_dna_per_locus(dna_context_te2):
+    """Vérifie que la fonction build_matrix_dna_per_locus retourne le bon
     dictionnaire de matrices de transition par locus pour le fichier
     toy_example2 (dataset <A>+<M> avec 3 populations).
 
     Test de reproductibilité avec la même graine.
     """
-    matrix_per_locus = build_matrix_per_locus(dna_context_te2, seed=42)
+    matrix_per_locus = build_matrix_dna_per_locus(dna_context_te2, seed=42)
 
     assert len(matrix_per_locus) == 10
     for matrix in matrix_per_locus.values():
@@ -1149,7 +1159,7 @@ def test_build_matrix_per_locus(dna_context_te2):
         assert np.allclose(matrix.sum(axis=1), 1.0)  # Chaque ligne doit sommer à 1
 
     # test de reproductibilité avec la même graine
-    matrix_per_locus_2 = build_matrix_per_locus(dna_context_te2, seed=42)
+    matrix_per_locus_2 = build_matrix_dna_per_locus(dna_context_te2, seed=42)
     for locus in matrix_per_locus:
         assert np.allclose(matrix_per_locus[locus], matrix_per_locus_2[locus])
 
@@ -1330,7 +1340,7 @@ def test_dna_mutation_simulation_per_locus_ploidy_matches_heritage(dna_context_t
 # tests sur les valeurs de prior par groupe tirées par diyabc
 
 
-def test_group_prior_values_from_columns(header_text_te2):
+def test_group_prior_values_dna_from_columns(header_text_te2):
     group_priors_values = {
         "µmic_1": 0.0007375,
         "pmic_1": 0.2029,
@@ -1342,14 +1352,14 @@ def test_group_prior_values_from_columns(header_text_te2):
     }
 
     group_priors = parse_group_priors(header_text_te2)
-    result = _group_prior_values_from_columns(group_priors_values, group_priors)
+    result = _group_prior_values_dna_from_columns(group_priors_values, group_priors)
     assert result == {
         "G2": {"MEANMU": 4.068e-07, "MEANK1": 2.684},
         "G3": {"MEANMU": 8.112e-06, "MEANK1": 13.42},
     }
 
 
-def test_build_group_local_param_per_locus_from_values(header_text_te2):
+def test_build_local_param_dna_per_locus_from_values(header_text_te2):
     group_priors_values = {
         "µmic_1": 0.0007375,
         "pmic_1": 0.2029,
@@ -1360,7 +1370,7 @@ def test_build_group_local_param_per_locus_from_values(header_text_te2):
         "k1seq_3": 13.42,
     }
 
-    result = build_group_local_param_per_locus_from_values(
+    result = build_local_param_dna_per_locus_from_values(
         header_text_te2, group_priors_values, seed=42
     )
     assert len(result) == 10
@@ -1386,7 +1396,7 @@ def test_build_sex_stratified_samples_argument_ms_dna(header_text_te2_XY):
 
 
 def test_build_male_only_samples_argument_ms_dna(header_text_te2_XY):
-    """Vérifie que build_male_only_samples_argument construit bien un dict
+    """Vérifie que build_male_only_samples_argument_ms_dna construit bien un dict
     {population: nombre_de_mâles} (PAS une liste de SampleSet, contrairement à
     build_sex_stratified_samples."""
     liste_loci = parse_loci_description(header_text_te2_XY)
@@ -1457,8 +1467,8 @@ def test_sni_row_on_dense_grid():
     assert np.allclose(result3, np.array([0, 0, 0, 0, 0.5, 0.5]))
 
 
-def test_build_microsat_transition_matrix_with_sni():
-    """Vérifie que la fonction build_microsat_transition_matrix_with_sni
+def test_build_transition_matrix_microsat_with_sni():
+    """Vérifie que la fonction build_transition_matrix_microsat_with_sni
     retourne la bonne matrice de transition pour les loci microsatellites."""
     kmin = 0
     kmax = 6
@@ -1467,7 +1477,7 @@ def test_build_microsat_transition_matrix_with_sni():
     sni_rate = 0.1
     mut_rate = 0.5
 
-    matrix = build_microsat_transition_matrix_with_sni(
+    matrix = build_transition_matrix_microsat_with_sni(
         kmin=kmin,
         kmax=kmax,
         motif_size=motif_size,
@@ -1480,7 +1490,7 @@ def test_build_microsat_transition_matrix_with_sni():
     assert np.allclose(matrix.sum(axis=1), 1.0)  # Chaque ligne doit sommer à 1
 
     # test pour savoir si on obtient la mêm chose sans sni avec sni_rate =0
-    model_without_sni = build_microsat_transition_matrix(
+    model_without_sni = build_transition_matrix_microsat(
         kmin=kmin,
         kmax=kmax,
         motif_size=motif_size,
@@ -1490,7 +1500,7 @@ def test_build_microsat_transition_matrix_with_sni():
     matrix_without_sni = model_without_sni.transition_matrix
 
     sni_rate = 0
-    matrix_with_sni = build_microsat_transition_matrix_with_sni(
+    matrix_with_sni = build_transition_matrix_microsat_with_sni(
         kmin=kmin,
         kmax=kmax,
         motif_size=motif_size,
@@ -1509,10 +1519,10 @@ def test_build_microsat_transition_matrix_with_sni():
     assert np.allclose(matrix_without_sni, extracted_matrix_with_sni)
 
 
-def test_build_microsat_transition_matrix():
-    """Vérifie que la fonction build_microsat_transition_matrix retourne la
+def test_build_transition_matrix_microsat():
+    """Vérifie que la fonction build_transition_matrix_microsat retourne la
     bonne matrice de transition pour les loci microsatellites."""
-    model = build_microsat_transition_matrix(
+    model = build_transition_matrix_microsat(
         kmin=162,
         kmax=240,
         motif_size=2,
@@ -1529,7 +1539,7 @@ def test_build_microsat_transition_matrix():
     assert model.alleles[19] == "201"
 
     # On va tester avec un Pgeom limite
-    model2 = build_microsat_transition_matrix(
+    model2 = build_transition_matrix_microsat(
         kmin=162,
         kmax=240,
         motif_size=2,
@@ -1541,7 +1551,7 @@ def test_build_microsat_transition_matrix():
     assert np.isclose(model2.transition_matrix[19, 20], 0.5)
     assert np.isclose(model2.transition_matrix.sum(axis=1)[19], 1.0)
 
-    model3 = build_microsat_transition_matrix(
+    model3 = build_transition_matrix_microsat(
         kmin=162,
         kmax=240,
         motif_size=2,
@@ -1554,11 +1564,11 @@ def test_build_microsat_transition_matrix():
     assert np.allclose(row_without_root, 1.0 / 38)
 
 
-def test_build_microsat_local_param_per_locus(header_text_te2_XY):
+def test_build_local_param_microsat_per_locus(header_text_te2_XY):
     """Vérifie que la fonction buiomparaison directe de forme), le
     raleld_microsat_local_param_per_locus retourne le bon dictionnaire Test de
     reproductibilité avec la même graine."""
-    params_per_locus, parameter_values = build_microsat_local_param_per_locus(
+    params_per_locus, parameter_values = build_local_param_microsat_per_locus(
         header_text_te2_XY, seed=42
     )
 
@@ -1607,7 +1617,7 @@ def test_build_microsat_local_param_per_locus(header_text_te2_XY):
     assert parameter_values[group]["MEANSNI"] >= 0.0
 
     # test de reproductibilité avec la même graine
-    params_per_locus_2, parameter_values_2 = build_microsat_local_param_per_locus(
+    params_per_locus_2, parameter_values_2 = build_local_param_microsat_per_locus(
         header_text_te2_XY, seed=42
     )
     assert params_per_locus == params_per_locus_2

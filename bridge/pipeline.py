@@ -10,11 +10,11 @@ construction : il orchestre uniquement.
 Deux familles de points d'entrée, chacune de bout en bout dans sa propre
 section ci-dessous :
   - tirage ALÉATOIRE des paramètres (build_random_demography,
-    simulate_particle_genotypes, compute_summary_statistics) ;
+    simulate_particle_genotypes, compute_summary_statistics_snp/dna/microsat) ;
   - valeurs de paramètres DÉJÀ CONNUES / rejeu (build_demography_for_
     scenario_index, simulate_particle_genotypes_from_values,
-    compute_summary_statistics_from_values) -- voir
-    reftable_loop.replay_reftable_simulation.
+    compute_summary_statistics_snp/dna/microsat_from_values) -- voir
+    reftable_loop.replay_reftable_simulation_snp/microsat/dna.
 Les deux partagent les mêmes helpers (section "Fondations" ci-dessous).
 """
 
@@ -50,8 +50,8 @@ from bridge.prior_parser import parse_priors
 from bridge.scenario_parser import parse_header_scenarios
 from bridge.stats_group_parser import parse_requested_statistic_names
 from bridge.summary_statistics import (
-    compute_all_statistics,
     compute_all_statistics_dna,
+    compute_all_statistics_indseq,
     compute_all_statistics_microsat,
     compute_all_statistics_poolseq,
 )
@@ -203,8 +203,8 @@ def _filter_statistics(
     """Applique stats_filter ('ALL' ou 'HEADER') à un dict de statistiques déjà
     calculé.
 
-    Factorisé entre compute_summary_statistics et
-    compute_summary_statistics_from_values (même logique de filtrage,
+    Factorisé entre compute_summary_statistics_snp/dna/microsat et
+    compute_summary_statistics_snp/dna/microsat_from_values (même logique de filtrage,
     seule la source des valeurs de paramètres diffère entre les deux).
 
     Args:
@@ -232,7 +232,7 @@ def _filter_statistics(
         if missing:
             raise ValueError(
                 f"header.txt déclare des statistiques non calculées par "
-                f"compute_all_statistics (vocabulaire obsolète ou non "
+                f"compute_all_statistics_snp/dna/microsat (vocabulaire obsolète ou non "
                 f"implémenté) : {missing}"
             )
         return {name: summary_stats[name] for name in requested_names}
@@ -373,7 +373,7 @@ def simulate_particle_genotypes(
     return mutated, values
 
 
-def compute_summary_statistics(
+def compute_summary_statistics_snp(
     context: SnpReplayContext,
     scenario_index: int,
     *,
@@ -389,7 +389,7 @@ def compute_summary_statistics(
     Utilise nos formules Python validées (summary_statistics.py) --
     remplace la délégation au binaire C++ (subprocess + fichier .snp
     intermédiaire). Dispatche automatiquement entre le chemin IndSeq
-    (`simulate_particle_genotypes` + `compute_all_statistics`) et le chemin
+    (`simulate_particle_genotypes` + `compute_all_statistics_indseq/poolseq`) et le chemin
     PoolSeq (`simulate_poolseq_reads_with_mrc_filter` +
     `compute_all_statistics_poolseq`) selon `detect_snp_file_type`.
 
@@ -438,7 +438,7 @@ def compute_summary_statistics(
         genotypes_list = list(genotypes_per_locus)
 
         sample_names = _sample_names(genotypes_list, snp_path)
-        summary_stats = compute_all_statistics(genotypes_list, sample_names)
+        summary_stats = compute_all_statistics_indseq(genotypes_list, sample_names)
         summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
     else:
         reads_per_locus, values = simulate_particle_reads(
@@ -478,7 +478,7 @@ def build_demography_for_scenario_index_from_values(
     Construit la Demography directement à partir de valeurs de
     paramètres déjà connues (ex: reprises telles quelles d'un reftable
     DIYABC réel pour servir d'oracle -- voir
-    reftable_loop.replay_reftable_simulation).
+    reftable_loop.replay_reftable_simulation_snp).
 
     Args:
         header_text: Texte complet de header.txt.
@@ -547,7 +547,7 @@ def simulate_particle_genotypes_from_values(
     )
 
 
-def compute_summary_statistics_from_values(
+def compute_summary_statistics_snp_from_values(
     context: SnpReplayContext,
     scenario_index: int,
     values: dict[str, float],
@@ -557,12 +557,12 @@ def compute_summary_statistics_from_values(
     stats_filter: str = "ALL",
     observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
 ) -> dict[str, float]:
-    """Variante de compute_summary_statistics qui NE TIRE AUCUNE valeur de
+    """Variante de compute_summary_statistics_snp qui NE TIRE AUCUNE valeur de
     prior.
 
     Reprend telles quelles des valeurs de paramètres déjà connues,
     typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
-    reftable_loop.replay_reftable_simulation) -- permet de comparer
+    reftable_loop.replay_reftable_simulation_snp) -- permet de comparer
     DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
     biais possible de deux tirages indépendants.
 
@@ -574,7 +574,7 @@ def compute_summary_statistics_from_values(
         num_loci: Voir _simulate_genotypes_for_all_locus_types (IndSeq
             uniquement -- ignoré pour PoolSeq).
         seed: La graine de la simulation.
-        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics.
+        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics_snp.
         observed_reads_per_locus: PoolSeq uniquement, voir
             simulate_poolseq_reads_with_mrc_filter.
 
@@ -606,7 +606,7 @@ def compute_summary_statistics_from_values(
         genotypes_list = list(genotypes_per_locus)
 
         sample_names = _sample_names(genotypes_list, snp_path)
-        summary_stats = compute_all_statistics(genotypes_list, sample_names)
+        summary_stats = compute_all_statistics_indseq(genotypes_list, sample_names)
         summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
     else:
         # `num_loci` est ignoré côté PoolSeq : on simule tous les loci du
@@ -620,7 +620,7 @@ def compute_summary_statistics_from_values(
                 observed_reads_per_locus=observed_reads_per_locus,
             )
         )
-        # Tailles HAPLOÏDES, cf. la branche jumelle de compute_summary_statistics.
+        # Tailles HAPLOÏDES, cf. la branche jumelle de compute_summary_statistics_snp
         pool_sizes = {
             f"pop{index}": count
             for index, count in enumerate(context.counts_per_sample.values(), start=1)
@@ -751,7 +751,7 @@ def compute_summary_statistics_dna(
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Calcule les 13 statistiques résumées ADN (compute_all_statistics_dna)
     sur des données SIMULÉES par msprime -- équivalent ADN de
-    compute_summary_statistics (chemin IND/PoolSeq), pour les datasets qui
+    compute_summary_statistics_snp, pour les datasets qui
     déclarent des loci séquence (`[S]`, groupes `G2`/`G3`... de header.txt)
     plutôt que des SNP.
 
@@ -775,13 +775,13 @@ def compute_summary_statistics_dna(
             du header).
         scenario_index: le scénario à utiliser pour construire la
             démographie (pas de tirage pondéré multi-scénario ici,
-            contrairement à reftable_loop.run_reftable_simulation).
+            contrairement à reftable_loop.run_reftable_simulation_snp).
         seed: graine de la particule -- dérive toutes les graines
             internes (tirage des paramètres historiques, des priors de
             groupe, des généalogies et mutations par locus).
         stats_filter: "ALL" (toutes les stats implémentées) ou "HEADER"
             (seulement celles déclarées dans header.txt, voir
-            compute_summary_statistics pour le détail).
+            compute_summary_statistics_snp pour le détail).
 
     Returns:
         (summary_stats, values) -- summary_stats est le dict {nom_
@@ -838,7 +838,7 @@ def compute_summary_statistics_dna_from_values(
 
     Reprend telles quelles des valeurs de paramètres déjà connues,
     typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
-    reftable_loop.replay_reftable_simulation) -- permet de comparer
+    reftable_loop.replay_reftable_simulation_snp) -- permet de comparer
     DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
     biais possible de deux tirages indépendants.
 
@@ -911,7 +911,7 @@ def compute_summary_statistics_microsat(
 ) -> tuple[dict[str, float], dict[str, float], dict[str, dict[str, float]]]:
     """Calcule les statistiques résumées microsat
     (compute_all_statistics_microsat) sur des données SIMULÉES par msprime --
-    équivalent microsat de compute_summary_statistics (chemin IND/PoolSeq),
+    équivalent microsat de compute_summary_statistics_snp,
     pour les datasets qui déclarent des loci microsat (`[M]`, groupes
     `G4`/`G5`... de header.txt) plutôt que des SNP.
 
@@ -935,12 +935,12 @@ def compute_summary_statistics_microsat(
             du header).
         scenario_index: le scénario à utiliser pour construire la
             démographie (pas de tirage pondéré multi-scénario ici,
-            contrairement à reftable_loop.run_reftable_simulation).
+            contrairement à reftable_loop.run_reftable_simulation_snp).
         seed: La graine du tirage par-locus (second niveau, généalogie,
             mutation).
         stats_filter: "ALL" (toutes les stats implémentées) ou "HEADER"
             (seulement celles déclarées dans header.txt, voir
-            compute_summary_statistics pour le détail).
+            compute_summary_statistics_snp pour le détail).
     Returns:
         (summary_stats, values, group_values) :
         - summary_stats est le dict {nom_colonne_diyabc: valeur} de compute_all_statistics_microsat (ex.
@@ -1003,7 +1003,7 @@ def compute_summary_statistics_microsat_from_values(
 
     Reprend telles quelles des valeurs de paramètres déjà connues,
     typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
-    reftable_loop.replay_reftable_simulation) -- permet de comparer
+    reftable_loop.replay_reftable_simulation_snp) -- permet de comparer
     DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
     biais possible de deux tirages indépendants.
 
@@ -1022,7 +1022,7 @@ def compute_summary_statistics_microsat_from_values(
             (voir compute_summary_statistics_microsat).
         seed: La graine du tirage par-locus (second niveau, généalogie,
             mutation).
-        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics.
+        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics_snp.
 
     Returns:
         Le dict summary_statistics (pas de `values` en retour,
@@ -1066,7 +1066,7 @@ def compute_summary_statistics_microsat_from_values(
 # ---------------------------------------------------------------------------------------
 # Microsat et DNA combined
 # ---------------------------------------------------------------------------------------
-def _extract_common_data(
+def _draw_common_data(
     context: DnaReplayContext | MicrosatReplayContext, scenario_index: int, seed: int
 ) -> tuple[msprime.Demography, list[msprime.SampleSet], dict[str, float]]:
     """Helper pour extraire les données communes nécessaires à la simulation et
@@ -1096,7 +1096,7 @@ def _extract_common_data(
     return demography, sample_sets, values
 
 
-# Dictionnaires nécessaires à _compute_statistics pour dispatcher les fonctions de mutation et de calcul des statistiques selon le type de données (ADN ou microsat).
+# Dictionnaires nécessaires à _simulate_and_compute_statistics pour dispatcher les fonctions de mutation et de calcul des statistiques selon le type de données (ADN ou microsat).
 _MUTATION_BY_TYPE = {
     "dna": dna_mutation_simulation_per_locus,
     "microsat": microsat_mutation_simulation_per_locus,
@@ -1113,7 +1113,7 @@ _STATS_BY_TYPE = {
 }
 
 
-def _compute_statistics(
+def _simulate_and_compute_statistics(
     context: DnaReplayContext | MicrosatReplayContext,
     demography: msprime.Demography,
     sample_sets: list[msprime.SampleSet],
@@ -1186,7 +1186,7 @@ def compute_summary_statistics_mixed(
         scenario_index: L'index 1-based du scénario à utiliser.
         seed: La graine du tirage par-locus (second niveau, généalogie,
             mutation).
-        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics.
+        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics_snp.
     Returns:
         Un tuple de trois dictionnaires :
         - summary_stats : le dictionnaire des statistiques résumées combinées ADN + microsat.
@@ -1206,17 +1206,23 @@ def compute_summary_statistics_mixed(
         )
 
     # partie commune aux deux contextes
-    demography, sample_sets, values = _extract_common_data(
+    demography, sample_sets, values = _draw_common_data(
         context_dna, scenario_index, seed
     )
 
     # partie simulation mutation ADN
-    summary_stats_dna, group_priors_values_dna = _compute_statistics(
+    summary_stats_dna, group_priors_values_dna = _simulate_and_compute_statistics(
         context_dna, demography, sample_sets, type_of_data="dna", seed=seed
     )
 
-    summary_stats_microsat, group_priors_values_microsat = _compute_statistics(
-        context_microsat, demography, sample_sets, type_of_data="microsat", seed=seed
+    summary_stats_microsat, group_priors_values_microsat = (
+        _simulate_and_compute_statistics(
+            context_microsat,
+            demography,
+            sample_sets,
+            type_of_data="microsat",
+            seed=seed,
+        )
     )
 
     if group_priors_values_dna != group_priors_values_microsat:
@@ -1240,7 +1246,7 @@ def compute_summary_statistics_mixed(
 
 
 # A partir des valeurs déjà connues, on peut rejouer exactement la même particule (même tirage de paramètres historiques et de priors de groupe) pour les deux types de données ADN et microsat.
-def _extract_common_data_from_values(
+def _draw_common_data_from_values(
     context: DnaReplayContext | MicrosatReplayContext,
     scenario_index: int,
     values: dict[str, float],
@@ -1271,7 +1277,7 @@ def _extract_common_data_from_values(
     return demography, sample_sets
 
 
-def _compute_statistics_from_values(
+def _simulate_and_compute_statistics_from_values(
     context: DnaReplayContext | MicrosatReplayContext,
     demography: msprime.Demography,
     sample_sets: list[msprime.SampleSet],
@@ -1352,12 +1358,12 @@ def compute_summary_statistics_mixed_from_values(
         )
 
     # partie commune aux deux contextes
-    demography, sample_sets = _extract_common_data_from_values(
+    demography, sample_sets = _draw_common_data_from_values(
         context_dna, scenario_index, values
     )
 
     # Statistiques ADN à partir de valeurs déjà connues
-    summary_stats_dna = _compute_statistics_from_values(
+    summary_stats_dna = _simulate_and_compute_statistics_from_values(
         context_dna,
         demography,
         sample_sets,
@@ -1367,7 +1373,7 @@ def compute_summary_statistics_mixed_from_values(
     )
 
     # Statistiques microsat à partir de valeurs déjà connues
-    summary_stats_microsat = _compute_statistics_from_values(
+    summary_stats_microsat = _simulate_and_compute_statistics_from_values(
         context_microsat,
         demography,
         sample_sets,

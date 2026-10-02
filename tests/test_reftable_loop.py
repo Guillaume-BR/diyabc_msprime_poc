@@ -24,9 +24,9 @@ from bridge.reftable_loop import (
     parse_real_reftable_params,
     parse_real_reftable_params_with_group_priors,
     raise_if_serial_with_sex_linked_loci,
-    run_reftable_simulation,
     run_reftable_simulation_dna,
     run_reftable_simulation_microsat,
+    run_reftable_simulation_snp,
     simulate_from_directory,
     write_reftable_bin,
     write_reftable_txt,
@@ -59,7 +59,7 @@ def test_simulate_from_directory(tmp_path, snp_context_human):
     reason="Variable d'environnement DIYABC_GENERAL_PATH non définie.",
 )
 def test_run_reftable_simulation_scenario1(header_text):
-    """Vérifie que run_reftable_simulation produit bien nrec particules
+    """Vérifie que run_reftable_simulation_snp produit bien nrec particules
     distinctes (tirages de paramètres différents), chacune avec ses 130
     statistiques résumées calculées.
 
@@ -71,7 +71,7 @@ def test_run_reftable_simulation_scenario1(header_text):
     scenario1 = next(s for s in scenarios if s.index == 1)
 
     nrec = 4
-    results = run_reftable_simulation(
+    results = run_reftable_simulation_snp(
         reference_directory=REFERENCE_DIR / "human",
         scenarios=[scenario1],
         num_loci=10,
@@ -114,7 +114,7 @@ def test_run_reftable_simulation_draws_multiple_scenarios(header_text):
     scenarios = parse_header_scenarios(header_text)
 
     nrec = 6
-    results = run_reftable_simulation(
+    results = run_reftable_simulation_snp(
         reference_directory=REFERENCE_DIR / "human",
         scenarios=scenarios,
         num_loci=10,
@@ -134,7 +134,7 @@ def test_write_reftable_bin_without_group_priors(tmp_path, header_text):
     scenario1 = next(s for s in scenarios if s.index == 1)
 
     nrec = 3
-    results = run_reftable_simulation(
+    results = run_reftable_simulation_snp(
         reference_directory=REFERENCE_DIR / "human",
         scenarios=[scenario1],
         num_loci=10,
@@ -188,7 +188,7 @@ def test_write_reftable_bin_multi_scenario(tmp_path, header_text):
     scenarios = parse_header_scenarios(header_text)
 
     nrec = 6
-    results = run_reftable_simulation(
+    results = run_reftable_simulation_snp(
         reference_directory=REFERENCE_DIR / "human",
         scenarios=scenarios,
         num_loci=10,
@@ -277,7 +277,7 @@ def test_write_reftable_txt_header_lowercase_and_real_value_for_unused_params(
     all_scenarios = parse_header_scenarios(header_text)
     scenario1 = next(s for s in all_scenarios if s.index == 1)
 
-    results = run_reftable_simulation(
+    results = run_reftable_simulation_snp(
         reference_directory=REFERENCE_DIR / "human",
         scenarios=[scenario1],
         num_loci=10,
@@ -425,7 +425,7 @@ def test_parse_real_reftable_params_with_group_priors(header_text_te2):
 
 
 def test_run_reftable_simulation_dna_scenario1(header_text_te2):
-    """Vérifie que run_reftable_simulation produit bien nrec particules
+    """Vérifie que run_reftable_simulation_snp produit bien nrec particules
     distinctes (tirages de paramètres différents), chacune avec ses 42
     statistiques résumées calculées.
 

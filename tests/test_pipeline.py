@@ -11,16 +11,16 @@ from conftest import (
 
 from bridge.header_dataclasses import SnpReplayContext
 from bridge.pipeline import (
-    _compute_statistics,
-    _compute_statistics_from_values,
-    _extract_common_data,
+    _draw_common_data,
+    _simulate_and_compute_statistics,
+    _simulate_and_compute_statistics_from_values,
     build_random_demography_for_scenario_index,
-    compute_summary_statistics,
     compute_summary_statistics_dna,
-    compute_summary_statistics_from_values,
     compute_summary_statistics_microsat,
     compute_summary_statistics_mixed,
     compute_summary_statistics_mixed_from_values,
+    compute_summary_statistics_snp,
+    compute_summary_statistics_snp_from_values,
     read_header_text,
     simulate_particle_genotypes,
 )
@@ -88,12 +88,12 @@ def test_simulate_particle_genotypes_multi_type(snp_context_te5):
     assert "N1" in values
 
 
-def test_compute_summary_statistics_multi_type(snp_context_te5):
-    """Vérifie que compute_summary_statistics (donc compute_all_statistics)
+def test_compute_summary_statistics_snp_multi_type(snp_context_te5):
+    """Vérifie que compute_summary_statistics_snp (donc compute_all_statistics_indseq)
     fonctionne aussi sur un dataset multi-type <A>/<X>/<Y>/<M>, pas seulement
     <A> -- 51 statistiques attendues (vs 130 pour human) car toy_example5 n'a
     que 3 populations, pas 4 (moins de paires/triplets)."""
-    summary_stats, values = compute_summary_statistics(
+    summary_stats, values = compute_summary_statistics_snp(
         context=snp_context_te5,
         scenario_index=1,
         num_loci=3,
@@ -106,7 +106,7 @@ def test_compute_summary_statistics_multi_type(snp_context_te5):
 
 
 def test_compute_summary_statistics_poolseq_varies_with_seed(snp_context_te4):
-    """Vérifie que compute_summary_statistics simule bien pour PoolSeq (branche
+    """Vérifie que compute_summary_statistics_snp simule bien pour PoolSeq (branche
     else de la fonction) au lieu de recopier telles quelles les statistiques de
     l'observé -- régression du bug du 2026-07-23 où l'appel à
     simulate_poolseq_reads_with_mrc_filter avait été supprimé par erreur en
@@ -116,12 +116,12 @@ def test_compute_summary_statistics_poolseq_varies_with_seed(snp_context_te4):
     Deux graines différentes doivent donc tirer des paramètres
     différents ET produire des statistiques différentes.
     """
-    stats_seed_1, values_1 = compute_summary_statistics(
+    stats_seed_1, values_1 = compute_summary_statistics_snp(
         context=snp_context_te4,
         scenario_index=1,
         seed=1,
     )
-    stats_seed_2, values_2 = compute_summary_statistics(
+    stats_seed_2, values_2 = compute_summary_statistics_snp(
         context=snp_context_te4,
         scenario_index=1,
         seed=2,
@@ -135,7 +135,7 @@ def test_compute_summary_statistics_from_values_poolseq_varies_with_values(
     snp_context_te4,
 ):
     """Même régression que test_compute_summary_statistics_poolseq_varies_
-    with_seed, mais côté compute_summary_statistics_from_values (l'autre
+    with_seed, mais côté compute_summary_statistics_snp_from_values (l'autre
     fonction touchée par le bug du 2026-07-23) : deux jeux de paramètres
     différents (même seed) doivent produire des statistiques différentes."""
     _, values_1 = build_random_demography_for_scenario_index(
@@ -146,13 +146,13 @@ def test_compute_summary_statistics_from_values_poolseq_varies_with_values(
     )
     assert values_1 != values_2  # sinon le test ne prouve rien
 
-    stats_1 = compute_summary_statistics_from_values(
+    stats_1 = compute_summary_statistics_snp_from_values(
         context=snp_context_te4,
         scenario_index=1,
         values=values_1,
         seed=42,
     )
-    stats_2 = compute_summary_statistics_from_values(
+    stats_2 = compute_summary_statistics_snp_from_values(
         context=snp_context_te4,
         scenario_index=1,
         values=values_2,
@@ -185,11 +185,11 @@ def test_read_header_text_falls_back_to_headerRF(tmp_path):
     reason="Variable d'environnement DIYABC_GENERAL_PATH non définie -- "
     "ce test nécessite le binaire 'general' compilé de DIYABC.",
 )
-def test_compute_summary_statistics_scenario1(tmp_path, snp_context_human):
-    """Vérifie que compute_summary_statistics produit bien les 112 statistiques
+def test_compute_summary_statistics_snp_scenario1(tmp_path, snp_context_human):
+    """Vérifie que compute_summary_statistics_snp produit bien les 112 statistiques
     résumées attendues (filtre ALL), en déléguant le calcul au vrai binaire C++
     sur des données simulées par notre pipeline."""
-    summary_statistics, values = compute_summary_statistics(
+    summary_statistics, values = compute_summary_statistics_snp(
         context=snp_context_human,
         scenario_index=1,
         num_loci=10,
@@ -229,7 +229,9 @@ def _replace_group_summary_statistics_section(
     return "\n".join(lines[:start] + new_section_lines + lines[end:])
 
 
-def test_compute_summary_statistics_stats_filter_header(tmp_path, snp_context_human):
+def test_compute_summary_statistics_snp_stats_filter_header(
+    tmp_path, snp_context_human
+):
     """stats_filter='HEADER' ne garde, dans l'ordre de déclaration, que les
     statistiques listées dans 'group summary statistics' -- remplace la section
     obsolète de human/header.txt par un petit sous-ensemble au vocabulaire
@@ -254,7 +256,7 @@ def test_compute_summary_statistics_stats_filter_header(tmp_path, snp_context_hu
         sexes_per_sample=snp_context_human.sexes_per_sample,
     )
 
-    summary_stats, values = compute_summary_statistics(
+    summary_stats, values = compute_summary_statistics_snp(
         context=snp_context_human_modified,
         scenario_index=1,
         num_loci=10,
@@ -273,7 +275,7 @@ def test_compute_summary_statistics_stats_filter_header_raises_on_unknown_names(
     HP0/HM1/...) doit lever une ValueError explicite plutôt que de produire
     silencieusement un reftable vide ou incomplet."""
     with pytest.raises(ValueError, match="non calculées"):
-        compute_summary_statistics(
+        compute_summary_statistics_snp(
             context=snp_context_human,
             scenario_index=1,
             num_loci=10,
@@ -284,7 +286,7 @@ def test_compute_summary_statistics_stats_filter_header_raises_on_unknown_names(
 
 def test_compute_summary_statistics_unknown_stats_filter_raises(snp_context_human):
     with pytest.raises(NotImplementedError, match="stats_filter"):
-        compute_summary_statistics(
+        compute_summary_statistics_snp(
             context=snp_context_human,
             scenario_index=1,
             num_loci=10,
@@ -335,11 +337,11 @@ def test_compute_summary_statistics_microsat(microsat_context_te2_xy):
 # -------------------------------------------------------------
 
 
-def test_extract_common_data(microsat_context_te2_xy):
-    """Vérifie que _extract_common_data extrait correctement les données
+def test_draw_common_data(microsat_context_te2_xy):
+    """Vérifie que _draw_common_data extrait correctement les données
     communes nécessaires à la simulation et au calcul des statistiques pour
     les scénarios ADN et microsat."""
-    demography, sample_sets, values = _extract_common_data(
+    demography, sample_sets, values = _draw_common_data(
         context=microsat_context_te2_xy,
         scenario_index=1,
         seed=42,
@@ -351,16 +353,16 @@ def test_extract_common_data(microsat_context_te2_xy):
     assert "N1" in values
 
 
-def test_compute_statistics(microsat_context_te2_xy):
-    """Vérifie que _compute_statistics calcule correctement les statistiques
+def test_simulate_and_compute_statistics(microsat_context_te2_xy):
+    """Vérifie que _simulate_and_compute_statistics calcule correctement les statistiques
     résumées pour les scénarios ADN et microsat."""
-    demography, sample_sets, values = _extract_common_data(
+    demography, sample_sets, values = _draw_common_data(
         context=microsat_context_te2_xy,
         scenario_index=1,
         seed=42,
     )
 
-    summary_stats, _ = _compute_statistics(
+    summary_stats, _ = _simulate_and_compute_statistics(
         context=microsat_context_te2_xy,
         demography=demography,
         sample_sets=sample_sets,
@@ -374,17 +376,17 @@ def test_compute_statistics(microsat_context_te2_xy):
     assert "LIK_1_2.1" in summary_stats
 
 
-def test_compute_statistics_with_wrong_type(microsat_context_te2_xy):
-    """Vérifie que _compute_statistics lève une ValueError si le type de données
+def test_simulate_and_compute_statistics_with_wrong_type(microsat_context_te2_xy):
+    """Vérifie que _simulate_and_compute_statistics lève une ValueError si le type de données
     est incorrect."""
-    demography, sample_sets, values = _extract_common_data(
+    demography, sample_sets, values = _draw_common_data(
         context=microsat_context_te2_xy,
         scenario_index=1,
         seed=42,
     )
 
     with pytest.raises(ValueError, match="Type de données"):
-        _compute_statistics(
+        _simulate_and_compute_statistics(
             context=microsat_context_te2_xy,
             demography=demography,
             sample_sets=sample_sets,
@@ -455,10 +457,10 @@ def test_compute_summary_statistics_mixed_from_values(
 ):
     """Vérifie que compute_summary_statistics_mixed_from_values fonctionne correctement et que les résultats sont cohérents avec les calculs séparés pour chaque type de données."""
 
-    demography, sample_sets, values = _extract_common_data(
+    demography, sample_sets, values = _draw_common_data(
         microsat_context_te2_xy, 1, seed=42
     )
-    _, nested = _compute_statistics(
+    _, nested = _simulate_and_compute_statistics(
         microsat_context_te2_xy,
         demography,
         sample_sets,
@@ -470,7 +472,7 @@ def test_compute_summary_statistics_mixed_from_values(
         for c, g, p in _group_prior_columns(microsat_context_te2_xy.header_text)
     }
 
-    summary_stats_microsat = _compute_statistics_from_values(
+    summary_stats_microsat = _simulate_and_compute_statistics_from_values(
         context=microsat_context_te2_xy,
         demography=demography,
         sample_sets=sample_sets,
@@ -479,7 +481,7 @@ def test_compute_summary_statistics_mixed_from_values(
         seed=42,
     )
 
-    summary_stats_dna = _compute_statistics_from_values(
+    summary_stats_dna = _simulate_and_compute_statistics_from_values(
         context=dna_context_te2_xy,
         demography=demography,
         sample_sets=sample_sets,

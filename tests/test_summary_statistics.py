@@ -1,17 +1,9 @@
-"""Tests des statistiques résumées SNP PoolSeq (bridge/summary_statistics.py).
-
-_prepare_matrices_poolseq : forme/valeurs des matrices (npop, nloci).
-compute_all_statistics_poolseq : les 130 stats sont bien présentes, avec
-au moins une valeur vérifiée à la main (HWm_1/HWv_1) pour attraper une
-régression de formule, pas juste un problème de branchement.
-"""
-
 import msprime
 import numpy as np
 import pytest
 
 from bridge.ancestry_simulation import (
-    build_microsat_transition_matrix,
+    build_transition_matrix_microsat,
     compute_population_layout,
     dna_mutation_simulation_per_locus,
     microsat_mutation_simulation_per_locus,
@@ -834,7 +826,7 @@ def _mutated_microsat_ts(seed=3):
         ts,
         rate=1e-3,
         random_seed=seed,
-        model=build_microsat_transition_matrix(
+        model=build_transition_matrix_microsat(
             kmin=180, kmax=220, motif_size=2, Pgeom=0.2
         ),
     )

@@ -8,8 +8,8 @@ qu'elle produit les mêmes valeurs que le vrai binaire `general` sur les
 MÊMES données en entrée -- comparaison exacte (à la précision float32
 près), pas statistique.
 
-Trois familles, trois formats d'entrée, trois points d'entrée
-(compute_all_statistics* ci-dessous) :
+Quatre familles, quatre formats d'entrée, quatre points d'entrée
+(compute_all_statistics_<type> ci-dessous) :
   - SNP IndSeq : liste de dicts {nom_echantillon: [génotypes haploïdes
     0/1]}, un dict par locus -- la forme produite par
     ancestry_simulation.simulate_snp_genotypes.
@@ -21,6 +21,9 @@ Trois familles, trois formats d'entrée, trois points d'entrée
     per_locus, tranchée par échantillon via _genotype_matrix_by_sample
     (format complètement différent des deux précédents, pas de liste de
     génotypes 0/1).
+  - Microsats : dict {nom_locus: tskit.TreeSequence mutée} -- la forme
+    produite par ancestry_simulation.microsat_mutation_simulation_per_locus,
+    tranchée par échantillon via _genotype_matrix_by_sample.
 
 Organisation : une fonction par famille de statistiques, suivant
 exactement la nomenclature de sumstat.cpp (cal_snfl, cal_snhw, cal_snhb,
@@ -120,7 +123,7 @@ def _prepare_matrices(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Construit les matrices (n_sample, n_loci) de comptes et fréquences.
 
-    Appelé UNE SEULE FOIS dans compute_all_statistics et transmis via
+    Appelé UNE SEULE FOIS dans compute_all_statistics_indseq et transmis via
     _mats à toutes les familles de statistiques -- évite de reconstruire
     les matrices (n_sample x n_loci) une fois par famille.
 
@@ -279,7 +282,7 @@ def compute_ML1(
             [génotype, ...]}, un dict par locus.
         sample_names: Les noms d'échantillon.
         _mats: Matrices (counts, ns, freq0, freq1) déjà calculées par
-            _prepare_matrices (voir compute_all_statistics). Si None,
+            _prepare_matrices (voir compute_all_statistics_indseq). Si None,
             calculées ici.
 
     Returns:
@@ -3850,7 +3853,7 @@ def compute_AML_microsat(
 # ---------------------------------------------------------------------------
 
 
-def compute_all_statistics(
+def compute_all_statistics_indseq(
     genotypes_per_locus: list[dict[str, list[int]]],
     sample_names: list[str],
 ) -> dict[str, float]:

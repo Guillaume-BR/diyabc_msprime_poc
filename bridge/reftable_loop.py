@@ -1,7 +1,7 @@
 """Boucle d'itération produisant les nrec "particules" (lignes) d'un futur
 reftable.bin : pour chaque particule, un tirage de scénario et de paramètres
 distinct, et une simulation msprime complète (calcul des statistiques résumées
-via compute_summary_statistics, 100% Python -- plus de subprocess ni de fichier
+via compute_summary_statistics_snp/microsat/dna, 100% Python -- plus de subprocess ni de fichier
 intermédiaire sur disque).
 
 Parallélisé via ProcessPoolExecutor : chaque particule est indépendante
@@ -58,14 +58,14 @@ from bridge.observed_data import (
 )
 from bridge.parameter_sampling import draw_scenario
 from bridge.pipeline import (
-    compute_summary_statistics,
     compute_summary_statistics_dna,
     compute_summary_statistics_dna_from_values,
-    compute_summary_statistics_from_values,
     compute_summary_statistics_microsat,
     compute_summary_statistics_microsat_from_values,
     compute_summary_statistics_mixed,
     compute_summary_statistics_mixed_from_values,
+    compute_summary_statistics_snp,
+    compute_summary_statistics_snp_from_values,
     read_header_text,
 )
 from bridge.prior_parser import (
@@ -80,7 +80,7 @@ from bridge.scenario_parser import is_serial_scenario, parse_header_scenarios
 # appliqué à la seed de particule avant de tirer le scénario
 # (draw_scenario), pour ne JAMAIS partager la même seed brute avec le
 # tirage des paramètres (draw_parameter_values, appelé plus loin dans
-# compute_summary_statistics avec seed=seed, sans offset) -- sinon les
+# compute_summary_statistics_snp/microsat/dna avec seed=seed, sans offset) -- sinon les
 # deux tirages, bien qu'indépendants dans l'intention, consomment le
 # MÊME premier random.random() sous-jacent (chaque fonction fait son
 # propre random.Random(seed) frais), ce qui corrèle artificiellement le
@@ -288,7 +288,7 @@ def raise_if_serial_with_sex_linked_loci(header_text: str) -> None:
     """Refuse la combinaison non implémentée « sériel + loci <X>/<Y> ».
 
     Les quatre constructeurs d'échantillons sexués
-    (`build_sex_stratified_samples_argument` / `build_male_only_samples_
+    (`build_sex_stratified_samples_argument_snp` / `build_male_only_samples_
     argument` et leurs jumeaux `_ms_dna`) ne sont PAS sériels-conscients :
     le dispatch par locus écrase les `SampleSet` sériels construits par
     `build_sample_sets_from_scenario`, et ces constructeurs redérivent
@@ -345,7 +345,7 @@ def raise_if_serial_with_sex_linked_loci(header_text: str) -> None:
 # ── Tirage indépendant de scénario + paramètres, par particule ────────────
 
 
-def _run_single_particle(
+def _run_single_particle_snp(
     particle_index: int,
     context: SnpReplayContext,
     scenarios: list[Scenario],
@@ -374,11 +374,11 @@ def _run_single_particle(
         context: Le contexte de la simulation.
         scenarios: Les scénarios candidats (chaque particule tire le
             sien).
-        num_loci: Voir pipeline.compute_summary_statistics.
+        num_loci: Voir pipeline.compute_summary_statistics_snp.
         observed_reads_per_locus: PoolSeq uniquement, pré-calculé une
-            fois pour toute la boucle (voir run_reftable_simulation).
+            fois pour toute la boucle (voir run_reftable_simulation_snp).
         stats_filter: "ALL" ou "HEADER", voir
-            pipeline.compute_summary_statistics.
+            pipeline.compute_summary_statistics_snp.
 
     Returns:
         Le ParticleResult de cette particule.
@@ -386,7 +386,7 @@ def _run_single_particle(
     seed = particle_index + 1
     drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
 
-    summary_statistics, parameter_values = compute_summary_statistics(
+    summary_statistics, parameter_values = compute_summary_statistics_snp(
         context=context,
         scenario_index=drawn_scenario.index,
         num_loci=num_loci,
@@ -403,7 +403,7 @@ def _run_single_particle(
     )
 
 
-def run_reftable_simulation(
+def run_reftable_simulation_snp(
     reference_directory: str | Path,
     scenarios: list[Scenario],
     *,
@@ -414,7 +414,7 @@ def run_reftable_simulation(
 ) -> list[ParticleResult]:
     """Produit nrec particules (lignes de reftable.bin) en parallèle.
 
-    N'écrit rien sur disque par particule (compute_summary_statistics
+    N'écrit rien sur disque par particule (compute_summary_statistics_snp
     est 100% Python, en mémoire).
 
     Les résultats sont retournés DANS L'ORDRE de particle_index (0 à
@@ -431,10 +431,10 @@ def run_reftable_simulation(
             contre particuleC.cpp::ParticleC::drawscenario) -- une même
             particule peut donc finir sur n'importe lequel des
             scénarios de la liste, pas forcément le même pour toutes.
-        num_loci: Voir pipeline.compute_summary_statistics.
+        num_loci: Voir pipeline.compute_summary_statistics_snp.
         nrec: Le nombre de particules à produire.
         stats_filter: "ALL" ou "HEADER", voir
-            pipeline.compute_summary_statistics.
+            pipeline.compute_summary_statistics_snp.
         max_workers: Le nombre de process en parallèle (défaut : laissé
             à ProcessPoolExecutor, généralement le nombre de cœurs
             disponibles).
@@ -488,7 +488,7 @@ def run_reftable_simulation(
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
-                _run_single_particle,
+                _run_single_particle_snp,
                 particle_index,
                 context,
                 scenarios,
@@ -706,10 +706,10 @@ def write_reftable_txt(
     au moins un des `scenarios`. Pour une ligne dont le scénario tiré
     n'utilise pas tel paramètre, on écrit :
       - sa valeur RÉELLEMENT TIRÉE si elle est présente dans
-        r.parameter_values (cas de `run_reftable_simulation` :
+        r.parameter_values (cas de `run_reftable_simulation_snp` :
         draw_parameter_values tire TOUS les priors déclarés,
         indépendamment du scénario, voir build_random_demography) ;
-      - `nan` sinon (cas de `replay_reftable_simulation` :
+      - `nan` sinon (cas de `replay_reftable_simulation_snp` :
         parse_real_reftable_params ne fournit QUE les paramètres du
         scénario propre à chaque ligne, puisque c'est aussi ce que
         DIYABC écrit réellement -- voir sa docstring).
@@ -808,7 +808,7 @@ def rewrite_real_reftable_txt(
     colonnes suivantes (priors de groupe s'il y en a, puis statistiques)
     sont recopiées telles quelles. Le résultat se compare colonne à
     colonne, PAR NOM, avec un reftable_msprime généré par
-    run_reftable_simulation/replay_reftable_simulation.
+    run_reftable_simulation_snp/replay_reftable_simulation_snp.
 
     Args:
         input_path: Chemin du reftable réel brut (format texte).
@@ -883,7 +883,7 @@ def simulate_from_directory(
 
     Args:
         test_directory: Le sous-dossier de test.
-        num_loci: Voir pipeline.compute_summary_statistics.
+        num_loci: Voir pipeline.compute_summary_statistics_snp.
         nrec: Le nombre de particules à produire.
         stats_filter: "ALL" ou "HEADER".
         max_workers: Le nombre de process en parallèle.
@@ -904,7 +904,7 @@ def simulate_from_directory(
     print(
         f"Simulation de {nrec} particules avec {num_loci if num_loci is not None else 'tous les'} loci)"
     )
-    results = run_reftable_simulation(
+    results = run_reftable_simulation_snp(
         reference_directory=test_directory,
         scenarios=scenarios,
         num_loci=num_loci,
@@ -937,7 +937,7 @@ def parse_real_reftable_params(
     Ex: first_records_of_the_reference_table_0.txt. Extrait, ligne par
     ligne, le scénario tiré et les valeurs de paramètres RÉELLEMENT
     tirées par DIYABC -- pour les rejouer ensuite côté msprime (voir
-    replay_reftable_simulation), afin de comparer les deux simulateurs
+    replay_reftable_simulation_snp), afin de comparer les deux simulateurs
     sur EXACTEMENT les mêmes tirages de priors, sans le biais de deux
     tirages indépendants.
 
@@ -1001,7 +1001,7 @@ def parse_real_reftable_params(
     return rows
 
 
-def _run_single_particle_from_values(
+def _run_single_particle_snp_from_values(
     particle_index: int,
     context: SnpReplayContext,
     scenario_index: int,
@@ -1011,7 +1011,7 @@ def _run_single_particle_from_values(
     observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
     stats_filter: str,
 ) -> ParticleResult:
-    """Variante de _run_single_particle qui NE TIRE AUCUN paramètre.
+    """Variante de _run_single_particle_snp qui NE TIRE AUCUN paramètre.
 
     Rejoue (scenario_index, values) tels que fournis -- typiquement
     issus de parse_real_reftable_params.
@@ -1025,7 +1025,7 @@ def _run_single_particle_from_values(
             DIYABC pour cette particule.
         values: Les valeurs de paramètres historiques déjà connues,
             {nom: valeur}.
-        num_loci: Voir pipeline.compute_summary_statistics_from_values.
+        num_loci: Voir pipeline.compute_summary_statistics_snp_from_values.
         observed_reads_per_locus: PoolSeq uniquement.
         stats_filter: "ALL" ou "HEADER".
 
@@ -1033,7 +1033,7 @@ def _run_single_particle_from_values(
         Le ParticleResult de cette particule.
     """
     seed = particle_index + 1
-    summary_statistics = compute_summary_statistics_from_values(
+    summary_statistics = compute_summary_statistics_snp_from_values(
         context=context,
         scenario_index=scenario_index,
         values=values,
@@ -1051,7 +1051,7 @@ def _run_single_particle_from_values(
     )
 
 
-def replay_reftable_simulation(
+def replay_reftable_simulation_snp(
     reference_directory: str | Path,
     priors: list,
     scenarios: list[Scenario],
@@ -1065,7 +1065,7 @@ def replay_reftable_simulation(
 
     Lit un reftable existant (ex:
     first_records_of_the_reference_table_0.txt) -- au lieu d'en tirer de
-    nouveaux indépendamment comme run_reftable_simulation.
+    nouveaux indépendamment comme run_reftable_simulations_snp.
 
     Chaque particule msprime utilise EXACTEMENT le même (N1,N2,N3,ta,
     ts,...) que la particule DIYABC de même particle_index (même ordre
@@ -1080,14 +1080,14 @@ def replay_reftable_simulation(
         priors: Les priors déclarés dans header.txt.
         scenarios: Les scénarios candidats.
         real_reftable_path: Chemin du reftable réel à rejouer.
-        num_loci: Voir pipeline.compute_summary_statistics_from_values.
+        num_loci: Voir pipeline.compute_summary_statistics_snp_from_values.
         stats_filter: "ALL" ou "HEADER".
         max_workers: Le nombre de process en parallèle.
 
     Returns:
         Les ParticleResult dans le MÊME ORDRE que les lignes du fichier
         réel -- réutilisable tel quel par write_reftable_txt/
-        write_reftable_bin (même type que run_reftable_simulation).
+        write_reftable_bin (même type que run_reftable_simulation_snp).
     """
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
@@ -1136,7 +1136,7 @@ def replay_reftable_simulation(
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
-                _run_single_particle_from_values,
+                _run_single_particle_snp_from_values,
                 particle_index,
                 context,
                 scenario_index,
@@ -1170,7 +1170,7 @@ def _run_single_particle_dna(
     *,
     stats_filter: str,
 ) -> ParticleResult:
-    """Calcule une seule particule ADN (équivalent DNA de _run_single_particle).
+    """Calcule une seule particule ADN (équivalent DNA de _run_single_particle_snp).
 
     Fonction top-level (picklable), appelée par chaque worker du
     ProcessPoolExecutor.
@@ -1387,8 +1387,8 @@ def parse_real_reftable_params_with_group_priors(
     Colonnes `µseq_2`, `k1seq_2`... d'un vrai reftable DIYABC -- une
     fonction séparée plutôt qu'une extension en place, pour ne rien
     risquer sur parse_real_reftable_params et ses appelants SNP déjà
-    validés (même choix que _run_single_particle/_run_single_
-    particle_from_values : deux fonctions distinctes plutôt qu'une seule
+    validés (même choix que _run_single_particle_snp/_run_single_
+    particle_snp_from_values : deux fonctions distinctes plutôt qu'une seule
     avec des branches conditionnelles).
 
     Sur chaque ligne, les colonnes de priors de groupe suivent
@@ -1606,7 +1606,7 @@ def _run_single_particle_microsat(
     *,
     stats_filter: str,
 ) -> ParticleResult:
-    """Calcule une seule particule microsat (équivalent microsat de _run_single_particle).
+    """Calcule une seule particule microsat (équivalent microsat de _run_single_particle_snp).
 
     Fonction top-level (picklable), appelée par chaque worker du
     ProcessPoolExecutor.
@@ -1800,7 +1800,7 @@ def replay_reftable_simulation_microsat(
     max_workers: int | None = None,
 ) -> list[ParticleResult]:
     """Rejoue, particule par particule, les tirages RÉELS de DIYABC (équivalent
-    microsat de replay_reftable_simulation).
+    microsat de replay_reftable_simulation_snp).
 
     Lit un reftable réel existant (scénario, paramètres historiques ET
     priors de groupe RÉELLEMENT tirés par DIYABC) et rejoue chaque
@@ -1908,7 +1908,7 @@ def _run_single_particle_mixed(
     *,
     stats_filter: str,
 ) -> ParticleResult:
-    """Calcule une seule particule microsat+DNA (équivalent microsat+DNA de _run_single_particle).
+    """Calcule une seule particule microsat+DNA (équivalent microsat+DNA de _run_single_particle_snp).
 
     Fonction top-level (picklable), appelée par chaque worker du
     ProcessPoolExecutor.
@@ -2123,7 +2123,7 @@ def replay_reftable_simulation_mixed(
     max_workers: int | None = None,
 ) -> list[ParticleResult]:
     """Rejoue, particule par particule, les tirages RÉELS de DIYABC (équivalent
-    microsat+DNA de replay_reftable_simulation).
+    microsat+DNA de replay_reftable_simulation_snp).
 
     Lit un reftable réel existant (scénario, paramètres historiques ET
     priors de groupe RÉELLEMENT tirés par DIYABC) et rejoue chaque
