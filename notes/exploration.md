@@ -494,7 +494,7 @@ Dernière piste facile identifiée dans l'investigation initiale : le
 différentes :
 
 1. **En interne à `build_samples_argument`** (`ancestry_simulation.py`)
-   : la fonction appelait `population_index_to_name(snp_file_path)` --
+   : la fonction appelait `sample_index_to_name(snp_file_path)` --
    qui appelle lui-même `count_samples_per_population` -- PUIS
    rappelait `count_samples_per_population(snp_file_path)` une seconde
    fois, indépendamment, juste pour les comptes. Corrigé : un seul
@@ -2285,7 +2285,7 @@ signature_refactor_mismatch]] persistent-memory checklist)**:
   `replay_reftable_simulation`'s `executor.submit(_run_single_particle_
   from_values, ...)` call, shifting every subsequent positional
   argument by one slot.
-- `haploid_pool_sizes`/`pool_sizes` built from `context.count_samples`
+- `haploid_pool_sizes`/`pool_sizes` built from `context.count_per_samples`
   used AS-IS (real `.snp` population names as keys) instead of
   translated to msprime's `"pop1"/"pop2"` convention — what `build_
   samples_argument` used to do internally before this refactor.
@@ -2975,7 +2975,7 @@ surnaturelle. Il reste que rien ne diverge.
 
 ### Le chantier lui-même : court, et sans surprise
 
-Décalque du SNP IndSeq, avec deux spécificités PoolSeq. `context.count_samples`
+Décalque du SNP IndSeq, avec deux spécificités PoolSeq. `context.count_per_samples`
 donne la taille **haploïde** du pool (des copies de gènes, pas des individus),
 d'où `poolseq_counts_by_sample` et son `// 2`. Ce helper a été **extrait**
 plutôt que dupliqué, pour une raison précise : les deux dicts candidats
@@ -3085,3 +3085,784 @@ concentre 400 individus (800 copies) dans UNE population avec `Npresent ≤ 1000
 rôle éventuel dans l'écart observé n'est **pas** établi — la seule expérience
 menée dessus était confondue.
 
+## 2026-09-25 (fin) — Le biais PoolSeq sériel : un vrai bug de port, trouvé par une question de lisibilité
+
+Suite immédiate de l'entrée précédente, qui concluait « validé, biais d'environ
+1 % consigné comme question ouverte ». Cette conclusion était en partie fausse :
+la moitié du biais venait d'un bug.
+
+### Comment il a été trouvé
+
+Pas par un test — ils étaient tous verts. Pas par un garde — aucun ne pouvait le
+voir. L'utilisateur a simplement demandé pourquoi `compute_summary_statistics`
+calculait `scenario` / `counts_by_samples` / `sample_sets` dans sa branche
+`else` alors que sa branche `if` les recevait d'ailleurs, et s'il ne fallait pas
+uniformiser. En allant regarder le jumeau `_from_values` pour répondre, le bug
+est apparu.
+
+### Le bug
+
+`compute_summary_statistics_from_values` construisait `counts_by_samples`
+**avant** le `if`, avec la formule IndSeq :
+
+```python
+counts_by_samples = {f"pop{i}": n for i, n in enumerate(context.count_per_samples.values(), 1)}
+```
+
+et sa branche PoolSeq l'utilisait tel quel. Or sur un fichier POOL,
+`count_samples` compte déjà des **copies haploïdes**, pas des individus — d'où
+le `// 2` de `poolseq_counts_by_sample`. Le rejeu simulait donc :
+
+```
+rejeu   : 1600 nœuds / 800 individus   layout [400, 400, 400, 400]
+correct :  800 nœuds / 400 individus   layout [200, 200, 200, 200]
+observé :  800 nœuds / 400 individus
+```
+
+Deux fois trop de copies par échantillon. `simulate_poolseq_reads` calculant
+`p = pop_derived_count / len(sample_ids)`, la fréquence allélique était estimée
+sur 400 copies au lieu de 200 : **deux fois moins de bruit d'échantillonnage**,
+donc moins de variance entre échantillons, donc toutes les statistiques de
+différenciation systématiquement abaissées.
+
+### Pourquoi aucun garde ne pouvait le voir
+
+`_check_layout_matches` vérifie `sum(layout) == ts.num_samples` : vrai
+(1600 = 1600). `compute_sample_layout` vérifie
+`sum(counts) == ts.num_individuals` : vrai (800 = 800). **Tout était cohérent
+en interne.** Le seul désaccord était avec le fichier observé, que rien ne
+relit à ce stade. C'est exactement la limite déjà écrite dans la docstring de
+`_check_layout_matches` : il ne détecte que les désaccords de taille interne,
+et deux dicts de même total lui échappent.
+
+### Effet de la correction, mesuré
+
+```
+FST2m, écart absolu msprime − DIYABC
+  avant : médian −0,00254   fenêtre [−0,00311, −0,00247]    décalage serré, systématique
+  après : médian −0,00052   fenêtre [−0,00304, +0,00131]    dispersion à cheval sur zéro
+
+KS<0,05        : 10/133  →  4/133      (attendu ~6,7)
+test des signes: −1,06 % →  −0,495 %
+```
+
+Le décalage additif disparaît. Le PoolSeq sériel valide alors proprement, et le
+biais résiduel retombe dans la bande des autres jeux validés (`toy_example3`
+−0,74 %, `toy_example1_ms` −0,87 %) : ce n'est plus un problème de cette
+famille, c'est la question ouverte à l'échelle du projet.
+
+### Ce que cet épisode enseigne
+
+**Une asymétrie de lecture est un signal.** Deux branches qui préparent les
+mêmes objets de deux façons différentes, c'est le terrain exact où une formule
+finit appliquée à la mauvaise famille de données. Ici la question n'était même
+pas « est-ce juste ? » mais « pourquoi est-ce écrit deux fois différemment ? ».
+
+**Et les gardes internes ne remplacent pas une comparaison aux données
+observées.** Trois vérifications de cohérence passaient toutes. Ce qui manquait,
+c'est un contrôle du type « le nombre de copies simulées correspond-il à ce que
+le fichier observé déclare ? » — à envisager si un troisième cas de ce genre
+apparaît.
+
+### Restent ouverts
+
+- Quatre colonnes encore significatives après correction, **toutes** de la
+  famille ML et **toutes** impliquant l'échantillon 4 (`ML2p_2.4`,
+  `ML3p_1.2.4`, `ML3p_1.3.4`, `ML3p_2.3.4`). 4/133 est dans le bruit attendu,
+  mais la concentration mérite un contrôle de persistance sur un second rejeu.
+- Le biais systématique d'environ 0,5 à 2,6 % selon les jeux, à l'échelle du
+  projet. Expérience en cours : `toy_example4_seriel` à 1000 loci.
+- L'uniformisation par jumeaux (`simulate_particle_reads` /
+  `..._from_values`), demandée et repoussée après la correction pour que
+  celle-ci reste seule dans son commit.
+
+## 2026-09-25 (épilogue) — Le biais systématique est le résidu de juillet, mesuré proprement
+
+Une fois le bug du rejeu PoolSeq corrigé, l'expérience à variable unique promise
+a pu être faite : `toy_example4_seriel`, tout identique, seul le nombre de loci
+change.
+
+```
+ 100 loci   KS 4/133   p méd 0,879   signes p = 2,6e-03   rdiff médian −0,495 %
+1000 loci   KS 1/133   p méd 0,989   signes p = 0,185     rdiff médian −0,076 %
+```
+
+Biais divisé par 6,5 pour dix fois plus de loci, test des signes devenu non
+significatif. Et le résultat est doublement probant : à 1000 loci la variance
+par colonne est plus faible, donc le KS est **plus** sensible — il détecte
+pourtant moins.
+
+**C'est donc bien le biais résiduel clos le 17/07** (« shrinks and vanishes as
+loci count grows »), cette fois mesuré au lieu d'être supposé. La conséquence
+pratique : un test des signes significatif sur un jeu à petit nombre de loci
+n'est pas un défaut de portage — vérifier le nombre de loci avant d'ouvrir une
+enquête.
+
+### Le résidu restant
+
+Des quatre colonnes encore significatives à 100 loci, trois s'effondrent :
+
+```
+ML2p_2.4      p 0,0090 → 0,4021    rdiff  −9,3 % →  −5,1 %
+ML3p_1.2.4    p 0,0110 → 0,8563    rdiff −13,7 % →  −3,2 %
+ML3p_1.3.4    p 0,0285 → 0,0769    rdiff −22,1 % →  +0,0 %
+ML3p_2.3.4    p 0,0001 → 0,0013    rdiff −14,3 % → −10,3 %   ← survit
+```
+
+`ML3p_2.3.4` survit à la multiplication par dix, avec une amplitude stable.
+1/133 reste dans le taux de faux positifs attendu, donc ce n'est peut-être
+rien, et l'utilisateur a décidé de ne pas la poursuivre — décision raisonnable
+au vu du rapport coût/enjeu.
+
+Son hypothèse : l'écart viendrait de la construction du `.snp` de
+`toy_example4` (scénario 3, pop4 admixée), qui concerne justement les
+populations 2, 3 et 4. **Consignée comme hypothèse, sans mécanisme établi** :
+dans un rejeu sériel, les données observées n'entrent que par
+`observed_reads_per_locus`, fournie à l'identique aux deux simulateurs — on ne
+voit donc pas par quelle voie elle créerait une divergence. Le test qui
+trancherait, si quelqu'un reprend : un second rejeu à 1000 loci, graine
+différente.
+
+## 2026-09-25 (addendum) — `ML3p_2.3.4` : effet réel, pas du bruit
+
+Trois rejeux de `toy_example4_seriel`, tous après correction du bug PoolSeq :
+
+```
+colonne        100 loci #1          1000 loci            100 loci #2
+ML3p_2.3.4     0,0001 / −14,32 %    0,0013 / −10,27 %    0,0002 / −13,38 %
+ML2p_2.4       0,0090 /  −9,27 %    0,4021 /  −5,12 %    0,0201 /  −6,02 %
+ML3p_1.2.4     0,0110 / −13,68 %    0,8563 /  −3,22 %    0,1923 /  −6,85 %
+ML3p_1.3.4     0,0285 / −22,06 %    0,0769 /  +0,03 %    0,9307 /  −5,41 %
+```
+
+`ML3p_2.3.4` est significative dans les **trois**, avec une amplitude stable
+(−10 à −14 %) et une p-valeur entre 1e-4 et 1,3e-3. Elle survit à la
+multiplication par dix du nombre de loci, qui élimine les trois autres. Le
+critère de persistance du projet est rempli : **ce n'est pas du bruit**, c'est
+un résidu réel localisé sur le triplet (2,3,4).
+
+`ML2p_2.4` est intermédiaire : significative aux deux rejeux à 100 loci, pas à
+1000, amplitude décroissante (−9,3 → −6,0 → −5,1 %). Profil du résidu lié au
+nombre de loci, avec un signe constant à noter.
+
+**Non investigué, décision de l'utilisateur** — rapport coût/enjeu. Hypothèse
+avancée par lui : un lien avec la construction du `.snp` de `toy_example4`
+(scénario 3, pop4 admixée), qui concerne justement les populations 2, 3 et 4.
+**Aucun mécanisme établi** : dans un rejeu sériel les données observées
+n'entrent que par `observed_reads_per_locus`, fournie à l'identique aux deux
+simulateurs. Premier pas si quelqu'un reprend : lire `cal_ml3p` dans
+`sumstat.cpp` et vérifier la transcription, puisque la famille ML est la seule
+touchée.
+
+Note méthodologique au passage : le test des signes global donne −0,495 % au
+premier rejeu à 100 loci et **+0,573 %** au second. Il change de signe — à cette
+échelle c'est du bruit, et seule la mesure à 1000 loci (−0,076 %) est fiable.
+
+
+## 2026-10-02 — Le coalescent discret falsifié, et le résidu G2 retourné : le défaut est chez DIYABC
+
+> **Suite et conclusion dans l'entrée « 2026-10-02 (suite) ».** Les sections 5
+> (« la tension que toute explication devra résoudre ») et 8 (« ce qui reste
+> bloqué ») de cette entrée sont **résolues** : la cause est localisée à la ligne,
+> et le dump de séquences a fini par sortir. Ne pas repartir d'ici.
+
+Deux verdicts du projet tombent le même jour, et le second inverse une
+attribution vieille de plusieurs semaines. Le fil conducteur est une seule
+erreur de méthode, répétée : **avoir lu un écart en relatif sans jamais le
+regarder en absolu.**
+
+### 1. Ce qu'est réellement la branche discrète de `coal_pop`
+
+Le chantier ouvert « répliquer le coalescent génération par génération de
+DIYABC » reposait sur un gradient de π en fonction de `N1` (−72 % à −3 %) et sur
+l'argument π/`S`. Avant d'écrire une ligne de simulateur, il fallait lire le code
+(`particuleC.cpp:1398-1500`, branche `GENERATION PER GENERATION`) :
+
+```
+Ne = (int)(0.5 * coeffcoal * N + 0.5)        // 2N pour <A>
+à chaque génération : chaque lignée tire un parent uniforme dans 1..Ne
+                      toute lignée partageant un parent fusionne en UN nœud
+```
+
+C'est un **Wright-Fisher haploïde sur `Ne` copies de gènes**, avec fusions
+multiples simultanées. Et surtout : c'est **le même processus que la branche
+continue**, dont il est la version exacte. L'attente continue vaut
+`coeffcoal·N/(nl(nl−1))`, soit exactement `2·Ne/(nl(nl−1))`, la limite de Kingman
+de ce WF. Les deux branches ne décrivent pas deux modèles ; l'une approxime
+l'autre.
+
+Ce seul constat rendait la suite prévisible, mais il fallait le mesurer.
+
+### 2. La mesure : l'effet est nul, et nul par construction
+
+Statistique sans mutation, `r = ⟨distance moyenne par paire⟩ / ⟨longueur totale
+de branches⟩` — l'équivalent de π/`S` dans la limite basse mutation, qui vaut
+`1/a_n` sous Kingman. Trois généalogies comparées : un port Python fidèle de la
+boucle C++, `msprime.StandardCoalescent`, `msprime.DiscreteTimeWrightFisher`.
+n = 80 copies de gènes, 2000 réplicats.
+
+| | `r` ≈ π/`S` | `L` ≈ `S` | π ≈ `r·L` |
+|---|---|---|---|
+| `ra = 3.2` | 0,969 | 1,039 | 1,007 |
+| `ra = 0.8` (le seuil réel de bascule) | 0,994 | 1,000 | 0,995 |
+
+Et sur toute la grille `Ne` de 50 à 3000, les trois restent à moins de 1 % les
+unes des autres. DTWF suit Kingman comme il suit DIYABC.
+
+**La raison est structurelle**, et c'est ce qui interdit d'espérer un autre
+résultat d'un autre montage : les fusions multiples se produisent à longueur de
+branche quasi nulle. À `ra = 3.2` le port passe de 80 à 41 lignées **en une
+génération**, avec des fusions de 4 lignées — le mécanisme des polytomies est
+bien là. Mais π et `S` absorbent ces fusions proportionnellement, donc le rapport
+est conservé. Validation du port par l'autre bout : à `ra = 0.05` il dégénère en
+Kingman, une fusion à la fois.
+
+Conséquences : les deux obstacles qui bloquaient le chantier — DTWF exige
+`ploidy = 2`, et le critère est dynamique puisque `nLineages` n'est pas connu
+avant de simuler — deviennent sans objet. Et un détail trouvé en passant qui
+explique peut-être l'existence même d'`evalcriterium` : la boucle discrète
+reparcourt **tous** les nœuds pour chaque parent distinct tiré, soit du
+O(nnodes²) par génération. Avec ~160 nœuds, 10 000 générations et 100 loci, c'est
+de l'ordre de 10¹⁰ opérations par particule. Le critère évite un chemin
+pathologiquement lent, il ne corrige pas une approximation.
+
+### 3. θ, et pourquoi c'était la variable manquante
+
+```
+θ = 4 · N1 · µ · dnalength
+```
+
+C'est le nombre attendu de différences entre deux séquences tirées au hasard dans
+l'échantillon, pour un locus entier. Le facteur `4·N1` vient de ce que
+`coeffcoal = 4` pour `<A>` à sexratio 0,5, donc `Ne = 2·N1` copies de gènes :
+deux lignées coalescent en moyenne au bout de `Ne = 2·N1` générations, et les
+**deux** branches qui les séparent cumulent `4·N1` générations d'exposition.
+
+Les deux statistiques estiment cette même quantité, chacune à sa façon :
+`E[π] = θ` directement, `E[S] = θ·a₃₉` avec `a₃₉ = 4,25` pour n = 40 copies par
+échantillon. Leur rapport `π/S = 1/a₃₉ = 0,235` ne dépend **ni de µ ni de `N1`**,
+seulement de la forme de la généalogie — c'est pour ça qu'il sert de statistique
+sans mutation au point 2.
+
+**`N1` et µ n'agissent que par leur produit.** Deux particules à
+(`N1 = 100`, `µ = 1e-6`) et (`N1 = 10000`, `µ = 1e-8`) ont la même diversité
+attendue. Stratifier par `N1` seul mélange donc des régimes incomparables : c'est
+l'erreur qui a produit le faux « offset plat », puis, un cran plus tôt, le faux
+gradient attribué au coalescent discret. Ordres de grandeur sur
+`toy_example2_ms_dna_50loci_K2P` G2, où θ couvre un facteur 500 :
+
+| θ | ce que ça veut dire concrètement |
+|---|---|
+| 0,008 | ~1 locus sur 120 porte une mutation ; 49 sur 50 sont monomorphes |
+| 0,1 | ~1 locus sur 10 |
+| 1 | en moyenne 1 différence par paire et par locus |
+| 3,9 | le maximum atteint ici |
+
+### 4. Le résidu G2 : deux preuves que le défaut est chez DIYABC
+
+**Preuve 1 — la prédiction coalescente, calculée sans jamais regarder DIYABC.**
+Le scénario 1 met les cinq populations à `N1`, donc pour une statistique
+*intra-échantillon* l'histoire est une population unique de taille constante.
+En restreignant aux particules dont l'échantillon coalesce avant `t1`
+(`t1 > 4·N1`, 398 particules) :
+
+| θ | théorie | π DIYABC | π nous | DIYABC/th | nous/th | `S` DIY/th | `S` nous/th |
+|---|---|---|---|---|---|---|---|
+| 0,008 | 0,008 | 0,0633 | 0,0114 | **7,62** | 1,37 | 1,03 | 1,21 |
+| 0,036 | 0,036 | 0,1037 | 0,0402 | **2,86** | 1,11 | 1,00 | 1,07 |
+| 0,085 | 0,085 | 0,1517 | 0,0869 | **1,78** | **1,02** | 1,02 | 1,01 |
+| 0,185 | 0,185 | 0,2488 | 0,1915 | **1,34** | **1,03** | 1,01 | 1,01 |
+| 0,460 | 0,460 | 0,4875 | 0,4560 | **1,06** | **0,99** | 0,94 | 0,98 |
+
+Notre π est sur la prédiction (0,99–1,03 dans les strates où l'estimation est
+stable) ; celui de DIYABC la dépasse jusqu'à ×7,6. `S` est sur la prédiction des
+**deux** côtés. En absolu, `π_DIYABC − θ` vaut **+0,055 / +0,067 / +0,067 /
++0,064** sur les quatre premières strates : un additif d'environ **+0,06
+différence par paire et par locus**, posé sur une valeur par ailleurs correcte.
+Le +0,027 de la dernière strate est l'endroit où les coups multiples font que la
+prédiction en sites infinis surestime les deux côtés.
+
+Lire les strates médianes, pas la première : `t1 > 4·N1` sélectionne les petits
+`N1` et la plus basse ne repose que sur 80 particules à moyenne quasi nulle.
+
+**Preuve 2 — DIYABC se contredit lui-même, sans théorie et sans msprime.**
+`MPD ≤ 0.75·NSS` est une borne de construction : un site contribue 1 à `NSS` et
+au plus 0,75 à `MPD` avec 4 états. DIYABC la franchit dans **4,6 %** des
+particules, **23 %** du premier quintile de θ, jusqu'à **×24,6**. Notre côté ne
+la franchit jamais (rapport max 0,53, et notre π/`S` se tient à `1/a₃₉` ≈ 0,235).
+Cet argument tiendrait même si l'arithmétique de la preuve 1 était fausse. C'est
+lui qui rend le verdict robuste.
+
+**Le profil complet, qui désigne `MPD` seule.** Sur les 21 colonnes G2, `MPD` est
+la seule où DIYABC est au-dessus ; `NSS` +1,4 %, `MNS` +1,8 %, `VNS` +2,4 %,
+`NHA` +0,6 %, `NH2`/`NS2`/`MP2`/`MPB` +0,2 à +2,2 % nous sont tous légèrement
+favorables, et `HST` comme `VPD` concordent à moins de 1 %.
+
+**Et notre saturation se comporte correctement**, ce qui est la contre-épreuve :
+notre excès sur Kingman **croît** avec µ (quintiles de G3 : 5,0 → 6,2 → 6,7 →
+7,7 → 8,7 %), comme la saturation l'exige. Celui de DIYABC est plat en µ et
+explose quand µ baisse (G2 : +55,4 % à µ ≤ 1,94e-07 contre nos +2,5 %). **G3
+n'est pas propre, seulement moins exposé** : son µ est 10× plus élevé, donc il
+atteint rarement les faibles θ, et son propre quintile de µ le plus bas montre la
+même chose (+17,0 % contre +4,1 %).
+
+### 5. La tension que toute explication devra résoudre
+
+Ce n'est **pas** « les séquences de DIYABC sont trop diverses » : ça ferait monter
+`NSS` aussi, or `NSS` est sur la valeur théorique. Chiffré : il faudrait ~1,2 site
+variable de plus par locus pour expliquer +0,06 sur π (un singleton de plus ajoute
+`2·(1/40)·(39/40) = 0,0488`), ce qui mettrait `NSS` à **+31 %** au-dessus de la
+théorie. On mesure ±3 %.
+
+Donc le mécanisme produit des différences par paire **sans créer de sites
+ségrégants** — dans un code où les deux fonctions lisent le même tableau
+`haplodnavar` sur les mêmes bornes `dnavar`. C'est pour cette raison que les
+quatre lectures statiques sont toutes revenues cohérentes, et il faut le dire :
+**la formule n'est pas en cause.** Transcrire `cal_nsspl` et `cal_mpdpl` et les
+faire tourner sur les séquences G2 **observées** reproduit `statobsRF.txt` à
+6 décimales (`NSS_2_1` 0,800000, `MPD_2_1` 0,142308, `NSS_2_2` 1,000000,
+`MPD_2_2` 0,178462). `cal_mpd1p`, `cal_nsspl`, `cal_numvar` et toute la question
+des dénominateurs sont donc éliminés : la divergence n'existe que sur données
+**simulées**.
+
+### 6. Fausses pistes, consignées pour ne pas être reprises
+
+- **`MPD` normalisé par les loci polymorphes** : non. `PSS` monte à 3,15, ce n'est
+  donc pas une proportion, et la correction empire tout.
+- **`nuvar` non vidé entre les loci dans `cal_numvar`** : le `clear()` est bien
+  présent, à l'intérieur de la boucle.
+- **Lecture hors bornes via `liberednavar`** : l'ordre d'appel est propre,
+  `cal_numvar` → toutes les stats → `liberednavar`.
+- **Concentration anormale des mutations par `mutsit`/`sitefix`** : non.
+  `nsv = floor(100·(1−0,01·p_fixe)+0,5) = 90`, et la boucle met à zéro les
+  `dnalength − nsv = 10` **premiers** sites. Dix sites invariants, quatre-vingt-dix
+  mutables — la sémantique que `CLAUDE.md` décrivait, que j'avais mal lue dans
+  l'autre sens.
+- **Le coalescent discret**, bien sûr : 0,5 % mesuré là où il en faudrait 7000.
+
+### 7. Un défaut d'outillage qui rendait un garde-fou aveugle
+
+En cherchant à stratifier par µ, découverte que `µseq_2` n'avait que **2 valeurs
+distinctes** dans les fichiers texte. Cause : `write_reftable_txt` et
+`rewrite_real_reftable_txt` écrivaient toutes les colonnes en `%12.6f`, dont la
+précision est **absolue** — elle détruit les petites valeurs, et les taux de
+mutation sont petits. Sur 1000 particules, `µseq_2 ~ UN[1e-8,1e-6]` :
+**508 valeurs écrasées à exactement 0**. `snimic_1` entièrement anéantie.
+
+Conséquence sur laquelle il faut être explicite : le test d'appariement des
+paramètres mutationnels prescrit par le projet **passait trivialement**, en
+comparant 0 à 0 sur la moitié des particules. Il aurait passé avec un µ injecté
+faux d'un facteur 50. DIYABC, lui, écrit `8.749e-07` — en notation scientifique,
+précisément pour cette raison.
+
+Correctif retenu, **par famille de colonnes** : paramètres (historiques et
+mutationnels) en `%.6g` — 6 chiffres *significatifs* —, statistiques en `%12.8f`,
+où des valeurs de 0,02 à 12 sont exactes et les colonnes restent alignées.
+`%12.8f` sur µ ne suffit pas : 100 valeurs distinctes et jusqu'à 19 % d'erreur
+relative sur les plus petites, soit exactement les particules à faible θ où vit
+le résidu. Après correction : 958 valeurs distinctes, erreur nulle, et
+l'appariement vérifié **12/12 colonnes à zéro exact** dans les 4 cellules.
+
+Deux pièges rencontrés au passage. `rewrite_real_reftable_txt` rangeait les
+7 colonnes mutationnelles dans `stat_names` — tout ce qui suit les paramètres
+historiques — donc les formater comme des statistiques aurait laissé µ écrasé
+malgré le changement ; d'où `_split_mutation_and_stat_names`, qui les sépare sur
+le fait qu'un nom de statistique commence toujours par une majuscule ASCII, et
+qui **lève** plutôt que de décaler les formats en silence. Et le changement de
+format a semblé casser l'appariement : en réalité le kernel Jupyter gardait le
+module d'avant l'édition en mémoire, produisant un `first_records_clean` plus
+**récent** que le replay mais écrit par l'ancien code. **Redémarrer le kernel
+avant de régénérer quoi que ce soit après un changement de format.**
+
+Le `.bin` n'a jamais été concerné (`struct.pack` en float32) : le livrable
+structurel était sain, c'est le chemin de diagnostic qui perdait l'information.
+
+### 8. Ce qui reste bloqué
+
+Ce qui trancherait la localisation : voir les séquences simulées de DIYABC et y
+recalculer les deux statistiques avec la transcription qui a déjà concordé à
+6 décimales. Deux issues, informatives toutes deux — soit le recalcul redonne le
+`MPD` annoncé, et la contradiction avec `NSS` se résout dans la sélection des
+sites ; soit il donne autre chose, et le défaut est entre les séquences et la
+statistique.
+
+Le hook existe : `debuglevel == 9` avec `kloc == 10` (le premier locus G2 `<A>`
+`[S]`) dumpe exactement ces séquences depuis `cal_nss1p`. **Mais le binaire
+n'atteint jamais sa phase de simulation** dans aucune invocation essayée
+(`-r 1 -g 1`, `-r 5 -g 5`, `-r 1000` sans `-g`) : 100 % de CPU, aucune ligne
+`init_dnaseq`, tué à 8 minutes. `-w` exige des `RNG_state_000w.bin` créés au
+préalable par `-n "t:8;c:1;s:<graine>;f:1"`. Route de repli non essayée : un
+header à priors constants, qui touche la ligne de trailer — le piège qui a déjà
+coûté cinq fois au projet, donc à faire valider avant usage.
+
+**Attention à la charge** : un seul processus à la fois. La branche discrète est
+en O(nnodes²) par génération et une particule à petit `N1` peut tourner plusieurs
+minutes ; j'ai saturé la machine de l'utilisateur en laissant plusieurs runs en
+parallèle, et deux `pkill -f` dont le motif figurait dans leur propre ligne de
+commande ont tué les shells appelants.
+
+### 9. La conséquence inconfortable
+
+Au-delà de θ ≈ 1 le rapport DIYABC/théorie vaut 1,007 puis 0,946 : le défaut ne
+mord que sur les loci peu diversifiés. La règle utile n'est donc pas « il faut le
+réparer » mais **« sur un jeu à faible θ, `MPD` et `DTA` de DIYABC ne sont pas une
+référence fiable »**, et un désaccord là n'est pas une charge contre notre
+portage. Pour un POC dont le but est l'équivalence structurelle et statistique
+avec DIYABC, c'est une conclusion qu'il vaut mieux avoir écrite que découverte
+deux fois. Et la règle de fidélité du projet — reproduire les bugs du C++ plutôt
+que les corriger — se heurte ici à un mur : on ne reproduit pas ce qu'on n'a pas
+localisé.
+
+### 10. Mes erreurs de méthode, consignées
+
+- **Avoir lu un gradient de `rdiff` sans le regarder en absolu.** C'est l'erreur
+  mère. Elle a produit deux verdicts successifs : l'attribution du résidu G2 au
+  coalescent discret, puis mon propre « offset additif et plat ». La version
+  quantitative de la règle `DTA` déjà au dossier : *un gradient de `rdiff` le long
+  d'une variable qui fait varier la moyenne n'est pas un effet tant qu'on ne l'a
+  pas vu en écart absolu.*
+- **Avoir stratifié par `N1` au lieu de θ.** `N1` ne capture que la moitié du
+  produit. Par θ, l'écart est monotone et change de signe ; par `N1`, il paraît
+  plat.
+- **Avoir déclaré G3 « propre »** sur la foi de sa moyenne globale, alors que son
+  quintile de µ le plus bas montre le même défaut. Un jeu peu exposé n'est pas un
+  jeu sain.
+- **Avoir annoncé « c'est le mode discret » pour expliquer la lenteur du
+  binaire**, alors que le mode discret exige `N1 < 80`, soit moins de 1 % des
+  tirages — incompatible avec deux graines lentes sur deux.
+- **Deux runs écrivant dans le même fichier de log**, qui s'écrasaient et m'ont
+  fait diagnostiquer un blocage inexistant.
+
+## 2026-10-02 (suite) — Le résidu G2 localisé à la ligne : un dénominateur qui lit le simulé là où son jumeau lit l'observé
+
+Suite directe de l'entrée précédente, qui établissait *de quel côté* venait le
+défaut sans savoir *où*. Il est maintenant localisé, et le chemin pour y arriver
+vaut autant que le résultat : ce sont deux croyances fausses de ma part qui
+tombent successivement.
+
+### 1. Le bug
+
+En une phrase : **`cal_nss1p` tire son dénominateur par locus des données
+OBSERVÉES, `cal_mpd1p` des données SIMULÉES**, et sur un locus où la simulation
+n'a tiré aucune mutation, les deux divergent.
+
+La chaîne, maillon par maillon :
+
+1. `init_dnaseq` (`particuleC.cpp:1777`) commence par `string dna = "";` et finit
+   par `if (nmutot > 0) {…} else { if (dnatrue) {…remplit dnalength bases…} }`.
+   Le chemin reftable tourne avec **`dnatrue = false`**, donc sur un locus **sans
+   mutation** la branche `else` ne fait rien et **`dna` reste vide**.
+2. `cree_haplo` recopie cette chaîne vide dans les 80 `haplodna[sa][ind]`.
+3. **`#define SEQMISSING ""`** (`particuleC.hpp:17`) — la chaîne vide *est* le
+   marqueur de donnée manquante. Le locus entier devient « manquant ».
+4. `cal_mpdpl` garde ses paires sur `haplodna[…] != SEQMISSING` : aucune ne passe,
+   `ndd = 0`, donc `*nd = 0`.
+5. `cal_mpd1p` ne compte le locus que `if (nd > 0)` → **il disparaît du
+   dénominateur**.
+6. `cal_nss1p` le compte au contraire via `OK`, que `cal_nsspl` tire de
+   `samplesize()` — laquelle lit `dataobs.ssize` et la liste des haplotypes
+   manquants **observés**, jamais les séquences simulées. Le locus **est** compté,
+   avec 0 site.
+
+Donc `MPD` = (Σ π sur les loci polymorphes) / (**nombre de loci polymorphes**),
+tandis que `NSS` = (Σ `S`) / (**tous les loci**). Mesuré dans un run de débogage :
+**1168 loci sur 18832 n'ont aucune mutation**, soit 6,2 %, et bien davantage dans
+les particules à faible θ.
+
+### 2. Pourquoi ça produit exactement la signature observée
+
+Quand θ → 0, `MPD → θ/(a₇₉·θ) = 1/a₇₉ = 0,202`, **une constante**. C'est toute
+l'explication du faux « offset additif de +0,06 indépendant de θ » : `MPD` ne tend
+pas vers zéro comme il devrait, il se stabilise sur un plateau. Mesuré dans le
+quintile de θ le plus bas : `MPD` moyen = **0,1942** contre 0,202 prédit.
+
+Et la correction `MPD × f`, avec `f = 1 − exp(−a₇₉·θ)` la probabilité qu'un locus
+porte au moins une mutation :
+
+| θ | théorie | `MPD` brut | brut/th | f | `MPD`×f | **corrigé/th** | nous/th |
+|---|---|---|---|---|---|---|---|
+| 0,073 | 0,073 | 0,177 | 2,434 | 0,284 | 0,0585 | 0,805 | 1,099 |
+| 0,269 | 0,269 | 0,369 | 1,373 | 0,722 | 0,2714 | **1,010** | 1,058 |
+| 0,558 | 0,558 | 0,631 | 1,132 | 0,929 | 0,5892 | **1,057** | 1,040 |
+| 0,966 | 0,966 | 1,007 | 1,042 | 0,990 | 0,9972 | **1,032** | 1,003 |
+| 1,545 | 1,545 | 1,540 | 0,997 | 0,999 | 1,5389 | **0,996** | 0,977 |
+| 2,576 | 2,576 | 2,423 | 0,940 | 1,000 | 2,4228 | 0,940 | 0,953 |
+
+Et surtout : **les violations de la borne `MPD ≤ 0.75·NSS` passent de 4,6 % à
+0,1 %.** Corriger le dénominateur fait disparaître les cas mathématiquement
+impossibles — c'est la confirmation la plus propre qu'on puisse avoir.
+
+La sur-correction du premier quintile (0,805) est attendue : le µ par locus a une
+dispersion Gamma de CV 0,71, et un mélange de Poisson a plus de zéros qu'une
+Poisson unique de même moyenne, donc le vrai `f` est plus petit que mon
+estimation. L'estimateur de `f` est imparfait, pas le mécanisme.
+
+### 3. Le périmètre : `MPD` et `VPD`, et rien d'autre
+
+Prédit par lecture du code, puis vérifié en aveugle. Rapport DIYABC/nous :
+
+| θ | `MPD` | `VPD` | `NSS` | `PSS` | `NHA` | `MNS` | `MP2` | `MPB` | `HST` |
+|---|---|---|---|---|---|---|---|---|---|
+| ≤ 0,20 | **1,951** | **1,907** | 0,973 | 0,980 | 0,992 | 0,952 | 0,951 | 0,955 | 0,989 |
+| 0,20–0,52 | **1,206** | **1,177** | 0,979 | 0,997 | 0,992 | 0,982 | 0,967 | 0,965 | 0,999 |
+| 1,0–1,75 | 1,013 | 1,016 | 0,989 | 1,004 | 0,997 | 0,976 | 0,978 | 0,983 | 1,007 |
+| 1,75–3,88 | 0,995 | 0,974 | 0,986 | 1,001 | 0,992 | 0,985 | 0,981 | 0,987 | 1,020 |
+
+Les deux dont le dénominateur lit le simulé doublent à faible θ puis convergent ;
+les sept dont l'`OK` vient de `samplesize()` sont plates autour de 1, sans
+dépendance en θ. `cal_vpd1p` garde `nd > 1` et non `nd > 0` : un cran plus strict,
+il écarte aussi les loci à une seule paire exploitable. `cal_dta1p` n'est **pas**
+touché — son retour anticipé sur `dnavar < 1` laisse `OKK` à vrai, donc les loci
+monomorphes sont comptés avec D = 0, comme chez nous.
+
+### 4. Pourquoi toutes les vérifications antérieures passaient à côté
+
+Transcrire `cal_nsspl`/`cal_mpdpl` et les faire tourner sur les séquences G2
+**observées** reproduit `statobsRF.txt` à 6 décimales. Ce test passait parce que
+`statobsRF` est calculé avec `dnatrue = true`, mode dans lequel un locus
+monomorphe reçoit quand même ses 100 bases et n'est donc jamais « manquant ».
+
+La leçon générale, qui dépasse ce bug : **une vérification faite sur données
+observées ne valide pas le chemin simulé.** Les deux empruntent des branches
+différentes de `init_dnaseq` et de `cal_numvar`. En mode `dnatrue = false`,
+`init_dnaseq` construit une *séquence artificielle faite des seuls sites
+variables* — longueur `k` = nombre de sites physiques distincts mutés, `tabsit`
+mappant site physique → index compressé. Cette représentation est fidèle (deux
+mutations au même site physique partagent un index, donc s'écrasent le long de
+l'arbre comme elles le doivent) et donne les mêmes π et `S`. Elle ne diffère que
+sur un point : le locus sans mutation, où `dna` reste vide.
+
+### 5. Deux croyances fausses de ma part, tombées dans l'ordre
+
+**Première : « le spectre de fréquences est déplacé vers k ≈ 13–27 ».** Déduite
+indirectement du reftable, et fausse. Mesurée directement sur les séquences
+simulées dumpées (locus 10, 200 blocs particule×échantillon) : **23,3 % de
+singletons contre 24,1 % attendus**, compte allélique mineur moyen 7,77 contre
+6,40, et compatible avec Kingman dans **toutes** les strates de `S`, y compris
+`S = 1`. Le spectre de DIYABC est correct. Ce que je prenais pour un déplacement
+était l'artefact du dénominateur lu à travers π. Corollaire méthodologique : j'ai
+passé plusieurs heures à chercher dans `put_mutations` et `coal_pop` un biais de
+longueur de branche interne qui n'existait pas, parce que j'avais inféré une
+propriété des séquences sans jamais regarder les séquences.
+
+**Seconde : « `DTA` révèle un deuxième problème de signe inverse ».** Écrite sur
+la foi d'un rapport DIYABC/nous de 0,12 à 0,67. **C'est exactement le piège que
+`CLAUDE.md` met en garde de ne pas tendre.** Les valeurs absolues :
+
+| θ | `DTA` réel | `DTA` nous | écart absolu | écart-type du réel |
+|---|---|---|---|---|
+| ≤ 0,20 | 0,0015 | 0,0124 | +0,0108 | **0,0707** |
+| 1,0–1,75 | 0,0111 | 0,0421 | +0,0309 | **0,1376** |
+| 1,75–3,88 | 0,0509 | 0,0756 | +0,0248 | **0,1348** |
+
+La moyenne est 20 à 50 fois plus petite que la dispersion : le rapport est le
+quotient de deux nombres noyés dans le bruit, et `cal_dta1p` a le bon
+dénominateur. Rétractée.
+
+Ce qui **reste** vrai sur `DTA` : le drapeau KS sur `DTA_2_2` dans 4 cellules sur
+4 est réel, et le KS étant invariant d'échelle il ne se laisse pas tromper par une
+petite moyenne. Il subsiste donc une vraie différence de distribution, petite
+(+0,011 à +0,031, même signe dans les cinq strates) et non expliquée. Candidat le
+plus plausible, à vérifier de **notre** côté : DIYABC garde
+`if (e1*S + e2*S*(S−1.0) > 0.0)` et laisse `res = 0.0` sinon, ce qui concerne les
+loci à `S = 1` où la variance s'annule.
+
+### 6. Comment obtenir le dump, parce que ça a coûté une session
+
+Le dump vit dans `cal_nss1p`, sous `debuglevel == 9` **et** `kloc == 10` (le
+premier locus G2 `<A> [S]`). L'invocation qui marche :
+
+```
+general -p ./ -r 2 -R ALL -a 9
+```
+
+**`-R ALL` est la pièce porteuse.** Sans elle, `randomforest` reste faux,
+`readHeader` part dans `readHeaderEntete` au lieu de `readHeaderAllStat` et
+**boucle à 100 % de CPU**. C'est ce qui a fait passer trois tentatives
+(`-r 1 -g 1`, `-r 5 -g 5`, `-r 1000` sans `-g`) pour une simulation lente alors
+qu'elles n'avaient jamais quitté la lecture du header — le log s'arrêtait à
+« apres buildMutParam » et ne contenait aucune ligne `init_dnaseq`. Le diagnostic
+est venu d'un `diff` entre mon log et celui du run de référence, qui révélait la
+ligne « simulating data sets with all summary statistics » absente chez moi.
+
+`-g` vaut 100 par défaut, donc `-r 2` simule quand même 100 particules : 19 s,
+173 000 lignes de log. `nice -n 19`, un seul processus à la fois.
+
+### 7. Autres trouvailles de la fouille
+
+**Un second bug latent, non déclenché ici.** Dans la branche d'erreur « base non
+ACGT » de `mute`, `n` est réutilisé comme compteur de boucle d'affichage et finit
+à `dna.length()`, et l'`exit(1)` juste en dessous est **commenté**. Donc
+`switch (dna[n])` lit `dna[size()]` (`'\0'`), aucun cas ne s'applique, `dnb` garde
+la base d'origine, et `dna[n] = dnb` écrit hors plage. Effet s'il se déclenche :
+la mutation est silencieusement perdue, plus une écriture hors plage. **Même
+famille que le bug `mutsit`/`sitefix` déjà au dossier : un compteur de boucle
+réutilisé à la place de la variable voulue.** Écarté empiriquement — zéro
+occurrence de « probleme » dans `diyabc_run.log`.
+
+**Un débordement latent** dans `init_dnaseq` : la boucle CDF inverse
+`while (s < ra) { k++; s += mutsit[k]; }` n'est pas bornée, donc si la somme
+normalisée de `mutsit` vaut 1−ε en flottant et que `ra` tombe dans l'écart, `k`
+dépasse `dnalength`. Probabilité ~1e-16 par mutation, aucun garde-fou.
+
+**Écartés, à ne pas reprendre** : `put_mutations` est irréprochable — Poisson par
+branche de moyenne `longueur × mus_rate × dnalength`, donc la répartition des
+mutations entre branches n'est pas biaisée ; la branche continue de `coal_pop` est
+correcte, y compris la subtilité que le nœud parent porte la `pop` cible avant les
+deux `draw_node` mais ne peut jamais être tiré comme son propre enfant parce qu'il
+porte l'indice le plus haut ; `cal_numvar` vide bien `nuvar` entre les loci ;
+`liberednavar` tourne après toute la boucle de statistiques ; `dnalength` vaut 100
+déclaré **et** réel dans le `.mss` ; le tier 2 du tirage de µ par locus est actif
+et non biaisé des deux côtés. Et `PSS` s'explique enfin : ce sont les sites
+ségrégants **privés**, pas une proportion — c'est pour cette raison que j'avais
+écarté à tort l'hypothèse « normalisé par les loci polymorphes », qui avait la
+bonne forme depuis le début.
+
+### 8. Ce qu'il reste à décider
+
+Le bug est localisé, donc la règle de fidélité du projet s'applique enfin : il est
+**reproductible**, et ça ne demande pas un simulateur mais un dénominateur —
+exclure de `MPD` et `VPD` les loci dont la simulation n'a produit aucune mutation,
+en les gardant dans `NSS`. Non fait : c'est un choix à poser, puisque ça revient à
+écrire un défaut connu dans notre propre sortie.
+
+Au-delà de θ ≈ 1 le rapport vaut 1,013 puis 0,995, donc le défaut ne mord que sur
+les loci peu diversifiés. La règle utile reste : sur un tel jeu, **`MPD` et `VPD`
+de DIYABC ne sont pas une référence fiable**, et un désaccord là n'est pas une
+charge contre notre portage.
+
+## 2026-10-05 — Le résidu `DTA_2_2` : du bruit corrélé, fabriqué par `seed + OFFSET + i`
+
+Séance en mode mentor. Le point de départ : après la localisation du bug `MPD`/`VPD`
+de DIYABC (02/10), il restait un drapeau KS sur `DTA_2_2`, « petit, de même signe
+dans les cinq strates, inexpliqué ». Il s'est révélé n'être ni une formule ni un
+défaut de simulation : c'était le bruit de **nos** graines, rejoué à l'identique.
+
+### 1. Le symptôme, et ce qu'il avait de convaincant
+
+`toy_example2_ms_dna_50loci_{JK,K2P,TN}`, 2 rejeux chacun, 2 scénarios : `DTA_2_2`
+ressort au KS dans **11 cellules sur 12** (p de 1e-4 à 1e-2), la douzième à p = 0,16.
+Jamais `DTA_2_1` de façon nette (2 cellules sur 12 sous 0,05). Notre moyenne dépasse
+celle de DIYABC dans les 12. C'est le critère de persistance du projet, rempli à
+l'extrême : trois modèles, plusieurs runs. C'est précisément ce qui le rendait
+trompeur (voir 7).
+
+### 2. Ce qui a été écarté par lecture
+
+`cal_dta1pl` et `_tajima_d_per_locus` sont identiques ligne à ligne : constantes
+`a1,a2,b1,b2,c1,c2,e1,e2`, `dnavar < 1` → 0 et locus compté, `n < 2` → locus exclu,
+numérateur `pi - S/a1`, dénominateur `sqrt(e1*S + e2*S*(S-1))`. Le `.mss` n'a aucune
+donnée manquante (zéro `<[]>`), les deux échantillons ont n = 20. Le bug du
+dénominateur de `MPD` ne peut pas atteindre `DTA`, qui compte les loci monomorphes
+avec D = 0.
+
+### 3. L'indice décisif : l'exchangeabilité
+
+Dans le scénario 2 les deux échantillons sont **exchangeables** (même `N1`,
+fusion symétrique à `t1`) : `DTA_2_2 − DTA_2_1` doit valoir 0 en moyenne. Calculé
+fichier par fichier sur les 6 reftables :
+
+| | `DTA_2_2 − DTA_2_1`, G2 |
+|---|---|
+| DIYABC | −0,009, +0,002, +0,004, −0,002, +0,001, −0,011 (signes mêlés) |
+| msprime | +0,015, +0,014, +0,015, +0,016, +0,021, +0,011 (6/6 positifs) |
+
+Dans les mêmes fichiers `NSS` et `MPD` de msprime sont symétriques en G2. L'asymétrie
+est donc de **notre** côté et propre à `DTA` — mais un signe constant sur 6 fichiers
+n'est pas 6 mesures indépendantes (voir 7). Remesuré hors reftable, par le pipeline
+seul, scénario 2, K2P : 600 particules +0,0109 (t = 1,7), puis 2000 particules
+(graines 601..2600) +0,0132 (t = 4,24) ; `NSS`, `MPD`, `VPD` restent à |t| < 1,5. G3
+(`<M>`, généalogie partagée) plat : +0,0003 (t = 0,02).
+
+### 4. Élimination composant par composant
+
+- **Le calcul de D** : `ts.Tajimas_D` de tskit, en mode site, donne +0,01311 contre
+  +0,01317 pour le nôtre (t = 4,25 des deux côtés). Notre D, le découpage par
+  layout et la matrice de génotypes sont exonérés.
+- **L'arbre** : sans mutation, paramètres fixes (`N1 = 5000`, `t1 = 1000`), 300 000
+  répliques, diversité en mode branche : 20038,4 contre 20037,1, écart relatif
+  −0,01 % (t = −0,12). Les 80 nœuds se répartissent 40/40 sur les populations 0 et 1.
+- **La mutation** : `simulate_dna_mutations` avec la matrice et le `RateMap` du
+  pipeline, 3 taux de mutation × 100 000 répliques, un locus : `D(2−1)` à
+  t = −0,60 / +1,46 / −0,50. Précision ±0,003 par locus ; +0,013 aurait donné t ≈ 4.
+
+Aucun composant pris seul n'est asymétrique, et pourtant le pipeline l'est. Ce qui
+différait de mes tests : les **graines**. J'utilisais des graines indépendantes ; le
+pipeline additionne.
+
+### 5. La cause
+
+`seed_offset = seed + _ANCESTRY_SEED_OFFSET + i` pour l'arbre, `seed +
+_MUTATION_SEED_OFFSET + i` pour la mutation, avec `seed = particle_index + 1`.
+Particule 5 locus 13, particule 6 locus 12, particule 7 locus 11 reçoivent toutes
+110 000 018. Chaque flux est réutilisé par jusqu'à `nloci` couples (particule, locus)
+voisins : les particules `s` et `s+1` partagent 49 flux sur 50, décalés d'un locus. Les
+paramètres diffèrent, donc les arbres ne sont pas identiques, mais le bruit ne se
+moyenne plus comme sur 1000 tirages indépendants, et les erreurs standard supposaient
+cette indépendance. Les rejeux utilisent tous les graines 1..1000 : trois modèles et
+deux runs rejouaient **le même enchaînement de flux**. Les loci `<M>` (graine partagée
+sans `+ i`) ne se chevauchent pas, ce qui concorde avec G3 plat — concordance, pas
+preuve.
+
+Test : 2000 particules, graines `7 + 1000·j` (aucun recouvrement) → `DTA_2_2 −
+DTA_2_1` = **−0,0068** (t = −2,15). Le signe s'est inversé ; `DTA_2_1` +0,0152 et
+`DTA_2_2` +0,0084 tombent dans la plage de DIYABC (0,005 à 0,036). Les trois fenêtres
+de graines donnent +0,011 / +0,013 / −0,007 : pas un effet stable. Le t = −2,15 est
+lui-même à ne pas lire comme un effet inverse, puisque l'erreur standard est
+elle-même sous-estimée tant que les graines se recouvrent.
+
+### 6. Le correctif et sa validation
+
+`ancestry_simulation._locus_seed(seed, offset, locus_index)` =
+`SeedSequence([seed, offset, locus_index]).generate_state(1)[0] % (2**32 - 1) + 1`
+(msprime rejette 0). Huit sites : arbre et mutation, dans les quatre boucles (ADN et
+MicroSat, tirage et rejeu). Les graines partagées `<M>`/`<Y>` et les
+`random.Random(seed + OFFSET)` n'ont pas de `+ i` et sont laissés.
+
+Le collage d'une graine hachée garde un risque résiduel : 32 bits seulement, donc
+des collisions fortuites entre couples sans lien, de l'ordre de `n²/2N` sur `n`
+graines — sans structure, contrairement au recouvrement systématique.
+
+Validation (rapportée par l'utilisateur) : **3 modèles × 2 rejeux, toutes les
+statistiques sans drapeau KS.** Le rapport par quintile de `θ` et le taux de
+violations `MPD <= 0.75*NSS` attendus pour le bug de DIYABC n'ont pas été remesurés
+séparément. Les 33 tests à valeurs gelées ont bougé avec les graines (régénérés le
+même jour) ; en G2, le fixture a maintenant **2** loci sans mutation sur 5, facteur
+5/3 au lieu de 5/4, ce que j'ai vérifié par un calcul de π par paire indépendant du
+code testé.
+
+### 7. Erreurs de méthode, consignées
+
+- **« L'effet est réel. »** Je l'ai écrit après le tableau des 12 cellules, en
+  m'appuyant sur le critère de persistance. Le critère suppose que les deux côtés
+  sont indépendants d'un rejeu à l'autre ; du côté msprime ils ne l'étaient pas, les
+  graines étant les mêmes. Le critère n'était pas faux, il était mal borné.
+- **Le test d'échange de layout** que j'ai proposé est **vacuous** : toute statistique
+  est fonction de l'ensemble de nœuds d'un échantillon, donc l'échange permute les
+  colonnes et inverse le signe quelle que soit la cause. Je l'ai reconnu avant de le
+  lancer et remplacé par trois mesures indépendantes (diversité en branche, D de
+  tskit, D à nous).
+- **Le grand `rdiff_mean` de `DTA`** n'indique rien (moyennes 0,005–0,04 pour un
+  écart-type de ~0,12), règle déjà au dossier.
+- **Deux alertes à tort** : un `TSK_ERR_BAD_OFFSET` isolé dans `sim_mutations` (une
+  fois sur 2000 particules, jamais reproduit sur les mêmes graines, non expliqué),
+  et un résultat de `test_compute_VAR` qui « changeait » parce que l'utilisateur
+  l'éditait en parallèle.
+- **Une asymétrie de comptage qui n'en est pas une** : `_length_by_sample_and_
+  individuals` duplique l'allèle d'un haploïde en `(x, x)` (40 copies au lieu de 39,
+  voulu) ; la bonne référence est `_genotypes_by_sample_and_individuals`.
+
+### 8. Ce qu'il reste
+
+- **Même famille, non corrigé** : `summary_statistics.py`, `seed + _LIKELIHOOD_SEED_OFFSET
+  + i` ; chemin SNP, `batch_seed = seed + batch_index * batch_size` et `seed +
+  attempt + _MAF/_MRC_REJECTION_SEED_OFFSET`. Ces chemins sont validés (0/130 sur
+  `human`), ce qui ne dit pas qu'ils sont indemnes — seulement que le biais n'y a pas
+  été vu.
+- **Le résidu `ML3p_2.3.4` de `toy_example4_seriel`**, déclaré persistant sur trois
+  rejeux, est un chemin SNP aux graines additives : à remesurer avant de le tenir pour
+  réel. Sa structure (7 colonnes sur 7 portant l'échantillon le plus ancien,
+  stratification nette par `tbn`) est plus spécifique que celle de `DTA_2_2`, ce qui
+  plaide pour un vrai effet ; c'est un argument, pas une mesure.
+- **Toute comparaison stockée avant le 05/10** (ADN, MicroSat) a été produite avec
+  les anciennes graines et n'est plus comparable à un rejeu frais.
