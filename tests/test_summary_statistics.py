@@ -268,10 +268,10 @@ def test_mean_segregating_sites_per_group(dna_context_te2):
         return [mutated[name] for name in names]
 
     mean_g2 = compute_NSS(tree_sequences_for_group("G2"), sample_names)
-    assert mean_g2 == {"pop1": pytest.approx(5.8), "pop2": pytest.approx(5.6)}
+    assert mean_g2 == {"pop1": pytest.approx(4.6), "pop2": pytest.approx(4.0)}
 
     mean_g3 = compute_NSS(tree_sequences_for_group("G3"), sample_names)
-    assert mean_g3 == {"pop1": pytest.approx(7.2), "pop2": pytest.approx(7.4)}
+    assert mean_g3 == {"pop1": pytest.approx(7.6), "pop2": pytest.approx(8.4)}
 
 
 def test_mean_segregating_sites_per_group_empty_defaults_to_zero():
@@ -306,10 +306,10 @@ def test_mean_distinct_haplotypes_per_group(dna_context_te2):
         return [mutated[name] for name in names]
 
     mean_g2 = compute_NHA(tree_sequences_for_group("G2"), sample_names)
-    assert mean_g2 == {"pop1": pytest.approx(5.2), "pop2": pytest.approx(5.4)}
+    assert mean_g2 == {"pop1": pytest.approx(3.8), "pop2": pytest.approx(3.4)}
 
     mean_g3 = compute_NHA(tree_sequences_for_group("G3"), sample_names)
-    assert mean_g3 == {"pop1": pytest.approx(6.0), "pop2": pytest.approx(6.0)}
+    assert mean_g3 == {"pop1": pytest.approx(6.2), "pop2": pytest.approx(6.6)}
 
 
 def test_mean_distinct_haplotypes_per_group_empty_defaults_to_zero():
@@ -346,22 +346,24 @@ def test_mean_pairwise_differences_per_group(dna_context_te2):
 
     # Valeurs mises à jour le 02/10 avec la reproduction du bug DIYABC sur le
     # dénominateur (voir compute_MPD/compute_VPD et "G2 `MPD`/`VPD` residual"
-    # dans CLAUDE.md). G2 a 5 loci dont **1 sans aucune mutation** : il sort
-    # désormais du dénominateur, d'où un facteur exactement 5/4 = 1.25 sur les
-    # deux populations. G3 a ses 5 loci polymorphes, donc ses valeurs sont
-    # inchangées -- c'est cette asymétrie qui vérifie que le garde porte bien
+    # dans CLAUDE.md). Avec seed=42 (dérivation des graines par _locus_seed,
+    # 05/10), G2 a 5 loci dont **2 sans aucune mutation** : ils sortent du
+    # dénominateur, d'où un facteur exactement 5/3 sur les deux populations
+    # (recalculé indépendamment : somme des pi par paire / 5 loci sans le
+    # garde, / 3 loci avec). G3 a ses 5 loci polymorphes, donc le garde n'y
+    # change rien -- c'est cette asymétrie qui vérifie que le garde porte bien
     # sur l'absence de mutation et pas sur autre chose.
     # NE PAS restaurer les anciennes valeurs sans retirer le garde.
     mean_g2 = compute_MPD(tree_sequences_for_group("G2"), sample_names)
     assert mean_g2 == {
-        "pop1": pytest.approx(1.4996794871794872),
-        "pop2": pytest.approx(1.6249999999999998),
+        "pop1": pytest.approx(1.9226495726495727),
+        "pop2": pytest.approx(1.738888888888889),
     }
 
     mean_g3 = compute_MPD(tree_sequences_for_group("G3"), sample_names)
     assert mean_g3 == {
-        "pop1": pytest.approx(1.5768421052631578),
-        "pop2": pytest.approx(1.8084210526315794),
+        "pop1": pytest.approx(1.7926315789473684),
+        "pop2": pytest.approx(1.791578947368421),
     }
 
 
@@ -399,22 +401,24 @@ def test_variance_pairwise_differences_per_group(dna_context_te2):
 
     # Valeurs mises à jour le 02/10 avec la reproduction du bug DIYABC sur le
     # dénominateur (voir compute_MPD/compute_VPD et "G2 `MPD`/`VPD` residual"
-    # dans CLAUDE.md). G2 a 5 loci dont **1 sans aucune mutation** : il sort
-    # désormais du dénominateur, d'où un facteur exactement 5/4 = 1.25 sur les
-    # deux populations. G3 a ses 5 loci polymorphes, donc ses valeurs sont
-    # inchangées -- c'est cette asymétrie qui vérifie que le garde porte bien
+    # dans CLAUDE.md). Avec seed=42 (dérivation des graines par _locus_seed,
+    # 05/10), G2 a 5 loci dont **2 sans aucune mutation** : ils sortent du
+    # dénominateur, d'où un facteur exactement 5/3 sur les deux populations
+    # (recalculé indépendamment : somme des pi par paire / 5 loci sans le
+    # garde, / 3 loci avec). G3 a ses 5 loci polymorphes, donc le garde n'y
+    # change rien -- c'est cette asymétrie qui vérifie que le garde porte bien
     # sur l'absence de mutation et pas sur autre chose.
     # NE PAS restaurer les anciennes valeurs sans retirer le garde.
     variance_g2 = compute_VPD(tree_sequences_for_group("G2"), sample_names)
     assert variance_g2 == {
-        "pop1": pytest.approx(2.5832967150521706),
-        "pop2": pytest.approx(2.2002460419341037),
+        "pop1": pytest.approx(4.550264419648245),
+        "pop2": pytest.approx(4.419325126449645),
     }
 
     variance_g3 = compute_VPD(tree_sequences_for_group("G3"), sample_names)
     assert variance_g3 == {
-        "pop1": pytest.approx(2.6465162907268174),
-        "pop2": pytest.approx(2.935839598997494),
+        "pop1": pytest.approx(2.0459760512392093),
+        "pop2": pytest.approx(2.1567362851573377),
     }
 
 
@@ -452,14 +456,14 @@ def test_mean_tajima_d_per_group(dna_context_te2):
 
     dta_g2 = compute_DTA(tree_sequences_for_group("G2"), sample_names)
     assert dta_g2 == {
-        "pop1": pytest.approx(-0.11361849459656947),
-        "pop2": pytest.approx(-0.2621067146690289),
+        "pop1": pytest.approx(0.06143152552362825),
+        "pop2": pytest.approx(-0.004944433389602576),
     }
 
     dta_g3 = compute_DTA(tree_sequences_for_group("G3"), sample_names)
     assert dta_g3 == {
-        "pop1": pytest.approx(-0.6063248006420837),
-        "pop2": pytest.approx(-0.5259556352897572),
+        "pop1": pytest.approx(-0.54416869157406),
+        "pop2": pytest.approx(-0.73458379261705),
     }
 
 
@@ -496,10 +500,10 @@ def test_mean_private_segregating_sites_per_group(dna_context_te2):
         return [mutated[name] for name in names]
 
     pss_g2 = compute_PSS(tree_sequences_for_group("G2"), sample_names)
-    assert pss_g2 == {"pop1": pytest.approx(1.2), "pop2": pytest.approx(1.0)}
+    assert pss_g2 == {"pop1": pytest.approx(1.4), "pop2": pytest.approx(0.8)}
 
     pss_g3 = compute_PSS(tree_sequences_for_group("G3"), sample_names)
-    assert pss_g3 == {"pop1": pytest.approx(3.6), "pop2": pytest.approx(3.8)}
+    assert pss_g3 == {"pop1": pytest.approx(3.6), "pop2": pytest.approx(4.4)}
 
 
 def test_mean_private_segregating_sites_per_group_empty_defaults_to_zero():
@@ -536,14 +540,14 @@ def test_mean_minor_allele_count_per_group(dna_context_te2):
 
     mns_g2 = compute_MNS(tree_sequences_for_group("G2"), sample_names)
     assert mns_g2 == {
-        "pop1": pytest.approx(3.486274509803921),
-        "pop2": pytest.approx(4.0),
+        "pop1": pytest.approx(2.34),
+        "pop2": pytest.approx(3.246153846153846),
     }
 
     mns_g3 = compute_MNS(tree_sequences_for_group("G3"), sample_names)
     assert mns_g3 == {
-        "pop1": pytest.approx(2.8034188034188032),
-        "pop2": pytest.approx(2.7534065934065937),
+        "pop1": pytest.approx(2.707575757575758),
+        "pop2": pytest.approx(2.4913533834586468),
     }
 
 
@@ -581,14 +585,14 @@ def test_variance_minor_allele_count_per_group(dna_context_te2):
 
     vns_g2 = compute_VNS(tree_sequences_for_group("G2"), sample_names)
     assert vns_g2 == {
-        "pop1": pytest.approx(8.9039600153787),
-        "pop2": pytest.approx(18.444444444444446),
+        "pop1": pytest.approx(10.153111111111112),
+        "pop2": pytest.approx(9.998579881656806),
     }
 
     vns_g3 = compute_VNS(tree_sequences_for_group("G3"), sample_names)
     assert vns_g3 == {
-        "pop1": pytest.approx(1.2056680546424137),
-        "pop2": pytest.approx(2.6550416616350683),
+        "pop1": pytest.approx(2.2054239951967225),
+        "pop2": pytest.approx(1.31128031545028),
     }
 
 
@@ -624,10 +628,10 @@ def test_mean_distinct_haplotypes_per_group_pairwize(dna_context_te2):
         return [mutated[name] for name in names]
 
     mean_g2 = compute_NH2(tree_sequences_for_group("G2"), sample_names)
-    assert mean_g2 == {"1.2": pytest.approx(6.8)}
+    assert mean_g2 == {"1.2": pytest.approx(4.8)}
 
     mean_g3 = compute_NH2(tree_sequences_for_group("G3"), sample_names)
-    assert mean_g3 == {"1.2": pytest.approx(10.0)}
+    assert mean_g3 == {"1.2": pytest.approx(10.4)}
 
 
 def test_mean_distinct_haplotypes_per_group_pairwize_empty_defaults_to_zero():
@@ -662,10 +666,10 @@ def test_mean_segregating_sites_per_group_pairwize(dna_context_te2):
         return [mutated[name] for name in names]
 
     mean_g2 = compute_NS2(tree_sequences_for_group("G2"), sample_names)
-    assert mean_g2 == {"1.2": pytest.approx(6.8)}
+    assert mean_g2 == {"1.2": pytest.approx(5.4)}
 
     mean_g3 = compute_NS2(tree_sequences_for_group("G3"), sample_names)
-    assert mean_g3 == {"1.2": pytest.approx(11.0)}
+    assert mean_g3 == {"1.2": pytest.approx(12.0)}
 
 
 def test_mean_segregating_sites_per_group_pairwize_empty_defaults_to_zero():
@@ -700,10 +704,10 @@ def test_mean_pairwise_differences_per_group_pairwize(dna_context_te2):
         return [mutated[name] for name in names]
 
     mean_g2 = compute_MP2(tree_sequences_for_group("G2"), sample_names)
-    assert mean_g2 == {"1.2": pytest.approx(1.2498717948717948)}
+    assert mean_g2 == {"1.2": pytest.approx(1.0984615384615384)}
 
     mean_g3 = compute_MP2(tree_sequences_for_group("G3"), sample_names)
-    assert mean_g3 == {"1.2": pytest.approx(1.6926315789473683)}
+    assert mean_g3 == {"1.2": pytest.approx(1.7921052631578949)}
 
 
 def test_mean_pairwise_differences_per_group_pairwize_empty_defaults_to_zero():
@@ -738,10 +742,10 @@ def test_mean_pairwise_differences_between_per_group_pairwize(dna_context_te2):
         return [mutated[name] for name in names]
 
     mean_g2 = compute_MPB(tree_sequences_for_group("G2"), sample_names)
-    assert mean_g2 == {"1.2": pytest.approx(1.28725)}
+    assert mean_g2 == {"1.2": pytest.approx(1.10725)}
 
     mean_g3 = compute_MPB(tree_sequences_for_group("G3"), sample_names)
-    assert mean_g3 == {"1.2": pytest.approx(1.7454999999999998)}
+    assert mean_g3 == {"1.2": pytest.approx(1.816)}
 
 
 def test_mean_pairwise_differences_between_per_group_pairwize_empty_defaults_to_zero():
@@ -776,10 +780,10 @@ def test_mean_hst_per_group_pairwize(dna_context_te2):
         return [mutated[name] for name in names]
 
     mean_g2 = compute_HST(tree_sequences_for_group("G2"), sample_names)
-    assert mean_g2 == {"1.2": pytest.approx(0.029037253935292443)}
+    assert mean_g2 == {"1.2": pytest.approx(0.007937197144693172)}
 
     mean_g3 = compute_HST(tree_sequences_for_group("G3"), sample_names)
-    assert mean_g3 == {"1.2": pytest.approx(0.03028841080070557)}
+    assert mean_g3 == {"1.2": pytest.approx(0.013157894736842077)}
 
 
 def test_compute_all_statistics_dna(dna_context_te2):
@@ -812,9 +816,9 @@ def test_compute_all_statistics_dna(dna_context_te2):
     assert expected_keys.issubset(results.keys())
 
     assert len(results) == 42
-    assert pytest.approx(results["NSS_2_1"]) == 5.8
-    assert pytest.approx(results["HST_2_1.2"]) == 0.029037253935292443
-    assert pytest.approx(results["NH2_3_1.2"]) == 10.0
+    assert pytest.approx(results["NSS_2_1"]) == 4.6
+    assert pytest.approx(results["HST_2_1.2"]) == 0.007937197144693172
+    assert pytest.approx(results["NH2_3_1.2"]) == 10.4
 
 
 # -----------------------------------------------------------------------
@@ -872,20 +876,18 @@ def test_length_by_sample(microsat_context_te2_xy):
 
     assert results.keys() == {"pop1", "pop2"}
     assert results["pop1"] == [
-        (201, 0),
-        (203, 31),
-        (197, 1),
-        (193, 7),
-        (199, 0),
-        (189, 0),
+        (201, 20),
+        (203, 2),
+        (191, 12),
+        (199, 3),
+        (193, 2),
     ]
     assert results["pop2"] == [
-        (201, 0),
-        (203, 18),
-        (197, 0),
-        (193, 20),
-        (199, 1),
-        (189, 1),
+        (201, 22),
+        (203, 1),
+        (191, 12),
+        (199, 0),
+        (193, 5),
     ]
 
 
@@ -978,8 +980,8 @@ def test_compute_NAL(microsat_context_te2_xy):
     results = compute_NAL(mutated.values(), sample_names)
 
     assert results.keys() == {"pop1", "pop2"}
-    assert results["pop1"] == 9.1
-    assert pytest.approx(results["pop2"]) == 79 / 9
+    assert results["pop1"] == 9.0
+    assert pytest.approx(results["pop2"]) == 83 / 9
 
 
 def test_total_genes_copies_per_sample(microsat_context_te2_xy):
@@ -1022,11 +1024,20 @@ def test_compute_HET(microsat_context_te2_xy):
     assert results.keys() == {"pop1", "pop2"}
     assert (
         pytest.approx(results["pop1"])
-        == (1 - (31 / 39) ** 2 - (7 / 39) ** 2 - (1 / 39) ** 2) * 39 / 38
+        == (
+            1
+            - (20 / 39) ** 2
+            - (2 / 39) ** 2
+            - (12 / 39) ** 2
+            - (3 / 39) ** 2
+            - (2 / 39) ** 2
+        )
+        * 39
+        / 38
     )
     assert (
         pytest.approx(results["pop2"])
-        == (1 - (20 / 40) ** 2 - (18 / 40) ** 2 - (1 / 40) ** 2 - (1 / 40) ** 2)
+        == (1 - (22 / 40) ** 2 - (1 / 40) ** 2 - (12 / 40) ** 2 - (5 / 40) ** 2)
         * 40
         / 39
     )
@@ -1035,8 +1046,8 @@ def test_compute_HET(microsat_context_te2_xy):
     results = compute_HET(tree_sequences2, sample_names)
 
     assert results.keys() == {"pop1", "pop2"}
-    assert pytest.approx(results["pop1"]) == 7.929892037786773 / 10
-    assert pytest.approx(results["pop2"]) == 7.244601889338731 / 9
+    assert pytest.approx(results["pop1"]) == 8.018151147098514 / 10
+    assert pytest.approx(results["pop2"]) == 7.089541160593792 / 9
 
 
 # tests pour la stat VAR (Variance of Repeat Number) pour microsatellites
@@ -1060,17 +1071,17 @@ def test_compute_VAR_constants(microsat_context_te2_xy):
     assert raw_square_sizes.keys() == {"pop1", "pop2"}
     assert total_counts.keys() == {"pop1", "pop2"}
 
-    assert raw_sizes["pop1"] == 203 * 31 + 197 * 1 + 193 * 7 + 199 * 0 + 189 * 0
+    assert raw_sizes["pop1"] == 201 * 20 + 203 * 2 + 191 * 12 + 199 * 3 + 193 * 2
     assert (
         raw_square_sizes["pop1"]
-        == 203**2 * 31 + 197**2 * 1 + 193**2 * 7 + 199**2 * 0 + 189**2 * 0
+        == 201**2 * 20 + 203**2 * 2 + 191**2 * 12 + 199**2 * 3 + 193**2 * 2
     )
     assert total_counts["pop1"] == 39
 
-    assert raw_sizes["pop2"] == 203 * 18 + 197 * 0 + 193 * 20 + 199 * 1 + 189 * 1
+    assert raw_sizes["pop2"] == 201 * 22 + 203 * 1 + 191 * 12 + 199 * 0 + 193 * 5
     assert (
         raw_square_sizes["pop2"]
-        == 203**2 * 18 + 197**2 * 0 + 193**2 * 20 + 199**2 * 1 + 189**2 * 1
+        == 201**2 * 22 + 203**2 * 1 + 191**2 * 12 + 199**2 * 0 + 193**2 * 5
     )
     assert total_counts["pop2"] == 40
 
@@ -1091,8 +1102,8 @@ def test_compute_VAR_for_one_sample(microsat_context_te2_xy):
     result = _compute_VAR_for_one_sample(s["pop1"], v["pop1"], n["pop1"], 2)
 
     s1, v1, n1 = (
-        203 * 31 + 197 * 1 + 193 * 7 + 199 * 0 + 189 * 0,
-        203**2 * 31 + 197**2 * 1 + 193**2 * 7 + 199**2 * 0 + 189**2 * 0,
+        201 * 20 + 203 * 2 + 191 * 12 + 199 * 3 + 193 * 2,
+        201**2 * 20 + 203**2 * 2 + 191**2 * 12 + 199**2 * 3 + 193**2 * 2,
         39,
     )
     assert pytest.approx(result) == (v1 - s1**2 / n1) / (n1 - 1) / 2**2
@@ -1117,8 +1128,8 @@ def test_compute_VAR(microsat_context_te2_xy):
     results = compute_VAR(mutated.values(), sample_names, list_motif_sizes)
 
     assert results.keys() == {"pop1", "pop2"}
-    assert pytest.approx(results["pop1"]) == 154.90377867746088 / 10
-    assert pytest.approx(results["pop2"]) == 132.11953441295188 / 9
+    assert pytest.approx(results["pop1"]) == 161.13724696356176 / 10
+    assert pytest.approx(results["pop2"]) == 147.40964912280765 / 9
 
 
 # tests pour la stat MGW (Mean Gene Width) pour microsatellites
@@ -1127,9 +1138,9 @@ def test_compute_VAR(microsat_context_te2_xy):
 def test_compute_MGW_by_locus(microsat_context_te2_xy):
     """Vérifie _compute_MGW_by_locus sur toy_example2_ms_dna_xy.
 
-    Locus_M_A_1_ : pop1 a des allèles présents à 203/197/193 (min=193,
-    pas 197 -- 189/199/201 sont à compte 0), pop2 à 203/193/199/189
-    (min=189, max=203).
+    Locus_M_A_1_ : pop1 a des allèles présents à 201/203/191/199/193 (5
+    allèles, min=191, max=203), pop2 à 201/203/191/193 (4 allèles : 199 est
+    à compte 0 ; min=191, max=203).
     """
     demography, _ = build_random_demography_for_scenario_index(
         microsat_context_te2_xy.header_text, scenario_index=1, seed=42
@@ -1143,8 +1154,8 @@ def test_compute_MGW_by_locus(microsat_context_te2_xy):
     result = _compute_MGW_by_locus(_length_by_sample(mutated["Locus_M_A_1_"]), 2)
 
     assert result.keys() == {"pop1", "pop2"}
-    assert result["pop1"] == (3, 1 + (203 - 193) / 2)
-    assert result["pop2"] == (4, 1 + (203 - 189) / 2)
+    assert result["pop1"] == (5, 1 + (203 - 191) / 2)
+    assert result["pop2"] == (4, 1 + (203 - 191) / 2)
 
 
 def test_compute_MGW(microsat_context_te2_xy):
@@ -1165,8 +1176,8 @@ def test_compute_MGW(microsat_context_te2_xy):
     results = compute_MGW(mutated.values(), sample_names, list_motif_sizes)
 
     assert results.keys() == {"pop1", "pop2"}
-    assert pytest.approx(results["pop1"]) == 0.7398373983739838
-    assert pytest.approx(results["pop2"]) == 0.7117117117117117
+    assert pytest.approx(results["pop1"]) == 0.6766917293233082
+    assert pytest.approx(results["pop2"]) == 0.6747967479674797
 
 
 ## tests pour la stat N2P (Number of Private Alleles) pour microsatellites
@@ -1281,7 +1292,7 @@ def test_compute_H2P(microsat_context_te2_xy):
 
     results = compute_H2P(mutated.values(), sample_names)
 
-    assert pytest.approx(results["1.2"]) == 0.8132570166897283
+    assert pytest.approx(results["1.2"]) == 0.8040884709339073
 
 
 # tests relatifs à la stat V2P
@@ -1346,7 +1357,7 @@ def test_compute_V2P(microsat_context_te2_xy):
 
     results = compute_V2P(mutated.values(), sample_names, list_motif_sizes)
 
-    assert pytest.approx(results["1.2"]) == 15.091707024376934
+    assert pytest.approx(results["1.2"]) == 15.938555087206694
 
 
 # tests relatifs à la stat DAS
@@ -1384,7 +1395,7 @@ def test_compute_DAS(microsat_context_te2_xy):
 
     results = compute_DAS(mutated.values(), sample_names)
 
-    assert pytest.approx(results["1.2"]) == 0.17150455927051672
+    assert pytest.approx(results["1.2"]) == 0.18533434650455927
 
 
 # tests relatifs à la stat DM2
@@ -1465,7 +1476,7 @@ def test_compute_DM2(microsat_context_te2_xy):
 
     results = compute_DM2(mutated.values(), sample_names, list_motif_sizes)
 
-    assert pytest.approx(results["1.2"]) == 0.7197632222952716
+    assert pytest.approx(results["1.2"]) == 0.7246351084812663
 
 
 # test relatifs à la stat FST
@@ -1494,26 +1505,26 @@ def test_length_by_sample_and_individuals(microsat_context_te2_xy):
 
     assert results.keys() == {"pop1", "pop2"}
     assert results["pop1"] == [
-        (203, 203),
-        (203, 203),
+        (191, 191),
+        (201, 191),
+        (201, 203),
+        (191, 201),
+        (191, 191),
+        (199, 201),
+        (201, 201),
+        (201, 191),
+        (201, 201),
+        (201, 191),
+        (191, 201),
+        (199, 201),
+        (201, 201),
+        (201, 201),
+        (191, 201),
         (203, 193),
-        (203, 203),
-        (203, 203),
-        (203, 193),
-        (203, 203),
-        (203, 203),
-        (203, 203),
-        (203, 193),
-        (203, 203),
-        (193, 193),
-        (203, 203),
-        (203, 193),
-        (197, 203),
-        (203, 193),
-        (203, 203),
-        (203, 203),
-        (203, 203),
-        (203, 203),
+        (193, 201),
+        (191, 191),
+        (201, 199),
+        (201, 201),
     ]
 
 
@@ -1639,7 +1650,7 @@ def test_compute_FST(microsat_context_te2_xy):
 
     results = compute_FST(mutated.values(), sample_names)
 
-    assert pytest.approx(results["1.2"]) == 0.03084132131276057
+    assert pytest.approx(results["1.2"]) == 0.009892808777285555
 
 
 def test_compute_FST_vs_scikit_allel(microsat_context_te1_modified):
@@ -1695,26 +1706,26 @@ def test_genotypes_by_sample_and_individuals(microsat_context_te2_xy):
 
     assert results.keys() == {"pop1", "pop2"}
     assert results["pop1"] == [
-        (203, 203),
-        (203, 203),
+        (191, 191),
+        (201, 191),
+        (201, 203),
+        (191, 201),
+        (191, 191),
+        (199, 201),
+        (201, 201),
+        (201, 191),
+        (201, 201),
+        (201, 191),
+        (191, 201),
+        (199, 201),
+        (201, 201),
+        (201, 201),
+        (191, 201),
         (203, 193),
-        (203, 203),
-        (203, 203),
-        (203, 193),
-        (203, 203),
-        (203, 203),
-        (203, 203),
-        (203, 193),
-        (203, 203),
-        (193, 193),
-        (203, 203),
-        (203, 193),
-        (197, 203),
-        (203, 193),
-        (203, 203),
-        (203, 203),
-        (203, 203),
-        (203,),
+        (193, 201),
+        (191, 191),
+        (201, 199),
+        (201,),
     ]
 
 
@@ -1835,7 +1846,7 @@ def test_compute_LIK(microsat_context_te2_xy):
     assert (
         results["1.2"] != results["2.1"]
     )  # pas de garanti que ce soit vrai sur tous les datasets
-    assert pytest.approx(results["1.2"]) == 1.8034866005525414
+    assert pytest.approx(results["1.2"]) == 1.7041988379480857
 
 
 # Test pour la fonction d'entrée principale de calcul des stats microsatellites
@@ -1860,5 +1871,5 @@ def test_compute_all_statistics_microsat(microsat_context_te2_xy):
 
     assert len(results) == 16
     assert expected_keys.issubset(results.keys())
-    assert pytest.approx(results["HET_1_1"]) == 7.929892037786773 / 10
-    assert pytest.approx(results["LIK_1_1.2"]) == 1.8034866005525414
+    assert pytest.approx(results["HET_1_1"]) == 8.018151147098515 / 10
+    assert pytest.approx(results["LIK_1_1.2"]) == 1.7041988379480857

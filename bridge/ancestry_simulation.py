@@ -114,6 +114,32 @@ from bridge.prior_parser import get_parameter_used_by_model, parse_group_priors
 # réplicat) du tirage de mutation.
 
 
+# Helper de dérivation des graines
+
+
+def _locus_seed(seed: int, offset: int, locus_index: int) -> int:
+    """Dérive la graine msprime d'un locus à partir de celle de la particule.
+
+    Remplace `seed + offset + locus_index`, qui faisait coïncider la graine
+    du locus `i` de la particule `s` avec celle du locus `i - 1` de la
+    particule `s + 1` (les graines de particule sont consécutives) : chaque
+    flux aléatoire était réutilisé par ~nloci particules voisines, qui
+    n'étaient donc pas indépendantes. `SeedSequence` mélange les trois
+    entrées, si bien que deux triplets distincts ne partagent jamais de
+    flux.
+
+    Args:
+        seed: La graine de la particule.
+        offset: L'offset du type de tirage (arbre, mutation...).
+        locus_index: L'index du locus dans le header.
+
+    Returns:
+        Un entier dans [1, 2**32 - 1] (msprime rejette `seed=0`).
+    """
+    state = np.random.SeedSequence([seed, offset, locus_index]).generate_state(1)[0]
+    return int(state) % (2**32 - 1) + 1
+
+
 # Helper de vérification
 
 
@@ -2095,7 +2121,7 @@ def dna_mutation_simulation_per_locus(
     dataset.
 
     Pour les loci [S] de type <A>, on tire une graine différente pour chaque
-    locus (seed + _ANCESTRY_SEED_OFFSET + i), pour que chaque locus <A>
+    locus (_locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)), pour que chaque locus <A>
     ait sa propre généalogie indépendante tandis que pour les autres loci,
     on utilise la graine (seed + _SHARED_M/Y_ANCESTRY_SEED_OFFSET) pour que tous les
     loci M ou Y partagent la même généalogie.
@@ -2157,7 +2183,7 @@ def dna_mutation_simulation_per_locus(
                 seed_offset = seed + _SHARED_Y_ANCESTRY_SEED_OFFSET
             else:
                 # Pour les autres loci, on utilise une graine différente pour chaque locus
-                seed_offset = seed + _ANCESTRY_SEED_OFFSET + i
+                seed_offset = _locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)
 
             tree_sequences = msprime.sim_ancestry(
                 samples=samples,
@@ -2174,7 +2200,7 @@ def dna_mutation_simulation_per_locus(
                 transition_matrix,
                 frequencies,
                 rate_map,
-                seed + _MUTATION_SEED_OFFSET + i,
+                _locus_seed(seed, _MUTATION_SEED_OFFSET, i),
             )
             mutated_tree_sequences[locus.name] = mutated_ts
     return mutated_tree_sequences, group_priors_values
@@ -2502,7 +2528,7 @@ def dna_mutation_simulation_per_locus_from_values(
     telle quelle (générique, ne sait rien de SNP vs ADN).
 
     Pour les loci [S] de type <A>, on tire une graine différente pour chaque
-    locus (seed + _ANCESTRY_SEED_OFFSET + i), pour que chaque locus <A>/<H>/<X>
+    locus (_locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)), pour que chaque locus <A>/<H>/<X>
     ait sa propre généalogie indépendante tandis que pour les loci mitochondriaux,
     on utilise la graine (seed + _SHARED_M/Y_ANCESTRY_SEED_OFFSET) pour que tous
     les loci M ou Y partagent la même généalogie.
@@ -2571,7 +2597,7 @@ def dna_mutation_simulation_per_locus_from_values(
                 seed_offset = seed + _SHARED_Y_ANCESTRY_SEED_OFFSET
             else:
                 # Pour les autres loci, on utilise une graine différente pour chaque locus
-                seed_offset = seed + _ANCESTRY_SEED_OFFSET + i
+                seed_offset = _locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)
 
             tree_sequences = msprime.sim_ancestry(
                 samples=samples,
@@ -2588,7 +2614,7 @@ def dna_mutation_simulation_per_locus_from_values(
                 transition_matrix,
                 frequencies,
                 rate_map,
-                seed + _MUTATION_SEED_OFFSET + i,
+                _locus_seed(seed, _MUTATION_SEED_OFFSET, i),
             )
             mutated_tree_sequences[locus.name] = mutated_ts
     return mutated_tree_sequences
@@ -2998,7 +3024,7 @@ def microsat_mutation_simulation_per_locus(
             seed_offset = seed + _SHARED_Y_ANCESTRY_SEED_OFFSET
         else:
             # Pour les autres loci, on utilise une graine différente pour chaque locus
-            seed_offset = seed + _ANCESTRY_SEED_OFFSET + i
+            seed_offset = _locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)
         tree_sequences = msprime.sim_ancestry(
             samples=samples,
             demography=locus_demography,
@@ -3010,7 +3036,7 @@ def microsat_mutation_simulation_per_locus(
         mutated_ts = msprime.sim_mutations(
             tree_sequences,
             rate=params_per_locus[locus.name][0],
-            random_seed=seed + _MUTATION_SEED_OFFSET + i,
+            random_seed=_locus_seed(seed, _MUTATION_SEED_OFFSET, i),
             model=msprime.MatrixMutationModel(
                 alleles=matrix_per_locus[locus.name].alleles,
                 root_distribution=matrix_per_locus[locus.name].root_distribution,
@@ -3269,7 +3295,7 @@ def microsat_mutation_simulation_per_locus_from_values(
             seed_offset = seed + _SHARED_Y_ANCESTRY_SEED_OFFSET
         else:
             # Pour les autres loci, on utilise une graine différente pour chaque locus
-            seed_offset = seed + _ANCESTRY_SEED_OFFSET + i
+            seed_offset = _locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)
         tree_sequences = msprime.sim_ancestry(
             samples=samples,
             demography=locus_demography,
@@ -3280,7 +3306,7 @@ def microsat_mutation_simulation_per_locus_from_values(
         mutated_ts = msprime.sim_mutations(
             tree_sequences,
             rate=params_per_locus[locus.name][0],
-            random_seed=seed + _MUTATION_SEED_OFFSET + i,
+            random_seed=_locus_seed(seed, _MUTATION_SEED_OFFSET, i),
             model=msprime.MatrixMutationModel(
                 alleles=matrix_per_locus[locus.name].alleles,
                 root_distribution=matrix_per_locus[locus.name].root_distribution,
