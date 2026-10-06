@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from bridge.ancestry_simulation import prepare_poolseq_observed_reads
-from bridge.configuration import _SCENARIO_DRAW_SEED_OFFSET
+from bridge.configuration import _SCENARIO_DRAW_SEED_OFFSET, _locus_seed
 from bridge.demography_builder import get_parameter_names_used_by_scenario
 from bridge.header_dataclasses import (
     DnaReplayContext,
@@ -384,7 +384,9 @@ def _run_single_particle_snp(
         Le ParticleResult de cette particule.
     """
     seed = particle_index + 1
-    drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
+    drawn_scenario = draw_scenario(
+        scenarios, _locus_seed(seed, _SCENARIO_DRAW_SEED_OFFSET, 0)
+    )
 
     summary_statistics, parameter_values = compute_summary_statistics_snp(
         context=context,
@@ -1255,7 +1257,9 @@ def _run_single_particle_dna(
         Le ParticleResult de cette particule.
     """
     seed = particle_index + 1
-    drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
+    drawn_scenario = draw_scenario(
+        scenarios, _locus_seed(seed, _SCENARIO_DRAW_SEED_OFFSET, 0)
+    )
 
     summary_statistics, parameter_values, group_priors_values_nested = (
         compute_summary_statistics_dna(
@@ -1692,7 +1696,9 @@ def _run_single_particle_microsat(
         Le ParticleResult de cette particule.
     """
     seed = particle_index + 1
-    drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
+    drawn_scenario = draw_scenario(
+        scenarios, _locus_seed(seed, _SCENARIO_DRAW_SEED_OFFSET, 0)
+    )
 
     summary_statistics, parameter_values, group_priors_values_nested = (
         compute_summary_statistics_microsat(
@@ -1995,7 +2001,9 @@ def _run_single_particle_mixed(
     """
 
     seed = particle_index + 1
-    drawn_scenario = draw_scenario(scenarios, seed + _SCENARIO_DRAW_SEED_OFFSET)
+    drawn_scenario = draw_scenario(
+        scenarios, _locus_seed(seed, _SCENARIO_DRAW_SEED_OFFSET, 0)
+    )
 
     summary_statistics, parameter_values, group_priors_values_nested = (
         compute_summary_statistics_mixed(

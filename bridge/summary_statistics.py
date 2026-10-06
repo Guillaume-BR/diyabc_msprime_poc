@@ -38,7 +38,11 @@ import numpy as np
 import tskit
 
 from bridge.ancestry_simulation import compute_population_layout
-from bridge.configuration import _LIKELIHOOD_SEED_OFFSET
+from bridge.configuration import (
+    _GROUP_STAT_SEED_OFFSET,
+    _LIKELIHOOD_SEED_OFFSET,
+    _locus_seed,
+)
 from bridge.loci_parser import parse_loci_description
 
 # ---------------------------------------------------------------------------
@@ -3904,7 +3908,7 @@ def compute_AML_microsat(
             focal,
             parent1,
             parent2,
-            seed + _LIKELIHOOD_SEED_OFFSET + i,
+            _locus_seed(seed, _LIKELIHOOD_SEED_OFFSET, i),
             layouts=layouts,
         )
     return results
@@ -4226,7 +4230,7 @@ def compute_all_statistics_microsat(
             for stat_index, value in stat_fn(
                 tree_sequences,
                 sample_names,
-                seed + int(group_number) * 1000,
+                _locus_seed(seed, _GROUP_STAT_SEED_OFFSET, int(group_number)),
                 layouts=layouts,
             ).items():  # pour éviter d'avoir la même graine pour différents groupes
                 key = (

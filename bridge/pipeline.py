@@ -37,7 +37,7 @@ from bridge.ancestry_simulation import (
     simulate_genotypes_for_locus_type,
     simulate_poolseq_reads_with_mrc_filter,
 )
-from bridge.configuration import _LOCUS_TYPE_SEED_OFFSET
+from bridge.configuration import _LOCUS_TYPE_SEED_OFFSET, _locus_seed
 from bridge.demography_builder import build_demography
 from bridge.header_dataclasses import (
     DnaReplayContext,
@@ -150,7 +150,7 @@ def _simulate_genotypes_for_all_locus_types(
     liste_iterateurs_par_type = []
 
     for locus_type, declared_count in loci_counts_by_heritage.items():
-        seed_for_type = seed + _LOCUS_TYPE_SEED_OFFSET[locus_type]
+        seed_for_type = _locus_seed(seed, _LOCUS_TYPE_SEED_OFFSET[locus_type], 0)
         loci_count = num_loci if num_loci is not None else declared_count
         liste_iterateurs_par_type.append(
             simulate_genotypes_for_locus_type(
@@ -536,6 +536,23 @@ def simulate_particle_genotypes_from_values(
     demography = build_demography_for_scenario_index_from_values(
         header_text, scenario_index, values
     )
+
+    # Même construction que le jumeau simulate_particle_genotypes : sans elle, un
+    # jeu SÉRIEL (1 population échantillonnée à plusieurs dates) reçoit les noms
+    # pop1..popN des blocs POP du .snp et msprime lève « Population with name
+    # 'pop2' not found ». Perdue au commit 392d193 (25/09), jamais détectée : aucun
+    # test ne rejouait de jeu IndSeq sériel.
+    if counts_per_sample is None:
+        counts_per_sample = {
+            f"pop{i}": n for i, n in enumerate(context.counts_per_sample.values(), 1)
+        }
+    if sample_sets is None:
+        scenario = next(
+            s for s in parse_header_scenarios(header_text) if s.index == scenario_index
+        )
+        sample_sets = build_sample_sets_from_scenario(
+            scenario, values, counts_per_sample
+        )
 
     return _simulate_genotypes_for_all_locus_types(
         demography,

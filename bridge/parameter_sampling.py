@@ -14,7 +14,7 @@ import dataclasses
 import math
 import random
 
-from bridge.configuration import _GROUP_PRIOR_SEED_OFFSET
+from bridge.configuration import _GROUP_PRIOR_SEED_OFFSET, _locus_seed
 from bridge.header_dataclasses import (
     GroupPrior,
     LociDescriptionDetailed,
@@ -250,7 +250,7 @@ def draw_group_parameter_values(
     Returns:
         Un dict {nom_groupe: {nom_prior: valeur}}.
     """
-    rng = random.Random(seed + _GROUP_PRIOR_SEED_OFFSET)
+    rng = random.Random(_locus_seed(seed, _GROUP_PRIOR_SEED_OFFSET, 0))
     group_priors_values: dict[str, dict[str, float]] = {}
     for group_name in group_priors:
         values = {}

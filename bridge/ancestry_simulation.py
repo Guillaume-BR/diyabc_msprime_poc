@@ -27,11 +27,13 @@ from bridge.configuration import (
     _BINOMIAL_SEED_OFFSET,
     _KAPPA1_SEED_OFFSET,
     _KAPPA2_SEED_OFFSET,
+    _MAF_BATCH_SEED_OFFSET,
     _MAF_BATCH_SIZE,
     _MAF_REJECTION_SEED_OFFSET,
     _MICROSAT_MUT_RATE_SEED_OFFSET,
     _MICROSAT_PGEOM_SEED_OFFSET,
     _MICROSAT_SNI_SEED_OFFSET,
+    _MRC_BATCH_SEED_OFFSET,
     _MRC_BATCH_SIZE,
     _MRC_REJECTION_SEED_OFFSET,
     _MUS_RATE_SEED_OFFSET,
@@ -39,6 +41,7 @@ from bridge.configuration import (
     _SHARED_M_ANCESTRY_SEED_OFFSET,
     _SHARED_Y_ANCESTRY_SEED_OFFSET,
     _SITE_RATE_SEED_OFFSET,
+    _locus_seed,
 )
 from bridge.demography_builder import evaluate_expression, rescale_demography
 from bridge.header_dataclasses import (
@@ -112,32 +115,6 @@ from bridge.prior_parser import get_parameter_used_by_model, parse_group_priors
 # _KAPPA1_SEED_OFFSET/_KAPPA2_SEED_OFFSET/_MUS_RATE_SEED_OFFSET : pour
 # séparer les tirages des kappas (un tirage par locus, donc un tirage par
 # réplicat) du tirage de mutation.
-
-
-# Helper de dérivation des graines
-
-
-def _locus_seed(seed: int, offset: int, locus_index: int) -> int:
-    """Dérive la graine msprime d'un locus à partir de celle de la particule.
-
-    Remplace `seed + offset + locus_index`, qui faisait coïncider la graine
-    du locus `i` de la particule `s` avec celle du locus `i - 1` de la
-    particule `s + 1` (les graines de particule sont consécutives) : chaque
-    flux aléatoire était réutilisé par ~nloci particules voisines, qui
-    n'étaient donc pas indépendantes. `SeedSequence` mélange les trois
-    entrées, si bien que deux triplets distincts ne partagent jamais de
-    flux.
-
-    Args:
-        seed: La graine de la particule.
-        offset: L'offset du type de tirage (arbre, mutation...).
-        locus_index: L'index du locus dans le header.
-
-    Returns:
-        Un entier dans [1, 2**32 - 1] (msprime rejette `seed=0`).
-    """
-    state = np.random.SeedSequence([seed, offset, locus_index]).generate_state(1)[0]
-    return int(state) % (2**32 - 1) + 1
 
 
 # Helper de vérification
@@ -863,7 +840,7 @@ def with_maf_filter(
     population_layout = None
     batch_index = 0
     while accepted_loci < num_loci:
-        batch_seed = seed + batch_index * batch_size
+        batch_seed = _locus_seed(seed, _MAF_BATCH_SEED_OFFSET, batch_index)
         tree_sequences = simulate_independent_loci(
             demography,
             samples,
@@ -881,7 +858,11 @@ def with_maf_filter(
             genotypes_by_population = next(
                 simulate_snp_genotypes(
                     [ts],
-                    seed=batch_seed + attempt_in_batch + _MAF_REJECTION_SEED_OFFSET,
+                    seed=_locus_seed(
+                        seed,
+                        _MAF_REJECTION_SEED_OFFSET,
+                        batch_index * batch_size + attempt_in_batch,
+                    ),
                     population_layout=population_layout,
                 )
             )
@@ -975,7 +956,7 @@ def with_maf_filter_shared_ancestry(
         genotypes_by_population = next(
             simulate_snp_genotypes(
                 [shared_tree],
-                seed=seed + attempt + _MAF_REJECTION_SEED_OFFSET,
+                seed=_locus_seed(seed, _MAF_REJECTION_SEED_OFFSET, attempt),
                 population_layout=population_layout,
             )
         )
@@ -1200,7 +1181,7 @@ def simulate_poolseq_reads(
     """
     rng = random.Random(seed)
     binom_rng = np.random.default_rng(
-        seed + _BINOMIAL_SEED_OFFSET
+        _locus_seed(seed, _BINOMIAL_SEED_OFFSET, 0)
     )  # graine aléatoire séparée pour le tirage binomial, pour ne pas interférer avec le tirage de mutation
 
     for ts, reads_observed in zip(
@@ -1355,7 +1336,7 @@ def with_mrc_filter(
     for locus_index in range(num_loci):
         while True:
             if tree_sequences_iter is None:
-                batch_seed = seed + batch_index * _MRC_BATCH_SIZE
+                batch_seed = _locus_seed(seed, _MRC_BATCH_SEED_OFFSET, batch_index)
                 tree_sequences_iter = simulate_independent_loci(
                     demography,
                     samples,
@@ -1383,7 +1364,7 @@ def with_mrc_filter(
                 simulate_poolseq_reads(
                     [ts],
                     observed_reads_per_locus[locus_index : locus_index + 1],
-                    seed=seed + attempt + _MRC_REJECTION_SEED_OFFSET,
+                    seed=_locus_seed(seed, _MRC_REJECTION_SEED_OFFSET, attempt),
                     population_layout=population_layout,
                     counts_per_sample=counts_per_sample,
                 )
@@ -1854,9 +1835,9 @@ def build_local_param_dna_per_locus(
     # explorant la piste <M> avec toy_example2_ms_dna_50loci (G2/G3 tous
     # deux K2P). Voir feedback_seed_reuse_pattern (même classe de bug déjà
     # vue 4 fois dans ce projet).
-    mus_rate_rng = random.Random(seed + _MUS_RATE_SEED_OFFSET)
-    kappa1_rng = random.Random(seed + _KAPPA1_SEED_OFFSET)
-    kappa2_rng = random.Random(seed + _KAPPA2_SEED_OFFSET)
+    mus_rate_rng = random.Random(_locus_seed(seed, _MUS_RATE_SEED_OFFSET, 0))
+    kappa1_rng = random.Random(_locus_seed(seed, _KAPPA1_SEED_OFFSET, 0))
+    kappa2_rng = random.Random(_locus_seed(seed, _KAPPA2_SEED_OFFSET, 0))
 
     for group in nloci_per_group:
         list_locus_in_group = [locus for locus in list_loci_seq if locus.group == group]
@@ -2004,7 +1985,7 @@ def build_rate_map_per_locus(
     group_priors = parse_group_priors(header_text)
 
     rate_map_per_locus = {}
-    rng = random.Random(seed + _SITE_RATE_SEED_OFFSET)
+    rng = random.Random(_locus_seed(seed, _SITE_RATE_SEED_OFFSET, 0))
     for locus in list_loci:
         if locus.ms_or_seq == "S":
             gp_model = next(gp for gp in group_priors[locus.group] if gp.model)
@@ -2123,7 +2104,7 @@ def dna_mutation_simulation_per_locus(
     Pour les loci [S] de type <A>, on tire une graine différente pour chaque
     locus (_locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)), pour que chaque locus <A>
     ait sa propre généalogie indépendante tandis que pour les autres loci,
-    on utilise la graine (seed + _SHARED_M/Y_ANCESTRY_SEED_OFFSET) pour que tous les
+    on utilise la graine (_locus_seed(seed, _SHARED_M/Y_ANCESTRY_SEED_OFFSET, 0)) pour que tous les
     loci M ou Y partagent la même généalogie.
 
     Args:
@@ -2177,10 +2158,10 @@ def dna_mutation_simulation_per_locus(
             )
             if locus.heritage == "M":
                 # Pour les loci mitochondriaux, on utilise la même graine pour tous les loci
-                seed_offset = seed + _SHARED_M_ANCESTRY_SEED_OFFSET
+                seed_offset = _locus_seed(seed, _SHARED_M_ANCESTRY_SEED_OFFSET, 0)
             elif locus.heritage == "Y":
                 # Pour les loci Y, on utilise la même graine pour tous les loci
-                seed_offset = seed + _SHARED_Y_ANCESTRY_SEED_OFFSET
+                seed_offset = _locus_seed(seed, _SHARED_Y_ANCESTRY_SEED_OFFSET, 0)
             else:
                 # Pour les autres loci, on utilise une graine différente pour chaque locus
                 seed_offset = _locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)
@@ -2299,13 +2280,13 @@ def build_local_param_dna_per_locus_from_values(
     )
 
     # Voir le commentaire équivalent dans build_local_param_dna_per_locus :
-    # un random.Random(seed + OFFSET) créé À CHAQUE ITÉRATION du groupe fait
+    # un random.Random(_locus_seed(seed, OFFSET, 0)) créé À CHAQUE ITÉRATION du groupe fait
     # rejouer la même séquence de tirages à tous les groupes partageant le
     # même modèle (ex: G2/G3 tous deux K2P sur toy_example2_ms_dna) --
     # corrigé en créant chaque rng UNE SEULE FOIS avant la boucle.
-    mus_rate_rng = random.Random(seed + _MUS_RATE_SEED_OFFSET)
-    kappa1_rng = random.Random(seed + _KAPPA1_SEED_OFFSET)
-    kappa2_rng = random.Random(seed + _KAPPA2_SEED_OFFSET)
+    mus_rate_rng = random.Random(_locus_seed(seed, _MUS_RATE_SEED_OFFSET, 0))
+    kappa1_rng = random.Random(_locus_seed(seed, _KAPPA1_SEED_OFFSET, 0))
+    kappa2_rng = random.Random(_locus_seed(seed, _KAPPA2_SEED_OFFSET, 0))
 
     for group in nloci_per_group:
         list_locus_in_group = [locus for locus in list_loci_seq if locus.group == group]
@@ -2489,7 +2470,7 @@ def build_rate_map_per_locus_from_values(
     group_priors = parse_group_priors(header_text)
 
     rate_map_per_locus = {}
-    rng = random.Random(seed + _SITE_RATE_SEED_OFFSET)
+    rng = random.Random(_locus_seed(seed, _SITE_RATE_SEED_OFFSET, 0))
     for locus in list_loci:
         if locus.ms_or_seq == "S":
             gp_model = next(gp for gp in group_priors[locus.group] if gp.model)
@@ -2530,7 +2511,7 @@ def dna_mutation_simulation_per_locus_from_values(
     Pour les loci [S] de type <A>, on tire une graine différente pour chaque
     locus (_locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)), pour que chaque locus <A>/<H>/<X>
     ait sa propre généalogie indépendante tandis que pour les loci mitochondriaux,
-    on utilise la graine (seed + _SHARED_M/Y_ANCESTRY_SEED_OFFSET) pour que tous
+    on utilise la graine (_locus_seed(seed, _SHARED_M/Y_ANCESTRY_SEED_OFFSET, 0)) pour que tous
     les loci M ou Y partagent la même généalogie.
 
     Args:
@@ -2591,10 +2572,10 @@ def dna_mutation_simulation_per_locus_from_values(
             )
             if locus.heritage == "M":
                 # Pour les loci mitochondriaux, on utilise la même graine pour tous les loci
-                seed_offset = seed + _SHARED_M_ANCESTRY_SEED_OFFSET
+                seed_offset = _locus_seed(seed, _SHARED_M_ANCESTRY_SEED_OFFSET, 0)
             elif locus.heritage == "Y":
                 # Pour les loci Y, on utilise la même graine pour tous les loci
-                seed_offset = seed + _SHARED_Y_ANCESTRY_SEED_OFFSET
+                seed_offset = _locus_seed(seed, _SHARED_Y_ANCESTRY_SEED_OFFSET, 0)
             else:
                 # Pour les autres loci, on utilise une graine différente pour chaque locus
                 seed_offset = _locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)
@@ -2875,9 +2856,9 @@ def build_local_param_microsat_per_locus(
 
     values = draw_group_parameter_values(group_priors, seed)
 
-    mut_rate_rng = random.Random(seed + _MICROSAT_MUT_RATE_SEED_OFFSET)
-    Pgeom_rng = random.Random(seed + _MICROSAT_PGEOM_SEED_OFFSET)
-    sni_rate_rng = random.Random(seed + _MICROSAT_SNI_SEED_OFFSET)
+    mut_rate_rng = random.Random(_locus_seed(seed, _MICROSAT_MUT_RATE_SEED_OFFSET, 0))
+    Pgeom_rng = random.Random(_locus_seed(seed, _MICROSAT_PGEOM_SEED_OFFSET, 0))
+    sni_rate_rng = random.Random(_locus_seed(seed, _MICROSAT_SNI_SEED_OFFSET, 0))
 
     for group in nloci_per_group:
         list_locus_in_group = [
@@ -3018,10 +2999,10 @@ def microsat_mutation_simulation_per_locus(
         )
         if locus.heritage == "M":
             # Pour les loci mitochondriaux, on utilise la même graine pour tous les loci
-            seed_offset = seed + _SHARED_M_ANCESTRY_SEED_OFFSET
+            seed_offset = _locus_seed(seed, _SHARED_M_ANCESTRY_SEED_OFFSET, 0)
         elif locus.heritage == "Y":
             # Pour les loci Y, on utilise la même graine pour tous les loci
-            seed_offset = seed + _SHARED_Y_ANCESTRY_SEED_OFFSET
+            seed_offset = _locus_seed(seed, _SHARED_Y_ANCESTRY_SEED_OFFSET, 0)
         else:
             # Pour les autres loci, on utilise une graine différente pour chaque locus
             seed_offset = _locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)
@@ -3136,12 +3117,12 @@ def build_local_param_microsat_per_locus_from_values(
     )
 
     # Voir le commentaire équivalent dans build_local_param_dna_per_locus :
-    # un random.Random(seed + OFFSET) créé À CHAQUE ITÉRATION du groupe fait
+    # un random.Random(_locus_seed(seed, OFFSET, 0)) créé À CHAQUE ITÉRATION du groupe fait
     # rejouer la même séquence de tirages à tous les groupes partageant le
     # même modèle en créant chaque rng UNE SEULE FOIS avant la boucle.
-    mut_rate_rng = random.Random(seed + _MICROSAT_MUT_RATE_SEED_OFFSET)
-    Pgeom_rng = random.Random(seed + _MICROSAT_PGEOM_SEED_OFFSET)
-    sni_rng = random.Random(seed + _MICROSAT_SNI_SEED_OFFSET)
+    mut_rate_rng = random.Random(_locus_seed(seed, _MICROSAT_MUT_RATE_SEED_OFFSET, 0))
+    Pgeom_rng = random.Random(_locus_seed(seed, _MICROSAT_PGEOM_SEED_OFFSET, 0))
+    sni_rng = random.Random(_locus_seed(seed, _MICROSAT_SNI_SEED_OFFSET, 0))
 
     for group in nloci_per_group:
         list_locus_in_group = [locus for locus in list_loci_ms if locus.group == group]
@@ -3289,10 +3270,10 @@ def microsat_mutation_simulation_per_locus_from_values(
         )
         if locus.heritage == "M":
             # Pour les loci mitochondriaux, on utilise la même graine pour tous les loci
-            seed_offset = seed + _SHARED_M_ANCESTRY_SEED_OFFSET
+            seed_offset = _locus_seed(seed, _SHARED_M_ANCESTRY_SEED_OFFSET, 0)
         elif locus.heritage == "Y":
             # Pour les loci Y, on utilise la même graine pour tous les loci
-            seed_offset = seed + _SHARED_Y_ANCESTRY_SEED_OFFSET
+            seed_offset = _locus_seed(seed, _SHARED_Y_ANCESTRY_SEED_OFFSET, 0)
         else:
             # Pour les autres loci, on utilise une graine différente pour chaque locus
             seed_offset = _locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)
