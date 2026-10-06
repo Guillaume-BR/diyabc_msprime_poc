@@ -3866,3 +3866,264 @@ code testé.
   plaide pour un vrai effet ; c'est un argument, pas une mesure.
 - **Toute comparaison stockée avant le 05/10** (ADN, MicroSat) a été produite avec
   les anciennes graines et n'est plus comparable à un rejeu frais.
+
+## 2026-10-05 (suite) — `ML3p_2.3.4` : le même mécanisme sur le chemin PoolSeq, et un faux départ
+
+Suite directe de la section précédente (« Ce qu'il reste », second point) : le
+résidu `ML3p_2.3.4` de `toy_example4_seriel`, déclaré persistant sur trois rejeux, a
+été remesuré avec des graines décorrélées.
+
+### 1. Le même défaut, sous deux formes
+
+`with_mrc_filter` dérivait ses graines par addition, sur le chemin PoolSeq :
+
+- lots d'arbres : `batch_seed = seed + batch_index * 20`. La particule `s` utilise les
+  graines `s`, `s+20`, `s+40`…, donc son lot n° 1 est le lot n° 0 de la particule
+  `s+20` ;
+- lectures : `seed + attempt + _MRC_REJECTION_SEED_OFFSET`, avec un compteur `attempt`
+  remis à zéro à chaque particule. C'est exactement le `s + i` du cas `DTA` : la
+  tentative `a` de la particule `s` partage sa graine avec la tentative `a-1` de la
+  particule `s+1`.
+
+La docstring de la fonction affirme que le compteur global « élimine par
+construction » la corrélation. C'est vrai à l'intérieur d'une particule (c'était le
+bug du 22/07 qu'elle corrigeait), pas entre particules.
+
+Correctif : `_locus_seed(seed, _MRC_BATCH_SEED_OFFSET, batch_index)` et
+`_locus_seed(seed, _MRC_REJECTION_SEED_OFFSET, attempt)`, avec un offset
+`_MRC_BATCH_SEED_OFFSET = 180_000_000` dédié (le précédent, 170 M, est pris par
+`LIK`). `simulate_poolseq_reads` crée ses deux générateurs une seule fois à partir de
+la graine reçue ; lui passer une graine déjà dérivée suffit. Les 231 tests passent
+sans modification, aucun n'étant gelé sur ce chemin.
+
+### 2. Le faux départ
+
+Le premier rejeu à 1000 loci après le correctif est sorti catastrophique : 49 colonnes
+flaggées sur 130 au scénario 1, **120 sur 120** au scénario 2, KS médian 0,25 contre
+~0,04 à 100 loci. J'ai d'abord soupçonné mon propre changement, puis une confusion de
+fichiers. La cause réelle : `headerRF.txt` de `toy_example4_seriel` déclarait
+`100 <A> G1`. DIYABC réécrit ce fichier à chaque run, dans le même dossier : le run à
+100 loci (15h37) avait écrasé celui du run à 1000 loci (15h35), et le script de rejeu
+lit `headerRF.txt`. Notre « rejeu à 1000 loci » avait donc simulé **100 loci** face à un
+DIYABC à 1000.
+
+`check_real_reftable_matches_header` ne l'a pas vu : elle compare les **noms de
+colonnes**, identiques à 100 et à 1000 loci.
+
+Ce qui l'a trahi : la granularité de `ML1p_1`, qui vaut `1 / nombre de loci`. Pas de
+0,01 et 28 valeurs distinctes de notre côté, pas de 0,001 et 99 valeurs distinctes du
+côté de DIYABC. À l'inverse, le rapport des écarts-types msprime/DIYABC (1,02 à 1,11)
+**ne détectait rien** : sur un rejeu apparié la variance entre particules est dominée
+par les priors tirés, pas par le bruit de loci. Mon premier test, fondé là-dessus,
+avait « réfuté » la bonne hypothèse ; il n'était pas discriminant.
+
+Une seconde erreur de lecture, de moindre conséquence : j'ai pris les `NaN` de
+`Npresent` et `tbn` dans le fichier du scénario 2 pour des priors désappariés. Ces
+paramètres n'existent pas dans ce scénario ; seul `Npast` y est, et il était à
+`p = 1`.
+
+### 3. Après correction du header : deux runs DIYABC indépendants à 1000 loci
+
+Contrôles : priors à `p = 1`, `headerRF.txt` à `1000 <A>`, pas de `ML1p_1` à 0,001 des
+deux côtés.
+
+| | run `1_1000` | run `0_1000` |
+|---|---|---|
+| scénario 1 : colonnes flaggées | 0 / 120 | 0 / 120 |
+| scénario 2 : colonnes flaggées | 6 / 120 | 2 / 120 |
+| scénario 2 : lesquelles | `FST2m_1.2`, `FST2v_1.2`, `NEIv_1.2`, `F3v_1.2.3`, `F3v_3.1.4`, `ML2p_1.3` | `HWv_2`, `F3v_3.1.2` |
+
+Les six du premier run sont des p de 0,030 à 0,037 et cinq d'entre eux décrivent la
+même différenciation entre les populations 1 et 2 (effectif réel de 2 à 3 tests). Les
+deux ensembles n'ont **aucune colonne en commun**, et le second est sous les 6
+attendus par hasard.
+
+`ML3p_2.3.4` : p = 0,996 au scénario 1 du premier run (il était à 1e-4 avant), 0,30
+au scénario 2, et absent des flags du second run. Aucune colonne portant l'échantillon
+le plus ancien n'est flaggée dans les quatre cellules. Le résidu ne survit pas à des
+graines décorrélées sur deux runs indépendants.
+
+### 4. Un point de vigilance, consigné tel quel
+
+Le test des signes du scénario 2 est négatif dans les deux runs, et neutre au
+scénario 1 :
+
+| | scénario 1 | scénario 2 |
+|---|---|---|
+| run `1_1000` | 56/120, p = 0,52, médiane +0,02 % | 69/120, p = 0,12, médiane −0,07 % |
+| run `0_1000` | 63/120, p = 0,65, médiane −0,02 % | 89/120, p < 1e-4, médiane −0,17 % |
+
+L'amplitude (0,07 à 0,17 %) est de l'ordre du résidu « nombre de loci » déjà au
+dossier pour ce jeu (−0,076 % à 1000 loci). Le p très faible du second run est
+anti-conservatif : les colonnes ne sont pas indépendantes (familles `HW`, `ML`,
+`FST`/`NEI`). Les deux scénarios d'un même run partagent un reftable DIYABC, donc ne
+sont pas des réplicats : l'unité est le run, et il y en a deux. Rien n'est conclu ; à
+remesurer sur un troisième run avant d'en tirer quoi que ce soit.
+
+### 5. Ce qu'il reste
+
+- Même famille, non corrigé : `summary_statistics.py`, `seed + _LIKELIHOOD_SEED_OFFSET
+  + i`, et le chemin IndSeq (`with_maf_filter` : `batch_seed = seed + batch_index *
+  batch_size`, `seed + attempt + _MAF_REJECTION_SEED_OFFSET`), qui porte `human`.
+- Une garde plus forte que `check_real_reftable_matches_header` pour le nombre de
+  loci (la granularité de `ML1p` en est un indicateur gratuit, ou une copie du header
+  conservée avec chaque reftable DIYABC) : c'est la troisième fois qu'un `headerRF.txt`
+  périmé fausse un run. Non fait, c'est une modification de code à décider.
+
+## 2026-10-05 (fin) — Tous les sites de graines passés par `_locus_seed`
+
+À la demande de l'utilisateur (« il ne faut pas de corrélation possible entre
+graines »), la dérivation a été étendue à **toutes** les graines dérivées de
+`bridge/`, pas seulement aux sites où un recouvrement était démontré.
+
+### 1. Ce qui a été converti
+
+- **Recouvrement réel (un indice qui varie)** : `LIK` (`seed + OFFSET + i`) ; `AML`
+  (`seed + group_number * 1000`, qui se recouvrait dès que le run dépassait 1000
+  particules) ; le chemin IndSeq (`with_maf_filter` : `seed + batch_index * batch_size`
+  et `seed + attempt + OFFSET`, la seconde étant en plus additionnée à une graine de
+  lot déjà dérivée, d'où l'indice global `batch_index * batch_size + attempt_in_batch`).
+- **Offset unique, sans indice** : `random.Random(seed + OFFSET)` pour µ, k1, k2,
+  taux de sites et paramètres MicroSat ; graines `<M>`/`<Y>` partagées ; tirage de
+  scénario ; priors de groupe ; lectures binomiales ; `seed_for_type`. Ils ne se
+  recouvraient pas (offsets espacés de 1 à 10 millions, donc rien sous un million de
+  particules) ; convertis par uniformité, pour qu'un futur site ne puisse pas
+  réintroduire le motif.
+- **Laissé brut** : la graine de particule elle-même (`random.Random(seed)` pour les
+  priors historiques, `random_seed=seed` pour les arbres SNP) : unique par particule,
+  non dérivée.
+
+Le helper est déplacé de `ancestry_simulation.py` vers `configuration.py`, feuille
+sans dépendance, pour que `summary_statistics`, `parameter_sampling`, `pipeline` et
+`reftable_loop` l'importent sans cycle. Deux constantes ajoutées :
+`_MAF_BATCH_SEED_OFFSET` (190 M) et `_GROUP_STAT_SEED_OFFSET` (200 M).
+
+### 2. Tests
+
+38 échecs d'abord (valeurs gelées de toute la suite statistique), 232 passent à la fin.
+Quatre nouveaux échecs hors `test_summary_statistics` : les séquences de tirage de
+scénarios `[3,3,5,3,1,3]` → `[6,4,6,1,5,6]` (human) et `[1,1,2,1,1,1]` →
+`[2,2,2,1,2,2]` (te2), qui restent multi-scénarios, et trois valeurs de µ/Pgeom/SNI
+MicroSat. Les attendus écrits comme formules (comptes d'allèles, `HET`, `VAR`,
+`NAL` = 94/10 et 87/9) ont été recalculés d'après les nouveaux comptes et recoupés
+(`_genotypes_by_sample_and_individuals` contre `_length_by_sample`), pas recollés.
+
+**Une perte de couverture, rattrapée.** Avec les graines finales, G2 et G3 ont chacun
+leurs 5 loci polymorphes. Le fixture `te2` n'exerce donc plus le garde
+`num_sites == 0` de `compute_MPD`/`compute_VPD`, alors que le commentaire du test
+présentait l'asymétrie G2/G3 (facteur 5/4, puis 5/3) comme sa preuve. Remplacé par
+`test_mean_pairwise_differences_excludes_loci_without_mutation`, indépendant des
+graines : la même généalogie, mutée puis non mutée ; `MPD` et `VPD` n'y changent pas
+quand on ajoute le locus sans mutation, `NSS` est divisé par deux. Vérifié en retirant
+le garde (le test échoue, `MPD` change) puis en le restaurant.
+
+### 3. Ce qui n'est pas fait
+
+`human` (IndSeq, chemin MAF, 5000 loci) a été rejoué après la conversion complète :
+aucun problème, d'après l'utilisateur. Les autres datasets validés avant ce jour
+(`toy_example1/2/3/4/5`) n'ont pas été rejoués depuis. Elle ne change aucune loi, seulement les
+réalisations ; on s'attend donc à retrouver les mêmes accords, mais ce n'est pas
+mesuré. Restent à rejouer au minimum : un jeu IndSeq sériel (`human_seriel`), un jeu
+MicroSat avec `AML` et `LIK` (`toy_example1_ms`).
+
+
+## 2026-10-06 — Le rejeu IndSeq sériel cassé depuis le 25/09
+
+En relançant `human_seriel` après la conversion des graines : `KeyError: Population
+with name 'pop2' not found`.
+
+**Cause.** `simulate_particle_genotypes_from_values` n'appliquait plus le bloc de son
+jumeau de tirage qui construit `counts_per_sample` et la liste de `SampleSet` depuis le
+scénario. Sans lui, `sample_sets=None`, donc msprime reçoit les noms `pop1..pop4` des
+quatre blocs `POP` du `.snp` ; la démographie de `human_seriel` n'a qu'une population
+(1 échantillonnée à 0, 50, 200, 500) et `pop2` n'existe pas. Un jeu non sériel passe
+par le même repli sur les noms et fonctionne, d'où le silence.
+
+**Histoire.** `git show 851ba78` (25/09 16:43) : la branche IND de
+`compute_summary_statistics_from_values` construit `scenario`, `counts_by_samples`,
+`sample_sets` et les passe. `392d193` (25/09 17:25, « symétrisation INDSEQ POOLSEQ »)
+les retire de la fonction de statistiques sans les ajouter à la fonction de simulation,
+alors que la branche PoolSeq les avait, elle, dans `simulate_particle_reads_from_values`.
+Bisect par `git show` sur chaque commit de `bridge/pipeline.py`, du plus récent au
+plus ancien : 3 occurrences de `sample_sets` dans la fonction à `851ba78`, 0 ensuite.
+(Un premier balayage avait donné 0 partout, parce que mon `awk` cherchait le nom
+actuel de la fonction, qui n'existait pas encore dans les commits anciens.)
+
+**Correctif.** Même bloc que `simulate_particle_genotypes` (règle des jumeaux : copier,
+pas factoriser). Les 6 stats de `compute_summary_statistics_snp_from_values` ne changent
+pas ; seul le rejeu sériel IndSeq est concerné.
+
+**Test.** Contexte synthétique (1 population, 4 dates, counts 6/4/5/3), pas le `.snp` de
+`human_seriel` : 12 Mo, non suivi par git, un test qui en dépendrait serait inutilisable
+ailleurs. Deux valeurs de MAF pour les deux chemins. Vérifié en neutralisant le
+correctif : 2 échecs ; restauré : 234 passent.
+
+**Conséquence.** La ligne « SNP IndSeq sériel : complet, `human_seriel`, 0/130 » du
+tableau de `CLAUDE.md` décrit un chemin validé avant le 25/09 17:25 puis cassé pendant dix
+jours. À revalider par un rejeu (en cours côté utilisateur au moment de l'écriture).
+
+## 2026-10-06 (suite) — Revalidation de tous les jeux avec le code final
+
+Après la conversion complète des graines et la restauration du rejeu IndSeq sériel,
+chaque jeu validé a été rejoué. Les contrôles communs : priors et colonnes de
+mutation à zéro d'écart, scénarios tirés identiques ligne à ligne, pas de `ML1p_1`
+égal à `1/nloci` des deux côtés, et KS recalculé après arrondi de nos colonnes à 6
+décimales (voir 1).
+
+### 1. L'artefact de précision d'écriture
+
+Le texte du reftable de DIYABC (`bintotxt`) écrit 6 décimales. Pour une statistique de
+l'ordre de 1e-5, cela donne quelques dizaines de valeurs distinctes : `F3v_1.2.3` en
+a 37 sur 487 particules du côté DIYABC, contre 395 du nôtre (8 décimales). Un KS
+entre un échantillon quantifié et un échantillon quasi continu mesure alors la masse
+d'un palier (0,05 à 0,13), pas un écart de distribution.
+
+Mesures : `human_seriel` scénario 2, 9 flags (`F3v` ×7, `F4v` ×2, KS 0,09 à 0,13) → 0
+après arrondi. `toy_example4_seriel` 1000 loci, scénario 2 : 7 → 2 et 3 → 1. Mes KS
+« bruts » reproduisent exactement les listes de flags des notebooks, ce qui valide la
+comparaison. À appliquer dans les notebooks : `ours = ours.round(6)` sur les colonnes
+de statistiques avant le KS. Le test des signes lit des moyennes, il n'est pas touché.
+
+### 2. Résultats par jeu
+
+| jeu | cellules | flags | remarques |
+|---|---|---|---|
+| `human_seriel` (5000 loci) | 2 | 0 / 0 (9 sans arrondi) | médianes de signe +0,054 % / −0,050 % |
+| `toy_example1_ms_seriel` | 4 | 0, 4, 1, 1 | un seul cas revient dans les deux runs, `AML_2_3.1.2` (p 0,0046 et 0,033), non significatif après correction ; `AML` pas décalé globalement (32/72) |
+| `toy_example1_ms_modified` | 2 | 1, 0 | `MGW_2_3` (p 0,016), scénario 1 seul |
+| `toy_example2_ms_dna_50loci_{JK,K2P,TN}` | 12 | 0 | `TN` est le header mixte (10 MicroSat, 50 `<A>`, 50 `<M>`, 73 colonnes) ; `MPD`/`VPD`/`DTA_2_x` : p de 0,2 à 1,0 |
+| `toy_example3` 100 loci | 6 | 1, 1, 5, 0, 2, 0 | aucune colonne dans deux scénarios ; les 5 du scénario 3 sont la famille `HB`/`HW` |
+| `toy_example3` 500 loci | 6 | 0 | médianes de signe ≤ 0,4 % (jusqu'à 1,6 % à 100 loci) |
+| `toy_example4` classique | 6 | 0, 0, 0, 2, 0, 0 | `HWv_3`/`HWv_4`, KS identique, un seul calcul |
+| `toy_example4_seriel` 1000 loci | 4 | 0, 1, 0, 2 | aucune colonne commune ; `ML3p_2.3.4` à p 1,0 / 0,997 / 0,76 / 0,12 |
+
+Le sériel IndSeq : le rejeu de `human_seriel` a tourné de bout en bout sur le vrai
+jeu, ce que seul le test synthétique prouvait jusque-là.
+
+### 3. Le faux départ de `toy_example4_seriel`, et deux erreurs de lecture
+
+- Le dossier contenait un `headerRF.txt` à 100 loci (écrasé par un run DIYABC à 100
+  loci) pendant qu'on rejouait un reftable à 1000 : le rejeu avait simulé 100 loci. La
+  garde `check_real_reftable_matches_header` compare des noms de colonnes, identiques à
+  100 et à 1000 loci. Le pas de `ML1p_1` (1/nloci) a trahi le nombre de loci réel ; le
+  rapport des écarts-types, lui, ne détecte rien (variance dominée par les priors).
+- J'ai lu à tort `NaN` comme un désappariement de priors sur le scénario 2, où ces
+  paramètres n'existent pas.
+- `human_seriel` : tes notebooks arrondissent maintenant à 6 décimales ; mon KS « brut »
+  retrouve les 9 flags d'avant, qui disparaissent ensuite.
+
+### 4. Ce qui reste de côté
+
+- Le test des signes est anti-conservatif et propre à chaque run. Sur `toy_example5` à
+  500 loci, trois runs DIYABC ont donné des médianes de −2,1 %, +0,6 % et +0,7 % : le
+  signe change d'un run à l'autre, et seul le plus ancien reftable (24/07) a des flags
+  (5, dans une famille de différenciation). Les deux runs récents sont propres.
+  Le « −2,65 % à 70 loci » noté pour ce jeu est donc très probablement une propriété
+  du reftable de juillet, pas un résidu de simulation (hypothèse la plus économique,
+  non démontrée : pas de rejeu à 70 loci avec un reftable récent).
+- Le scénario 2 de `toy_example4_seriel` reste négatif dans les deux runs (−0,16 % et
+  −0,13 %), dans l'ordre de grandeur du résidu « nombre de loci » (−0,076 % documenté).
+  Rien n'est conclu.
+- Non rejoués avec le code final : `toy_example2_ms_dna_{JK,K2P}` à 5 loci par groupe
+  (leurs versions à 50 loci le sont) et `toy_example2_ms_dna_TN` à 5 loci (remplacé par
+  le `TN` à 50 loci, qui couvre le même chemin).

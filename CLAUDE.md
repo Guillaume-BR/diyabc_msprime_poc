@@ -29,6 +29,19 @@ structurally and statistically equivalent to the real DIYABC's output.
 | Serial/temporal sampling (SNP PoolSeq) | complete | `toy_example4_seriel` (100 loci, `<MRC=5>`, 4/133 vs ~6.7 expected) |
 | Mixed MicroSat + DNA in one header | complete | `toy_example2_ms_dna_TN` (73 columns, 2 replays × 2 scenarios) |
 
+**Validation status (06/10): every dataset in the "Validated against" column above is
+validated with the final code**
+— the one in which all derived seeds go through `_locus_seed` and the serial
+IndSeq replay is restored. Replayed on 05-06/10 and read with a KS and a sign test per
+cell: `human` and `human_seriel` (0 KS flag in every cell, sign-test median
++0.05 % / −0.05 %), `toy_example1_ms_seriel` and `_modified`, `toy_example2_ms_dna_50loci_{JK,K2P,TN}`
+(the `TN` one is the mixed MicroSat + ADN header, 73 columns, 0 flag in 4 cells),
+`toy_example3` (100 loci: 9 flags in 6 cells, none shared between scenarios; 500 loci: 0),
+`toy_example4`, and `toy_example4_seriel` at 1000 loci (3 flags in 4 cells over two
+independent DIYABC runs, no column in common, `ML3p_2.3.4` absent). Any column flagged
+once and not again is noise; the flags that were not were traced to their cause (see
+Closed investigations: `DTA_2_2`, `ML3p_2.3.4`, the serial IndSeq replay).
+
 Validation means a *paired* comparison: the real DIYABC priors are replayed
 particle-by-particle through our pipeline (`replay_reftable_simulation_snp*`,
 `scripts/replay_diyabc_priors*.py`) and the two reftables compared
@@ -107,6 +120,14 @@ reads the name: a statistic always starts with an uppercase ASCII letter
 `pmic_1`, `k1seq_2`). It **raises** rather than shifting formats silently.
 The `.bin` was never affected (`struct.pack` float32), so the structural
 deliverable was always sound — only the diagnostic path lost information.
+**Compare against DIYABC's text at DIYABC's precision: round our statistic
+columns to 6 decimals before the KS.** DIYABC's text export writes 6 decimals, so a
+statistic of order 1e-5 (`F3v`, `F4v`, `NEIv`, `FST2v`) takes a few dozen distinct
+values on its side (`F3v_1.2.3`: 37 over 487 particles, against 395 for ours at 8
+decimals). The KS then measures the mass of one quantization step (0.05 to 0.13) and
+flags the column while the means agree. Measured: `human_seriel` scenario 2, 9 flags
+(`F3v`/`F4v`) → 0 after rounding; the same artefact explains most flags on
+small-amplitude columns elsewhere. The sign test is unaffected (it reads means).
 **And when a format changes, restart the Jupyter kernel before regenerating
 anything**: a long-lived kernel keeps the pre-edit module in memory, which
 produced a `first_records_clean` file *newer* than the replay yet written by the
@@ -420,17 +441,24 @@ locus/particle.
 - **Never derive a seed by addition.** `seed + OFFSET + i` gives locus `i` of
   particle `s` the same seed as locus `i - 1` of particle `s + 1`, because particle
   seeds are consecutive: every random stream was shared by up to `nloci` neighbouring
-  particles, which were therefore not independent. Use
-  `ancestry_simulation._locus_seed(seed, offset, locus_index)`
-  (`np.random.SeedSequence([seed, offset, locus_index])`, folded into
-  `[1, 2**32 - 1]` because msprime rejects 0). Applied to the 8 per-locus sites of
-  the DNA and MicroSat paths (tree and mutation, drawing and replay). **Still
-  additive, same family, not fixed**: `summary_statistics.py`
-  `seed + _LIKELIHOOD_SEED_OFFSET + i`, and the SNP paths
-  (`batch_seed = seed + batch_index * batch_size`,
-  `seed + attempt + _MAF/_MRC_REJECTION_SEED_OFFSET`). Single-offset seeds with no
-  `+ i` (`_SHARED_M/Y_ANCESTRY_SEED_OFFSET`, `random.Random(seed + OFFSET)`) do not
-  overlap.
+  particles, which were therefore not independent. **Every derived seed in `bridge/`
+  now goes through `configuration._locus_seed(seed, offset, index)`**
+  (`np.random.SeedSequence([seed, offset, index])`, folded into `[1, 2**32 - 1]`
+  because msprime rejects 0; `index` is the locus, batch, attempt or group, and 0 for a
+  draw made once per particle). Converted on 05/10: the per-locus tree and mutation
+  seeds (DNA, MicroSat), `with_mrc_filter` and `with_maf_filter` (batch and attempt
+  seeds), `LIK`/`AML` (`_LIKELIHOOD_SEED_OFFSET`, `_GROUP_STAT_SEED_OFFSET`), and the
+  single-offset draws (`random.Random(seed + OFFSET)` for µ/k/site rates/MicroSat,
+  shared `<M>`/`<Y>` ancestry, scenario draw, group priors, binomial reads,
+  `seed_for_type`) — the latter never overlapped below 1M particles, converted for
+  uniformity and so that no new site reintroduces the pattern. **What stays raw**: the
+  particle seed itself (`random.Random(seed)` for the historical priors,
+  `random_seed=seed` for the SNP trees), unique per particle and not derived. Adding a
+  new offset constant means a new entry in `configuration.py`, never a sum. **Every
+  value gated by a seed moved with this change**: stored comparisons and reftables
+  made before 05/10 are no longer comparable to a fresh run. Every validated dataset
+  was re-replayed after the full conversion (see the validation status under the
+  table at the top).
 
 ## Closed investigations — do not reopen
 
@@ -699,12 +727,34 @@ under the date given.
   which keeps true ploidy. (d) An unexplained `TSK_ERR_BAD_OFFSET` from
   `sim_mutations` occurred once in 2000 particles and never again on the same seeds;
   not understood, not reproduced.
-  Consequences: the golden values of 33 tests moved with the seeds (regenerated
-  05/10, each hand-derived expectation recomputed from the new allele counts, not
-  pasted); `test_mean_pairwise_differences_per_group` / `_variance_` now show G2 with
-  **2** loci without mutation of 5 (factor 5/3, was 5/4), G3 still 0. Any stored
-  comparison or reftable produced before 05/10 used the old seeds and is no longer
-  comparable to a fresh run.
+  Consequences: the golden values moved twice on 05/10 (33 tests with `_locus_seed`
+  on the per-locus sites, then 38 when the conversion was extended to every derived
+  seed); each hand-derived expectation was recomputed from the new allele counts, not
+  pasted. **The `te2` fixture no longer exercises the `num_sites == 0` guard**: with
+  the final seeds G2 and G3 both have their 5 loci polymorphic (it had 1, then 2, loci
+  without mutation under the earlier seeds, hence the 5/4 and 5/3 factors that the
+  `MPD`/`VPD` test comments used to quote). The guard now has its own seed-independent
+  test, `test_mean_pairwise_differences_excludes_loci_without_mutation`, which fails
+  when the guard is removed (checked). Any stored comparison or reftable produced
+  before 05/10 used the old seeds and is no longer comparable to a fresh run.
+
+- **Serial IndSeq replay broken from 25/09 to 06/10 (`KeyError: Population with name
+  'pop2' not found`).** `simulate_particle_genotypes_from_values`, the replay sibling
+  of `simulate_particle_genotypes`, no longer built its `SampleSet` list and per-sample
+  counts from the scenario: lost at commit `392d193` (25/09 17:25, "symétrisation
+  INDSEQ POOLSEQ"), forty minutes after `851ba78` where the IND branch still had them.
+  On a serial dataset msprime then received the `pop1..popN` names of the `.snp`'s POP
+  blocks against a one-population demography. Non-serial datasets were unaffected
+  (`sample_sets=None` falls back to the names), which is why nothing failed. Restored by
+  copying the drawing sibling's block; guarded by
+  `test_simulate_particle_genotypes_from_values_serial_indseq` (synthetic 1-population,
+  4-date context, both MAF paths; fails without the block, checked). **The
+  `human_seriel` validation predated this loss, so it described a code path that was
+  broken for ten days; it was rerun on 06/10 on the real dataset (5000 loci, 2
+  scenarios: 0 KS flag after the 6-decimal rounding, sign-test median +0.05 % /
+  −0.05 %).** Lesson: a refactor that
+  touches one half of a drawing/replay pair must be checked against the other half, and
+  a feature validated by replay needs a test that replays it.
 
 ## Domain knowledge
 
@@ -1037,14 +1087,15 @@ because DIYABC's own output depends on them.
   deliberately deferred: **no dataset would validate it**, and this project
   never declares a path correct without a paired replay against the real
   DIYABC. See "Serial/temporal sampling" under Domain knowledge.
-- **`ML3p_2.3.4` on `toy_example4_seriel`: a real residual, not investigated.**
+- **`ML3p_2.3.4` on `toy_example4_seriel`: RESOLVED 05/10 — an artefact of
+  overlapping seeds, not a real residual (verdict at the end of this entry).**
   Significant in **three** replays (p = 0.0001 / 0.0013 / 0.0002) with a stable
   −10 to −14% rdiff, and it survives a 10x increase in loci count that wipes out
-  every other flagged column. The project's persistence criterion is met, so
-  this is **not** a false positive. `ML2p_2.4` is intermediate: significant in
+  every other flagged column. The persistence criterion was met at the time (the
+  05/10 verdict below shows why that was not enough). `ML2p_2.4` is intermediate: significant in
   both 100-loci replays, not at 1000, amplitude decaying — the loci-count
   residual, with a consistently negative sign worth noting. Left unexplored by
-  the user's call (cost vs. stakes).
+  the user's call (cost vs. stakes) until 05/10.
   **Localised 30/09: it is the oldest SAMPLE, not a population, and not
   admixture.** Splitting the whole ML family by index on run 0 scenario 1 gives a
   perfect separation — every column carrying index **4** diverges, no other one
@@ -1122,15 +1173,20 @@ because DIYABC's own output depends on them.
   `sumstat.cpp`, and compare a single particle at fixed `tbn ≈ 100`,
   `Npast ≈ 40000`, `Npresent ≈ 500` — the allele-frequency spectrum of sample 4
   is where the two sides must be made to disagree visibly.
-  **Caveat added 05/10.** The three replays that made this residual "persistent"
-  all used seeds 1..N on the SNP path, whose batch seeds are still additive
-  (`seed + batch_index * batch_size`, see the seed rule under Hard rules). The
-  `DTA_2_2` case showed that persistence across replays can be one realization of
-  our own noise. This residual has not been re-measured with decorrelated seeds, so
-  treat "real, not a false positive" as unconfirmed until it is. Its structure
-  (7/7 columns carrying the oldest sample, a clean stratification by `tbn`) is
-  more specific than `DTA_2_2`'s was, which argues for a real effect, but that
-  is an argument and not a measurement.
+  **Verdict 05/10: the residual does not survive decorrelated seeds.** The three
+  replays that made it "persistent" all used seeds 1..N on the PoolSeq path, whose
+  `with_mrc_filter` seeds were additive (`seed + batch_index * 20` for the tree
+  batches, `seed + attempt + _MRC_REJECTION_SEED_OFFSET` for the reads): the same
+  mechanism as `DTA_2_2`, see Closed investigations. Both sites now go through
+  `_locus_seed` (`_MRC_BATCH_SEED_OFFSET` added to `configuration.py`). Replayed on
+  **two independent DIYABC runs at 1000 loci**, two scenarios each: `ML3p_2.3.4`
+  KS p = **0.996** (run 1, scenario 1) and 0.30 (scenario 2), no ML column among the
+  flags of run 0, and no column carrying the oldest sample flagged in any of the four
+  cells. Flag counts 0 / 6 / 0 / 2 of 120 (about 6 expected by chance), with **no
+  column in common** between the two runs. Read the localisation and the `tbn` /
+  `Npast` / `Npresent` stratifications above as the record of what overlapping
+  seeds produced; they are **not** evidence of a coalescent or `cal_ml3p` defect, and
+  the "first steps if anyone picks this up" are void.
 - **G2 `MPD`/`VPD` residual — CAUSE FOUND, LOCATED TO THE LINE, AND REPRODUCED
   IN `compute_MPD`/`compute_VPD` (02/10). Replay validation done 05/10.**
   In one sentence: **`cal_nss1p`'s per-locus denominator is derived from the
@@ -1232,7 +1288,9 @@ because DIYABC's own output depends on them.
   exactly **5/4 = 1.25** on both populations — that fixture has 5 G2 loci of which
   1 carries no mutation — while G3 (5 of 5 polymorphic) stayed bit-identical. That
   asymmetry is the unit-level proof that the guard keys on the absence of
-  mutation and nothing else. The new golden values carry a comment saying not to
+  mutation and nothing else (**superseded 05/10**: that fixture changed with the
+  seeds and no longer has a monomorphic locus; the unit-level proof is now
+  `test_mean_pairwise_differences_excludes_loci_without_mutation`). The new golden values carry a comment saying not to
   restore the old ones without removing the guard.
   **Validated against the real DIYABC on 05/10** (3 models × 2 replays, after the
   seed fix, every statistic without a KS flag, as reported). The expectations
