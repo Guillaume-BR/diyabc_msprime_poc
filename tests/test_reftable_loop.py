@@ -107,10 +107,11 @@ def test_run_reftable_simulation_draws_multiple_scenarios(header_text):
     se répartir sur PLUSIEURS scénarios différents (pas toutes sur le
     même) -- preuve que le tirage pondéré par `weight` est bien exercé
     de bout en bout. Répartition exacte pré-calculée pour seed=1..6 :
-    scénarios [3, 3, 5, 3, 1, 3] (voir draw_scenario, déterministe --
+    scénarios [6, 4, 6, 1, 5, 6] (voir draw_scenario, déterministe --
     séquence recalculée après correction du bug de seed partagée entre
     draw_scenario et draw_parameter_values, voir
-    _SCENARIO_DRAW_SEED_OFFSET dans reftable_loop.py)."""
+    _SCENARIO_DRAW_SEED_OFFSET dans reftable_loop.py, puis une seconde fois
+    le 05/10 quand la graine du tirage est passée par `_locus_seed`)."""
     scenarios = parse_header_scenarios(header_text)
 
     nrec = 6
@@ -122,7 +123,7 @@ def test_run_reftable_simulation_draws_multiple_scenarios(header_text):
         stats_filter="ALL",
     )
 
-    assert [r.scenario_index for r in results] == [3, 3, 5, 3, 1, 3]
+    assert [r.scenario_index for r in results] == [6, 4, 6, 1, 5, 6]
 
 
 def test_write_reftable_bin_without_group_priors(tmp_path, header_text):
@@ -159,7 +160,7 @@ def test_write_reftable_bin_with_group_priors(tmp_path, microsat_context_te1):
 
     nrec = 3
     results = run_reftable_simulation_microsat(
-        reference_directory=REFERENCE_DIR / "toy_example1_ms",
+        reference_directory=REFERENCE_DIR / "toy_example1_ms_seriel",
         scenarios=[scenario1],
         nrec=nrec,
         stats_filter="ALL",
@@ -196,7 +197,7 @@ def test_write_reftable_bin_multi_scenario(tmp_path, header_text):
         stats_filter="ALL",
     )
     # Répartition déterministe pré-calculée (voir test_run_reftable_simulation_draws_multiple_scenarios)
-    assert [r.scenario_index for r in results] == [3, 3, 5, 3, 1, 3]
+    assert [r.scenario_index for r in results] == [6, 4, 6, 1, 5, 6]
 
     output_file = tmp_path / "reftable_multi.bin"
     write_reftable_bin(results, priors, scenarios, output_file)
@@ -468,10 +469,11 @@ def test_run_reftable_simulation_dna_draws_multiple_scenarios(header_text_te2):
     se répartir sur PLUSIEURS scénarios différents (pas toutes sur le
     même) -- preuve que le tirage pondéré par `weight` est bien exercé
     de bout en bout. Répartition exacte pré-calculée pour seed=1..6 :
-    scénarios [1, 1, 2, 1, 1, 1] (voir draw_scenario, déterministe --
+    scénarios [2, 2, 2, 1, 2, 2] (voir draw_scenario, déterministe --
     séquence recalculée après correction du bug de seed partagée entre
     draw_scenario et draw_parameter_values, voir
-    _SCENARIO_DRAW_SEED_OFFSET dans reftable_loop.py)."""
+    _SCENARIO_DRAW_SEED_OFFSET dans reftable_loop.py, puis une seconde fois
+    le 05/10 quand la graine du tirage est passée par `_locus_seed`)."""
     scenarios = parse_header_scenarios(header_text_te2)
 
     nrec = 6
@@ -482,7 +484,7 @@ def test_run_reftable_simulation_dna_draws_multiple_scenarios(header_text_te2):
         stats_filter="ALL",
     )
 
-    assert [r.scenario_index for r in results] == [1, 1, 2, 1, 1, 1]
+    assert [r.scenario_index for r in results] == [2, 2, 2, 1, 2, 2]
 
 
 # ── Garde « sériel + loci liés au sexe » ──────────────────────────────────
@@ -514,7 +516,7 @@ def test_is_serial_scenario_distingue_seriel_et_non_seriel():
 
 @pytest.mark.parametrize(
     "dataset",
-    ["human_seriel", "toy_example4_seriel", "toy_example1_ms", "toy_example5"],
+    ["human_seriel", "toy_example4_seriel", "toy_example1_ms_seriel", "toy_example5"],
 )
 def test_raise_if_serial_with_sex_linked_loci_laisse_passer_les_datasets_valides(
     dataset,
@@ -567,7 +569,7 @@ def test_raise_if_serial_with_sex_linked_loci_ignore_le_seriel_sans_xy():
         "toy_example2_ms_dna_K2P",  # µ + K2P : k1 seul
         "toy_example2_ms_dna_JK",  # JK : ni k1 ni k2
         "toy_example2_ms_dna_TN",  # TN : k1 ET k2
-        "toy_example1_ms",  # préfixe "mu" ASCII, pas "µ"
+        "toy_example1_ms_seriel",  # préfixe "mu" ASCII, pas "µ"
         "human",  # dataset SNP : aucune section `group priors`
     ],
 )

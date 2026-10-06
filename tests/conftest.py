@@ -40,7 +40,7 @@ OBSERVED_SNP_FILE_HUMAN = REFERENCE_DIR / "human" / "human_snp_all22chr_maf5.snp
 
 OBSERVED_MSS_FILE_TE1 = (
     REFERENCE_DIR
-    / "toy_example1_ms"
+    / "toy_example1_ms_seriel"
     / "pseudo_observed_DATASET_toy_example1_microsatellites_one_pop_multiple_samples_over_time_001.mss"
 )
 
@@ -104,7 +104,7 @@ def header_text_te3_scenario1() -> str:
 
 @pytest.fixture
 def header_text_te1() -> str:
-    path_te1 = REFERENCE_DIR / "toy_example1_ms" / "headerRF.txt"
+    path_te1 = REFERENCE_DIR / "toy_example1_ms_seriel" / "headerRF.txt"
     return path_te1.read_text()
 
 

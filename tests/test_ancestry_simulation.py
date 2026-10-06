@@ -1601,9 +1601,9 @@ def test_build_local_param_microsat_per_locus(header_text_te2_XY):
         assert params_per_locus[locus][1] >= 0.0 and params_per_locus[locus][1] <= 1.0
         assert params_per_locus[locus][2] >= 0.0
 
-    assert params_per_locus["Locus_M_A_1_"][0] == 0.00010313460804143706
-    assert params_per_locus["Locus_M_A_1_"][1] == 0.4820860729990509
-    assert params_per_locus["Locus_M_A_1_"][2] == 3.1999081859003997e-07
+    assert params_per_locus["Locus_M_A_1_"][0] == 0.00032976909134487767
+    assert params_per_locus["Locus_M_A_1_"][1] == 0.06651276334665673
+    assert params_per_locus["Locus_M_A_1_"][2] == 1.800217034380478e-06
 
     # tests sur les valeurs des paramètres de groupes
     assert len(parameter_values) == 3  # tous les groupes sont présents

@@ -2,6 +2,8 @@
 point d'entrée -p ./, calcul des statistiques résumées avec filtrage
 ALL/HEADER)."""
 
+from pathlib import Path
+
 import msprime
 import pytest
 from conftest import (
@@ -10,6 +12,7 @@ from conftest import (
 )
 
 from bridge.header_dataclasses import SnpReplayContext
+from bridge.loci_parser import parse_loci_description
 from bridge.pipeline import (
     _draw_common_data,
     _simulate_and_compute_statistics,
@@ -23,6 +26,7 @@ from bridge.pipeline import (
     compute_summary_statistics_snp_from_values,
     read_header_text,
     simulate_particle_genotypes,
+    simulate_particle_genotypes_from_values,
 )
 from bridge.reftable_loop import _group_prior_columns
 
@@ -296,6 +300,77 @@ def test_compute_summary_statistics_unknown_stats_filter_raises(snp_context_huma
 
 
 # -------------------------------------------------------------
+# Rejeu d'un jeu IndSeq SÉRIEL (1 population, plusieurs dates)
+# -------------------------------------------------------------
+
+_SERIAL_INDSEQ_HEADER = """toy.snp
+1 parameters and 0 summary statistics
+
+2 scenarios: 6 5
+scenario 1 [0.5] (1)
+Npast
+0 sample 1
+50 sample 1
+200 sample 1
+500 sample 1
+scenario 2 [0.5] (1)
+Npast
+0 sample 1
+50 sample 1
+200 sample 1
+500 sample 1
+
+historical parameters priors (1,0)
+Npast N UN[10,50000,0,0]
+
+loci description (1)
+5 <A> G1 from 1
+
+group summary statistics (0)
+"""
+
+
+@pytest.mark.parametrize("maf_ratio", [0.0, 0.05])
+def test_simulate_particle_genotypes_from_values_serial_indseq(maf_ratio):
+    """Le rejeu d'un jeu SÉRIEL (une population échantillonnée à 4 dates, comme
+    `human_seriel`) doit construire ses `SampleSet` depuis le scénario, comme le
+    fait le jumeau de tirage `simulate_particle_genotypes`.
+
+    Régression : cette construction avait disparu de la branche de rejeu au
+    commit 392d193 (25/09) et rien ne l'a signalé pendant dix jours, faute de
+    test rejouant un jeu IndSeq sériel. Sans elle, msprime reçoit les noms
+    pop1..pop4 des blocs POP du .snp alors que la démographie n'a qu'une
+    population, et lève `KeyError: Population with name 'pop2' not found`.
+    Les deux valeurs de MAF couvrent les deux chemins (`hudson` et filtré).
+    """
+    context = SnpReplayContext(
+        header_text=_SERIAL_INDSEQ_HEADER,
+        snp_path=Path("toy.snp"),
+        snp_file_type="IND",
+        loci_description=parse_loci_description(_SERIAL_INDSEQ_HEADER),
+        counts_per_sample={"POP1": 6, "POP2": 4, "POP3": 5, "POP4": 3},
+        sex_ratio=0.5,
+        maf_ratio=maf_ratio,
+        mrc_ratio=None,
+        reads_observed=None,
+        sexes_per_sample={},
+    )
+
+    genotypes = list(
+        simulate_particle_genotypes_from_values(context, 2, {"Npast": 1000.0}, seed=7)
+    )
+
+    assert len(genotypes) == 5
+    # Un échantillon par date, chacun avec 2 copies de gènes par individu.
+    assert {name: len(g) for name, g in genotypes[0].items()} == {
+        "pop1": 12,
+        "pop2": 8,
+        "pop3": 10,
+        "pop4": 6,
+    }
+
+
+# -------------------------------------------------------------
 # Tests pour la partie DNA
 # -------------------------------------------------------------
 
@@ -308,9 +383,9 @@ def test_compute_summary_statistics_dna(dna_context_te2):
     )
 
     assert len(stats) == 42
-    assert stats["NSS_2_1"] == pytest.approx(4.6)
-    assert stats["HST_2_1.2"] == pytest.approx(0.007937197144693172)
-    assert stats["NH2_3_1.2"] == pytest.approx(10.4)
+    assert stats["NSS_2_1"] == pytest.approx(9.8)
+    assert stats["HST_2_1.2"] == pytest.approx(0.012362823348065015)
+    assert stats["NH2_3_1.2"] == pytest.approx(5.0)
 
 
 # -------------------------------------------------------------
@@ -327,9 +402,9 @@ def test_compute_summary_statistics_microsat(microsat_context_te2_xy):
     )
 
     assert len(summary_stats) == 16
-    assert summary_stats["FST_1_1.2"] == pytest.approx(0.009892808777285555)
-    assert summary_stats["LIK_1_1.2"] == pytest.approx(1.7041988379480857)
-    assert summary_stats["LIK_1_2.1"] == pytest.approx(1.6990066643524362)
+    assert summary_stats["FST_1_1.2"] == pytest.approx(0.007081532724996798)
+    assert summary_stats["LIK_1_1.2"] == pytest.approx(1.8115736105446298)
+    assert summary_stats["LIK_1_2.1"] == pytest.approx(1.7855891126163377)
 
 
 # -------------------------------------------------------------
