@@ -2419,6 +2419,7 @@ def compute_NAL(
     sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule NAL_i : pour chaque échantillon, la moyenne du nombre d'allèles distincts
     sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
@@ -2427,6 +2428,7 @@ def compute_NAL(
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+        length_by_sample_per_locus: Liste de dicts {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus, ou None si l'appelant n'en fournit pas.
 
     Returns:
         Dict {nom_echantillon: NAL}.
@@ -2439,8 +2441,15 @@ def compute_NAL(
     if layouts is None:
         layouts = [None] * len(tree_sequences)
 
-    for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_sample = _length_by_sample(ts, layout=layout)
+    if length_by_sample_per_locus is None:
+        length_by_sample_per_locus = [
+            _length_by_sample(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+
+    for _, length_by_sample in zip(
+        tree_sequences, length_by_sample_per_locus, strict=True
+    ):
         counts = count_alleles_per_sample(length_by_sample)
         for samp_name in counts:
             allele_counts[samp_name] += counts[samp_name]
@@ -2502,6 +2511,7 @@ def compute_HET(
     sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule HET_i : pour chaque échantillon, la moyenne de la diversité génétique
     sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci
@@ -2511,6 +2521,7 @@ def compute_HET(
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+        length_by_sample_per_locus: Liste de dicts {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus, ou None si l'appelant n'en fournit pas.
 
     Returns:
         Dict {nom_echantillon: HET}.
@@ -2520,8 +2531,14 @@ def compute_HET(
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
-    for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_sample = _length_by_sample(ts, layout=layout)
+    if length_by_sample_per_locus is None:
+        length_by_sample_per_locus = [
+            _length_by_sample(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    for _, length_by_sample in zip(
+        tree_sequences, length_by_sample_per_locus, strict=True
+    ):
         total_counts = total_genes_copies_per_sample(length_by_sample)
         for samp_name in total_counts:
             if total_counts[samp_name] > 1:
@@ -2602,6 +2619,7 @@ def compute_VAR(
     list_motif_sizes: list[int],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule VAR_i : pour chaque échantillon, la moyenne de la variance de la taille des allèles
     sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
@@ -2610,6 +2628,7 @@ def compute_VAR(
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         sample_names: Liste des noms d'échantillon.
         list_motif_sizes: Liste des tailles de motifs pour chaque locus.
+        length_by_sample_per_locus: Liste de dictionnaires {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
@@ -2620,10 +2639,14 @@ def compute_VAR(
     valid_loci_count = {samp_name: 0 for samp_name in sample_names}
     if layouts is None:
         layouts = [None] * len(tree_sequences)
-    for ts, motif_size, layout in zip(
-        tree_sequences, list_motif_sizes, layouts, strict=True
+    if length_by_sample_per_locus is None:
+        length_by_sample_per_locus = [
+            _length_by_sample(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    for _, motif_size, length_by_sample in zip(
+        tree_sequences, list_motif_sizes, length_by_sample_per_locus, strict=True
     ):
-        length_by_sample = _length_by_sample(ts, layout=layout)
         raw_sizes, raw_square_sizes, total_counts = _compute_VAR_constants(
             length_by_sample
         )
@@ -2686,6 +2709,7 @@ def compute_MGW(
     list_motif_sizes: list[int],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule MGW_i : pour chaque échantillon, la moyenne de l'indice M
     sur tous les loci du groupe passé en argument (un groupe = les
@@ -2705,10 +2729,14 @@ def compute_MGW(
 
     if layouts is None:
         layouts = [None] * len(tree_sequences)
-    for ts, motif_size, layout in zip(
-        tree_sequences, list_motif_sizes, layouts, strict=True
+    if length_by_sample_per_locus is None:
+        length_by_sample_per_locus = [
+            _length_by_sample(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    for _, motif_size, length_by_sample in zip(
+        tree_sequences, list_motif_sizes, length_by_sample_per_locus, strict=True
     ):
-        length_by_sample = _length_by_sample(ts, layout=layout)
         for samp_name, (num, den) in _compute_MGW_by_locus(
             length_by_sample, motif_size
         ).items():
@@ -2791,6 +2819,7 @@ def compute_N2P(
     sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule N2P_i_j : pour chaque paire d'échantillons, la moyenne du nombre d'allèles distincts
     sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
@@ -2799,6 +2828,7 @@ def compute_N2P(
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+        length_by_sample_per_locus: Liste de dictionnaires {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus.
 
     Returns:
         Dict {"i.j": N2P}.
@@ -2808,8 +2838,14 @@ def compute_N2P(
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
-    for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_sample = _length_by_sample(ts, layout=layout)
+    if length_by_sample_per_locus is None:
+        length_by_sample_per_locus = [
+            _length_by_sample(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    for _, length_by_sample in zip(
+        tree_sequences, length_by_sample_per_locus, strict=True
+    ):
         combined_alleles = _compute_N2P_for_one_locus(length_by_sample, sample_names)
         for key in combined_alleles:
             valid_loci.setdefault(key, 0)
@@ -2893,6 +2929,7 @@ def compute_H2P(
     sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule la diversité génétique H2P pour toutes les paires
     d'échantillons.
@@ -2901,6 +2938,7 @@ def compute_H2P(
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+        length_by_sample_per_locus: Liste de dictionnaires {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus.
 
     Returns:
         Dict {i.j: H2P} pour chaque paire d'échantillons.
@@ -2916,9 +2954,15 @@ def compute_H2P(
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
+    if length_by_sample_per_locus is None:
+        length_by_sample_per_locus = [
+            _length_by_sample(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
 
-    for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_sample = _length_by_sample(ts, layout=layout)
+    for _, length_by_sample in zip(
+        tree_sequences, length_by_sample_per_locus, strict=True
+    ):
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
             if (
@@ -2991,6 +3035,7 @@ def compute_V2P(
     list_motif_sizes: list[int],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule la variance de la taille des allèles entre deux échantillons.
 
@@ -2999,6 +3044,7 @@ def compute_V2P(
         sample_names: Liste des noms d'échantillon.
         list_motif_sizes: Liste des tailles de motifs pour chaque locus.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas
+        length_by_sample_per_locus: Liste de dictionnaires {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus.
 
     Returns:
         Dict {"i.j": V2P} pour chaque paire d'échantillons.
@@ -3014,10 +3060,14 @@ def compute_V2P(
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
-    for ts, motif_size, layout in zip(
-        tree_sequences, list_motif_sizes, layouts, strict=True
+    if length_by_sample_per_locus is None:
+        length_by_sample_per_locus = [
+            _length_by_sample(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    for _, motif_size, length_by_sample in zip(
+        tree_sequences, list_motif_sizes, length_by_sample_per_locus, strict=True
     ):
-        length_by_sample = _length_by_sample(ts, layout=layout)
         raw_sizes, raw_square_sizes, total_counts = _compute_VAR_constants(
             length_by_sample
         )
@@ -3082,6 +3132,7 @@ def compute_DAS(
     sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule la distance d'allèle partagée (DAS) entre toutes les paires
     d'échantillons.
@@ -3090,6 +3141,7 @@ def compute_DAS(
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+        length_by_sample_per_locus: Liste de dictionnaires {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus.
 
     Returns:
         Dict {i.j: DAS} pour chaque paire d'échantillons.
@@ -3105,8 +3157,14 @@ def compute_DAS(
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
-    for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_sample = _length_by_sample(ts, layout=layout)
+    if length_by_sample_per_locus is None:
+        length_by_sample_per_locus = [
+            _length_by_sample(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    for _, length_by_sample in zip(
+        tree_sequences, length_by_sample_per_locus, strict=True
+    ):
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
             identical_count, total_count = _compute_identical_pair_for_one_pair(
@@ -3212,6 +3270,7 @@ def compute_DM2(
     list_motif_sizes: list[int],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule DM2_i_j : (delta mu)^2 de Goldstein et al.
 
@@ -3231,6 +3290,7 @@ def compute_DM2(
         list_motif_sizes: Liste des tailles de motifs, un par locus,
             dans le même ordre que tree_sequences.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
+        length_by_sample_per_locus: Liste de dictionnaires {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus.
 
     Returns:
         Dict {"i.j": DM2}.
@@ -3247,10 +3307,14 @@ def compute_DM2(
     }
     if layouts is None:
         layouts = [None] * len(tree_sequences)
-    for ts, motif_size, layout in zip(
-        tree_sequences, list_motif_sizes, layouts, strict=True
+    if length_by_sample_per_locus is None:
+        length_by_sample_per_locus = [
+            _length_by_sample(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    for _, motif_size, length_by_sample in zip(
+        tree_sequences, list_motif_sizes, length_by_sample_per_locus, strict=True
     ):
-        length_by_sample = _length_by_sample(ts, layout=layout)
         raw_sizes, _, total_counts = _compute_VAR_constants(length_by_sample)
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
@@ -3421,6 +3485,7 @@ def compute_FST(
     sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule FST_i_j : pour chaque paire d'échantillons, la moyenne de FST sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
 
@@ -3428,6 +3493,7 @@ def compute_FST(
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         sample_names: Liste des noms d'échantillon.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
+        length_by_sample_per_locus: non utilisé pour l'instant ; accepté pour que le dispatch appelle toutes les statistiques de ce dict de la même façon.
 
     Returns:
         Dict {"i.j": FST}.
@@ -3629,6 +3695,7 @@ def compute_LIK(
     sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule LIK_i_j : indice de vraisemblance d'assignation (Rannala &
     Mountain 1997 ; Pascual et al. 2007), pour chaque paire ORDONNÉE de
@@ -3771,7 +3838,7 @@ def _prepare_triplet_for_admixture(
 
 
 def _vectorize_triplet(prepared_triplet):
-    # listes vides pour chaque groupe (haploÃ¯de : 2 listes, homozygote : 2, hÃ©tÃ©rozygote : 4)
+    # listes vides pour chaque groupe (haploÃ¯de : 2 listes, homozygote : 2, hétérozygote : 4)
     f1_haploid, f2_haploid = [], []
     f1_homozygous, f2_homozygous = [], []
     f1_heterozygous_x, f2_heterozygous_x = [], []
@@ -4241,10 +4308,19 @@ def compute_all_statistics_microsat(
             if layouts_by_locus is None
             else [layouts_by_locus[name] for name in locus_names]
         )
-
+        layouts_for_lengths = (
+            layouts if layouts is not None else [None] * len(tree_sequences)
+        )
+        length_by_sample_per_locus = [
+            _length_by_sample(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts_for_lengths, strict=True)
+        ]
         for stat_name, stat_fn in _MICROSAT_PER_SAMPLE_WITHOUT_MOTIF_SIZE.items():
             for samp_name, value in stat_fn(
-                tree_sequences, sample_names, layouts=layouts
+                tree_sequences,
+                sample_names,
+                layouts=layouts,
+                length_by_sample_per_locus=length_by_sample_per_locus,
             ).items():
                 samp_index = sample_names.index(samp_name) + 1
                 key = (
@@ -4255,7 +4331,10 @@ def compute_all_statistics_microsat(
                 results[key] = value
         for stat_name, stat_fn in _MICROSAT_PAIRWISE_WITHOUT_MOTIF_SIZE.items():
             for stat_index, value in stat_fn(
-                tree_sequences, sample_names, layouts=layouts
+                tree_sequences,
+                sample_names,
+                layouts=layouts,
+                length_by_sample_per_locus=length_by_sample_per_locus,
             ).items():
                 key = (
                     f"{stat_name}_{group_number}_{stat_index}"
@@ -4267,7 +4346,11 @@ def compute_all_statistics_microsat(
         motif_sizes = [motif_sizes_by_locus[name] for name in locus_names]
         for stat_name, stat_fn in _MICROSAT_PER_SAMPLE_WITH_MOTIF_SIZE.items():
             for samp_name, value in stat_fn(
-                tree_sequences, sample_names, motif_sizes, layouts=layouts
+                tree_sequences,
+                sample_names,
+                motif_sizes,
+                layouts=layouts,
+                length_by_sample_per_locus=length_by_sample_per_locus,
             ).items():
                 samp_index = sample_names.index(samp_name) + 1
                 key = (
@@ -4278,7 +4361,11 @@ def compute_all_statistics_microsat(
                 results[key] = value
         for stat_name, stat_fn in _MICROSAT_PAIRWISE_WITH_MOTIF_SIZE.items():
             for stat_index, value in stat_fn(
-                tree_sequences, sample_names, motif_sizes, layouts=layouts
+                tree_sequences,
+                sample_names,
+                motif_sizes,
+                layouts=layouts,
+                length_by_sample_per_locus=length_by_sample_per_locus,
             ).items():
                 key = (
                     f"{stat_name}_{group_number}_{stat_index}"
