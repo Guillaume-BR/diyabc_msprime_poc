@@ -2820,6 +2820,8 @@ def compute_N2P(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
+    genotype_by_sample_per_locus: list[dict[str, list[tuple[int] | tuple[int, int]]]]
+    | None = None,
 ) -> dict[str, float]:
     """Calcule N2P_i_j : pour chaque paire d'échantillons, la moyenne du nombre d'allèles distincts
     sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
@@ -2829,6 +2831,7 @@ def compute_N2P(
         sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
         length_by_sample_per_locus: Liste de dictionnaires {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus.
+        genotype_by_sample_per_locus: non utilisé mais pour conserver la compatibilité avec le dispatch.
 
     Returns:
         Dict {"i.j": N2P}.
@@ -2841,6 +2844,11 @@ def compute_N2P(
     if length_by_sample_per_locus is None:
         length_by_sample_per_locus = [
             _length_by_sample(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    if genotype_by_sample_per_locus is None:
+        genotype_by_sample_per_locus = [
+            _genotypes_by_sample_and_individuals(ts, layout=layout)
             for ts, layout in zip(tree_sequences, layouts, strict=True)
         ]
     for _, length_by_sample in zip(
@@ -2930,6 +2938,8 @@ def compute_H2P(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
+    genotype_by_sample_per_locus: list[dict[str, list[tuple[int] | tuple[int, int]]]]
+    | None = None,
 ) -> dict[str, float]:
     """Calcule la diversité génétique H2P pour toutes les paires
     d'échantillons.
@@ -2939,6 +2949,7 @@ def compute_H2P(
         sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
         length_by_sample_per_locus: Liste de dictionnaires {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus.
+        genotype_by_sample_per_locus: non utilisé mais pour conserver la compatibilité avec le dispatch.
 
     Returns:
         Dict {i.j: H2P} pour chaque paire d'échantillons.
@@ -3133,6 +3144,8 @@ def compute_DAS(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
+    genotype_by_sample_per_locus: list[dict[str, list[tuple[int] | tuple[int, int]]]]
+    | None = None,
 ) -> dict[str, float]:
     """Calcule la distance d'allèle partagée (DAS) entre toutes les paires
     d'échantillons.
@@ -3142,7 +3155,7 @@ def compute_DAS(
         sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
         length_by_sample_per_locus: Liste de dictionnaires {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus.
-
+        genotype_by_sample_per_locus: non utilisé mais pour conserver la compatibilité avec le dispatch.
     Returns:
         Dict {i.j: DAS} pour chaque paire d'échantillons.
     """
@@ -3486,6 +3499,8 @@ def compute_FST(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
+    genotype_by_sample_per_locus: list[dict[str, list[tuple[int] | tuple[int, int]]]]
+    | None = None,
 ) -> dict[str, float]:
     """Calcule FST_i_j : pour chaque paire d'échantillons, la moyenne de FST sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
 
@@ -3494,7 +3509,7 @@ def compute_FST(
         sample_names: Liste des noms d'échantillon.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         length_by_sample_per_locus: non utilisé pour l'instant ; accepté pour que le dispatch appelle toutes les statistiques de ce dict de la même façon.
-
+        genotype_by_sample_per_locus: non utilisé pour l'instant ; accepté pour que le dispatch appelle toutes les statistiques de ce dict de la même façon.
     Returns:
         Dict {"i.j": FST}.
     """
@@ -3696,6 +3711,7 @@ def compute_LIK(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
+    genotypes_by_sample_per_locus: list[dict[str, list[tuple[int, ...]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule LIK_i_j : indice de vraisemblance d'assignation (Rannala &
     Mountain 1997 ; Pascual et al. 2007), pour chaque paire ORDONNÉE de
@@ -3711,6 +3727,8 @@ def compute_LIK(
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         sample_names: Liste des noms d'échantillon.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
+        length_by_sample_per_locus: Liste de dicts {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus, ou None si l'appelant n'en fournit pas.
+        genotypes_by_sample_per_locus: Liste de dicts {nom_echantillon: [(génome, ...), ...]} pour chaque locus, ou None si l'appelant n'en fournit pas.
 
     Returns:
         Dict {"i.j": LIK}, une entrée par paire ORDONNÉE d'échantillons.
@@ -3726,9 +3744,22 @@ def compute_LIK(
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
-    for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_sample = _length_by_sample(ts, layout=layout)
-        genotypes_by_sample = _genotypes_by_sample_and_individuals(ts, layout=layout)
+    if length_by_sample_per_locus is None:
+        length_by_sample_per_locus = [
+            _length_by_sample(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    if genotypes_by_sample_per_locus is None:
+        genotypes_by_sample_per_locus = [
+            _genotypes_by_sample_and_individuals(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    for _, length_by_sample, genotypes_by_sample in zip(
+        tree_sequences,
+        length_by_sample_per_locus,
+        genotypes_by_sample_per_locus,
+        strict=True,
+    ):
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
             samp_i, samp_j = sample_names[i], sample_names[j]
@@ -3752,13 +3783,16 @@ def compute_LIK(
 def _extract_mutual_data(
     tree_sequences: list[tskit.TreeSequence],
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
+    genotypes_by_sample_per_locus: list[dict[str, list[tuple[int, ...]]]] | None = None,
 ) -> list[tuple[dict[str, list[tuple[int, int]]], dict[str, list[tuple[int, ...]]]]]:
     """Prépare les données nécessaires pour le calcul de la log-vraisemblance d'admixture.
 
     Args:
         tree_sequences: Liste de TreeSequences (un arbre par locus).
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
-
+        length_by_sample_per_locus: Liste de dicts {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus, ou None si l'appelant n'en fournit pas.
+        genotypes_by_sample_per_locus: Liste de dicts {nom_echantillon: [(génome, ...), ...]} pour chaque locus, ou None si l'appelant n'en fournit pas.
     Returns:
         Une liste de tuples pour chaque locus, contenant :
         - dict des longueurs par échantillon,
@@ -3767,9 +3801,22 @@ def _extract_mutual_data(
     mutual_data = []
     if layouts is None:
         layouts = [None] * len(tree_sequences)
-    for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_sample = _length_by_sample(ts, layout=layout)
-        genotypes_by_sample = _genotypes_by_sample_and_individuals(ts, layout=layout)
+    if length_by_sample_per_locus is None:
+        length_by_sample_per_locus = [
+            _length_by_sample(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    if genotypes_by_sample_per_locus is None:
+        genotypes_by_sample_per_locus = [
+            _genotypes_by_sample_and_individuals(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    for _, length_by_sample, genotypes_by_sample in zip(
+        tree_sequences,
+        length_by_sample_per_locus,
+        genotypes_by_sample_per_locus,
+        strict=True,
+    ):
         mutual_data.append((length_by_sample, genotypes_by_sample))
 
     return mutual_data
@@ -4008,6 +4055,8 @@ def compute_AML_microsat(
     seed: int = 0,
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
+    genotypes_by_sample_per_locus: list[dict[str, list[tuple[int, ...]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour
     chaque triplet d'échantillons.
@@ -4017,13 +4066,19 @@ def compute_AML_microsat(
         sample_names: Liste des noms d'échantillon.
         seed: Seed pour la génération aléatoire (pour les cas où AML ne peut pas être calculé).
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
+        length_by_sample_per_locus: Liste de dicts {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus, ou None si l'appelant n'en fournit pas.
 
     Returns:
         Dict {"i.j.k": AML} pour chaque triplet d'échantillons.
     """
     n_sample = len(sample_names)
     results = {}
-    mutual_data = _extract_mutual_data(tree_sequences, layouts=layouts)
+    mutual_data = _extract_mutual_data(
+        tree_sequences,
+        layouts=layouts,
+        length_by_sample_per_locus=length_by_sample_per_locus,
+        genotypes_by_sample_per_locus=genotypes_by_sample_per_locus,
+    )
     for i, t in enumerate(_half_arrangements(n_sample, 3)):
         h, p1, p2 = t[0], t[1], t[2]
         key = f"{h + 1}.{p1 + 1}.{p2 + 1}"
@@ -4315,6 +4370,11 @@ def compute_all_statistics_microsat(
             _length_by_sample(ts, layout=layout)
             for ts, layout in zip(tree_sequences, layouts_for_lengths, strict=True)
         ]
+
+        genotypes_by_sample_per_locus = [
+            _genotypes_by_sample_and_individuals(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts_for_lengths, strict=True)
+        ]
         for stat_name, stat_fn in _MICROSAT_PER_SAMPLE_WITHOUT_MOTIF_SIZE.items():
             for samp_name, value in stat_fn(
                 tree_sequences,
@@ -4380,6 +4440,8 @@ def compute_all_statistics_microsat(
                 sample_names,
                 _locus_seed(seed, _GROUP_STAT_SEED_OFFSET, int(group_number)),
                 layouts=layouts,
+                length_by_sample_per_locus=length_by_sample_per_locus,
+                genotypes_by_sample_per_locus=genotypes_by_sample_per_locus,
             ).items():  # pour éviter d'avoir la même graine pour différents groupes
                 key = (
                     f"{stat_name}_{group_number}_{stat_index}"
