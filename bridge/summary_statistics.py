@@ -2846,11 +2846,6 @@ def compute_N2P(
             _length_by_sample(ts, layout=layout)
             for ts, layout in zip(tree_sequences, layouts, strict=True)
         ]
-    if genotype_by_sample_per_locus is None:
-        genotype_by_sample_per_locus = [
-            _genotypes_by_sample_and_individuals(ts, layout=layout)
-            for ts, layout in zip(tree_sequences, layouts, strict=True)
-        ]
     for _, length_by_sample in zip(
         tree_sequences, length_by_sample_per_locus, strict=True
     ):
@@ -4381,6 +4376,7 @@ def compute_all_statistics_microsat(
                 sample_names,
                 layouts=layouts,
                 length_by_sample_per_locus=length_by_sample_per_locus,
+                genotypes_by_sample_per_locus=genotypes_by_sample_per_locus,
             ).items():
                 samp_index = sample_names.index(samp_name) + 1
                 key = (
