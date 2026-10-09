@@ -2796,6 +2796,101 @@ def build_transition_matrix_microsat_with_sni(
     )
 
 
+def _gsm_matrix_numpy(m, hi, epsilon=1e-16, lo=0):
+    """Construit la matrice de transition GSM (stepwise) pour un motif donné.
+
+    Args:
+        m: Paramètre de mutation du modèle GSM.
+        hi: Indice maximum de la grille locale (nombre d'états - 1).
+
+    Returns:
+        Matrice de transition GSM (np.ndarray).
+    """
+    i = np.arange(hi + 1)[:, None]
+    j = np.arange(hi + 1)[None, :]
+    d = np.abs(i - j)
+    num = m * (1 - m) ** (d - 1)
+    denom_up = 1 - (1 - m) ** (hi - i)
+    denom_down = 1 - (1 - m) ** (i - lo)
+    denom = np.where(i < j, denom_up, denom_down)
+    # pour éviter les warnings de division par zéro, on met à 0 les éléments de la diagonale
+    with np.errstate(divide="ignore", invalid="ignore"):
+        gamma = np.where(i == j, 0, num / denom)
+    rate = 0.5 * ((1 - epsilon) * gamma + epsilon * (d == 1))
+    np.fill_diagonal(rate, 0)  # pas de mutation vers soi-même
+
+    # division par le max des sommes des lignes pour normaliser la matrice
+    row_sums = rate.sum(axis=1)
+    max_row_sum = np.max(row_sums)
+    q = rate / max_row_sum
+
+    np.fill_diagonal(q, np.fmax(0.0, 1.0 - q.sum(axis=1)))
+    return q
+
+
+def build_transition_matrix_microsat_with_sni_numpy(
+    kmin: int,
+    kmax: int,
+    motif_size: int,
+    Pgeom: float,
+    sni_rate: float,
+    mut_rate: float,
+    epsilon: float = 1e-16,
+) -> msprime.MatrixMutationModel:
+    """Construit la matrice de transition d'un locus microsatellite avec SNI.
+
+    Args:
+        kmin: Nombre minimum d'allèles du locus.
+        kmax: Nombre maximum d'allèles du locus.
+        motif_size: Taille du motif répétitif du microsatellite.
+        Pgeom: Paramètre de mutation du modèle GSM.
+        sni_rate: Taux de mutation SNI.
+        mut_rate: Taux de mutation global.
+        epsilon: Paramètre de précision pour éviter les valeurs nulles.
+
+    Returns:
+        Matrice de transition combinée GSM+SNI (np.ndarray).
+    """
+    # construction de la matrice de transition GSM+SNI sur la grille dense
+    n_alleles = kmax - kmin + 1
+    transition_matrix = np.zeros((n_alleles, n_alleles))
+
+    # calcul des matrices GSM pour chaque décalage de motif
+    matrices = {}
+    for i in range(motif_size):
+        n_plus_i = (kmax - (kmin + i)) // motif_size
+        hi = n_plus_i
+        matrices[i] = _gsm_matrix_numpy(
+            m=max(epsilon, min(1 - Pgeom, 1 - epsilon)), hi=hi, epsilon=epsilon, lo=0
+        )
+
+    for i in range(n_alleles):
+        position = kmin + i
+        sni_row = _sni_row_on_dense_grid(position, kmin, kmax)
+        r = (position - kmin) % motif_size
+        local_distribution = _distribution_from_position(
+            position, matrices[r], kmin, motif_size
+        )
+        gsm_row = _place_gsm_row_on_dense_grid(
+            local_distribution, position, kmin, kmax, motif_size
+        )
+        transition_matrix[i] = _mix_sni_gsm_rows(sni_row, gsm_row, sni_rate, mut_rate)
+
+    # construction des noms d'allèles pour la grille dense
+    alleles = [str(kmin + i) for i in range(n_alleles)]
+
+    # construction de la route distribution
+    root = kmin + (kmax - kmin) // 2
+    root_distribution = np.zeros(n_alleles)
+    root_distribution[root - kmin] = 1.0  # pour coller avec la position de root
+
+    return msprime.MatrixMutationModel(
+        alleles=alleles,
+        root_distribution=root_distribution,
+        transition_matrix=transition_matrix,
+    )
+
+
 # fonction obsolète, conservée pour compatibilité avec l'ancienne interface de simulation microsatellite
 def build_transition_matrix_microsat(
     kmin: int, kmax: int, motif_size: int, Pgeom: float, epsilon: float = 1e-16
@@ -2928,13 +3023,15 @@ def build_matrix_microsat_per_locus(
         if locus.ms_or_seq == "M":
             mut_rate, Pgeom, sni_rate = params_per_locus[locus.name]
             bounds = bounds_per_locus[locus.name]
-            matrix_per_locus[locus.name] = build_transition_matrix_microsat_with_sni(
-                kmin=bounds[0],
-                kmax=bounds[1],
-                motif_size=locus.motif_size,
-                Pgeom=Pgeom,
-                sni_rate=sni_rate,
-                mut_rate=mut_rate,
+            matrix_per_locus[locus.name] = (
+                build_transition_matrix_microsat_with_sni_numpy(
+                    kmin=bounds[0],
+                    kmax=bounds[1],
+                    motif_size=locus.motif_size,
+                    Pgeom=Pgeom,
+                    sni_rate=sni_rate,
+                    mut_rate=mut_rate,
+                )
             )
     return matrix_per_locus, params_per_locus, group_priors_values
 

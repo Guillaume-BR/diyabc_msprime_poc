@@ -3681,13 +3681,42 @@ def compute_LIK(
 # Stat AML - Maximum likelihood coefficient of admixture (Choisy et al. 2004)
 
 
-def _prepare_loci_for_admixture(
+def _extract_mutual_data(
     tree_sequences: list[tskit.TreeSequence],
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+) -> list[tuple[dict[str, list[tuple[int, int]]], dict[str, list[tuple[int, ...]]]]]:
+    """Prépare les données nécessaires pour le calcul de la log-vraisemblance d'admixture.
+
+    Args:
+        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
+
+    Returns:
+        Une liste de tuples pour chaque locus, contenant :
+        - dict des longueurs par échantillon,
+        - dict des génotypes par échantillon.
+    """
+    mutual_data = []
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    for ts, layout in zip(tree_sequences, layouts, strict=True):
+        length_by_sample = _length_by_sample(ts, layout=layout)
+        genotypes_by_sample = _genotypes_by_sample_and_individuals(ts, layout=layout)
+        mutual_data.append((length_by_sample, genotypes_by_sample))
+
+    return mutual_data
+
+
+def _prepare_triplet_for_admixture(
+    mutual_data: list[
+        tuple[
+            dict[str, list[tuple[int, int]]],
+            dict[str, list[tuple[int, int] | tuple[int]]],
+        ]
+    ],
     focal: str,
     parent1: str,
     parent2: str,
-    *,
-    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> list[tuple[dict[int, float], dict[int, float], list[tuple[int, ...]]]]:
     """Prépare les loci pour le calcul de la log-vraisemblance d'admixture.
     Pour chaque locus, on calcule les fréquences des allèles dans les
@@ -3695,11 +3724,11 @@ def _prepare_loci_for_admixture(
     l'échantillon focal.
 
     Args:
-        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        mutual_data: Liste de tuples contenant les données mutuelles pour chaque locus.
         focal: Nom de l'échantillon focal.
         parent1: Nom du premier échantillon parental.
         parent2: Nom de la deuxième échantillon parental.
-        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
+
 
     Returns:
         Une liste de tuples pour chaque locus, contenant :
@@ -3707,12 +3736,9 @@ def _prepare_loci_for_admixture(
         - dict des fréquences des allèles dans parent2,
         - liste des génotypes des individus de l'échantillon focal.
     """
-    prepared_loci = []
+    prepared_triplet = []
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
-    if layouts is None:
-        layouts = [None] * len(tree_sequences)
-    for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_sample = _length_by_sample(ts, layout=layout)
+    for length_by_sample, genotypes_by_sample in mutual_data:
         count_parent1 = {
             length: count
             for length, count in length_by_sample.get(parent1, [])
@@ -3736,12 +3762,11 @@ def _prepare_loci_for_admixture(
             if total_parent2 > 0
             else {}
         )
-        genotypes_by_sample = _genotypes_by_sample_and_individuals(ts, layout=layout)
         focal_genotypes = genotypes_by_sample.get(focal, [])
 
-        prepared_loci.append((f1, f2, focal_genotypes))
+        prepared_triplet.append((f1, f2, focal_genotypes))
 
-    return prepared_loci
+    return prepared_triplet
 
 
 def _log_likelihood_admixture(
@@ -3818,35 +3843,34 @@ def _pente_lik(
 
 
 def _compute_AML_one_triplet(
-    tree_sequences: list[tskit.TreeSequence],
+    mutual_data: list[
+        tuple[dict[str, list[tuple[int, int]]], dict[str, list[tuple[int, ...]]]]
+    ],
     focal: str,
     parent1: str,
     parent2: str,
     seed: int,
-    *,
-    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
 ) -> float:
     """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour
-    chaque triplet d'échantillons.
+    un triplet d'échantillons.
 
     Args:
-        tree_sequences: Liste de TreeSequences (un arbre par locus).
+        mutual_data: Liste de tuples contenant les données mutuelles pour chaque locus.
         focal: Nom de l'échantillon focal.
         parent1: Nom du premier échantillon parental.
         parent2: Nom de la deuxième échantillon parental.
         seed: Seed pour la génération aléatoire (pour les cas où AML ne peut pas être calculé).
-        layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         La statistique AML pour le triplet donné.
     """
-    prepared_loci = _prepare_loci_for_admixture(
-        tree_sequences, focal, parent1, parent2, layouts=layouts
+    prepared_triplet = _prepare_triplet_for_admixture(
+        mutual_data, focal, parent1, parent2
     )
 
     i1, i2 = 1, 998
-    lik1, p1 = _pente_lik(prepared_loci, i1)
-    lik2, p2 = _pente_lik(prepared_loci, i2)
+    lik1, p1 = _pente_lik(prepared_triplet, i1)
+    lik2, p2 = _pente_lik(prepared_triplet, i2)
 
     if abs(lik1) + abs(lik2) < 1e-10:
         rng = random.Random(seed)
@@ -3858,7 +3882,7 @@ def _compute_AML_one_triplet(
     else:
         while i2 - i1 > 1:
             i3 = (i1 + i2) // 2
-            lik3, p3 = _pente_lik(prepared_loci, i3)
+            lik3, p3 = _pente_lik(prepared_triplet, i3)
             if p1 * p3 < 0:
                 i2 = i3
                 p2 = p3
@@ -3895,6 +3919,7 @@ def compute_AML_microsat(
     """
     n_sample = len(sample_names)
     results = {}
+    mutual_data = _extract_mutual_data(tree_sequences, layouts=layouts)
     for i, t in enumerate(_half_arrangements(n_sample, 3)):
         h, p1, p2 = t[0], t[1], t[2]
         key = f"{h + 1}.{p1 + 1}.{p2 + 1}"
@@ -3904,12 +3929,11 @@ def compute_AML_microsat(
             sample_names[p2],
         )
         results[key] = _compute_AML_one_triplet(
-            tree_sequences,
+            mutual_data,
             focal,
             parent1,
             parent2,
             _locus_seed(seed, _LIKELIHOOD_SEED_OFFSET, i),
-            layouts=layouts,
         )
     return results
 

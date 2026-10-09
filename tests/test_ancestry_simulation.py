@@ -15,6 +15,7 @@ from conftest import (
 from bridge.ancestry_simulation import (
     _distribution_from_position,
     _group_prior_values_dna_from_columns,
+    _gsm_matrix_numpy,
     _place_gsm_row_on_dense_grid,
     _reindex_reads_by_msprime_name,
     _sni_row_on_dense_grid,
@@ -1517,6 +1518,17 @@ def test_build_transition_matrix_microsat_with_sni():
     extracted_matrix_with_sni = matrix_with_sni[ixgrid]
 
     assert np.allclose(matrix_without_sni, extracted_matrix_with_sni)
+
+
+def test_gsm_matrix_numpy():
+    """Vérifie que la fonction gsm_matrix_numpy retourne la bonne matrice de
+    transition pour les loci microsatellites."""
+    rng = np.random.default_rng(0)
+    for hi in (1, 2, 3, 5, 10, 19, 38):
+        for m in [*rng.uniform(1e-6, 1 - 1e-6, 20), 1e-16, 1 - 1e-16, 0.5]:
+            a = _gsm_matrix_numpy(m, hi)
+            b = msprime.TPM(p=1e-16, m=m, lo=0, hi=hi).transition_matrix
+            assert np.allclose(a, b, rtol=0, atol=1e-12), (hi, m)
 
 
 def test_build_transition_matrix_microsat():
