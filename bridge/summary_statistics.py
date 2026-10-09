@@ -43,6 +43,7 @@ from bridge.configuration import (
     _LIKELIHOOD_SEED_OFFSET,
     _locus_seed,
 )
+from bridge.header_dataclasses import FocalGenotypeFrequencies
 from bridge.loci_parser import parse_loci_description
 
 # ---------------------------------------------------------------------------
@@ -3769,10 +3770,59 @@ def _prepare_triplet_for_admixture(
     return prepared_triplet
 
 
+def _vectorize_triplet(prepared_triplet):
+    # listes vides pour chaque groupe (haploÃ¯de : 2 listes, homozygote : 2, hÃ©tÃ©rozygote : 4)
+    f1_haploid, f2_haploid = [], []
+    f1_homozygous, f2_homozygous = [], []
+    f1_heterozygous_x, f2_heterozygous_x = [], []
+    f1_heterozygous_y, f2_heterozygous_y = [], []
+    for f1, f2, focal_genotypes in prepared_triplet:
+        for genotype in focal_genotypes:
+            if len(genotype) == 1:  # haploid
+                f1_haploid.append(f1.get(genotype[0], 0))
+                f2_haploid.append(f2.get(genotype[0], 0))
+            elif (
+                len(genotype) == 2 and genotype[0] == genotype[1]
+            ):  # homozygous diploid
+                f1_homozygous.append(f1.get(genotype[0], 0))
+                f2_homozygous.append(f2.get(genotype[0], 0))
+            elif (
+                len(genotype) == 2 and genotype[0] != genotype[1]
+            ):  # heterozygous diploid
+                f1_heterozygous_x.append(f1.get(genotype[0], 0))
+                f2_heterozygous_x.append(f2.get(genotype[0], 0))
+                f1_heterozygous_y.append(f1.get(genotype[1], 0))
+                f2_heterozygous_y.append(f2.get(genotype[1], 0))
+            else:
+                raise ValueError(
+                    f"Problème avec le génotype de l'individu : {genotype}"
+                )
+    # conversion en np.array(dtype=float) et retour
+    f1_haploid = np.array(f1_haploid, dtype=float)
+    f2_haploid = np.array(f2_haploid, dtype=float)
+    f1_homozygous = np.array(f1_homozygous, dtype=float)
+    f2_homozygous = np.array(f2_homozygous, dtype=float)
+    f1_heterozygous_x = np.array(f1_heterozygous_x, dtype=float)
+    f2_heterozygous_x = np.array(f2_heterozygous_x, dtype=float)
+    f1_heterozygous_y = np.array(f1_heterozygous_y, dtype=float)
+    f2_heterozygous_y = np.array(f2_heterozygous_y, dtype=float)
+
+    focal_genotypes = FocalGenotypeFrequencies(
+        haploid_f1=f1_haploid,
+        haploid_f2=f2_haploid,
+        homozygous_f1=f1_homozygous,
+        homozygous_f2=f2_homozygous,
+        heterozygous_f1_x=f1_heterozygous_x,
+        heterozygous_f2_x=f2_heterozygous_x,
+        heterozygous_f1_y=f1_heterozygous_y,
+        heterozygous_f2_y=f2_heterozygous_y,
+    )
+
+    return focal_genotypes
+
+
 def _log_likelihood_admixture(
-    prepared_loci: list[
-        tuple[dict[int, float], dict[int, float], list[tuple[int, ...]]]
-    ],
+    data: FocalGenotypeFrequencies,
     a: float,
 ) -> float:
     """Un seul float, la log-vraisemblance totale (somme sur tous les loci du
@@ -3780,63 +3830,48 @@ def _log_likelihood_admixture(
     C++ pour UN a donné, pas encore le couple (li0, delta).
 
     Args:
-        prepared_loci: Liste de tuples contenant les données préparées pour chaque locus.
+        data: dataclass FocalGenotypeFrequencies contenant les fréquences des allèles pour les individus de l'échantillon focal.
         a: Valeur du coefficient d'admixture.
 
     Returns:
         La valeur de la statistique.
     """
     lik = 0.0
-    for (
-        f1,
-        f2,
-        focal_genotypes,
-    ) in (
-        prepared_loci
-    ):  # Ici, on calculerait la log-vraisemblance pour ce locus et ce a
-        # en utilisant les fréquences de parent1 et parent2, pondérées par a.
-        # La somme sur tous les individus de focal serait effectuée ici.
-        # Le code exact dépend de la formule de vraisemblance spécifique à l'admixture.
-        for genotype in focal_genotypes:
-            if len(genotype) == 1:  # haploid
-                freq0 = a * f1.get(genotype[0], 0) + (1 - a) * f2.get(genotype[0], 0)
-                lik += np.log(freq0) if freq0 > 0 else 0
-            elif (
-                len(genotype) == 2 and genotype[0] == genotype[1]
-            ):  # homozygous diploid
-                freq0 = a * f1.get(genotype[0], 0) + (1 - a) * f2.get(genotype[0], 0)
-                lik += np.log(freq0**2) if freq0 > 0 else 0
-            elif (
-                len(genotype) == 2 and genotype[0] != genotype[1]
-            ):  # heterozygous diploid
-                freq0 = a * f1.get(genotype[0], 0) + (1 - a) * f2.get(genotype[0], 0)
-                freq1 = a * f1.get(genotype[1], 0) + (1 - a) * f2.get(genotype[1], 0)
-                lik += np.log(2 * freq0 * freq1) if freq0 * freq1 > 0 else 0
-            else:
-                raise ValueError(
-                    f"Problème avec le génotype de l'individu : {genotype}"
-                )
 
-    return lik
+    # haploïd
+    freq = a * data.haploid_f1 + (1 - a) * data.haploid_f2
+    mask = freq > 0
+    lik += np.log(freq[mask]).sum()
+
+    # homozygous diploid
+    freq = a * data.homozygous_f1 + (1 - a) * data.homozygous_f2
+    mask = freq > 0
+    lik += np.log(freq[mask] ** 2).sum()
+
+    # heterozygous diploid
+    freq_x = a * data.heterozygous_f1_x + (1 - a) * data.heterozygous_f2_x
+    freq_y = a * data.heterozygous_f1_y + (1 - a) * data.heterozygous_f2_y
+    mask = freq_x * freq_y > 0
+    lik += np.log(2 * freq_x[mask] * freq_y[mask]).sum()
+
+    return float(lik)
 
 
 def _pente_lik(
-    prepared_loci: list[
-        tuple[dict[int, float], dict[int, float], list[tuple[int, ...]]]
-    ],
+    data: FocalGenotypeFrequencies,
     i0: int,
 ) -> tuple[float, float]:
     """
     Sortie : (li0, delta) où li0 = _log_likelihood_admixture_mixture(..., a=0.001*i0) et delta = li(a=0.001*(i0+1)) - li0  :
     exactement le (li[0], li[1]-li[0]) que pente_lik retourne en C++.
     Args:
-        prepared_loci: Liste de tuples contenant les données préparées pour chaque locus.
+        data: Dataclass FocalGenotypeFrequencies contenant les fréquences des allèles pour les individus de l'échantillon focal.
         i0: Indice du point d'évaluation pour le calcul de la pente.
     Returns:
         La valeur de la statistique et la pente.
     """
-    lik_a = _log_likelihood_admixture(prepared_loci, a=0.001 * i0)
-    lik_a_plus = _log_likelihood_admixture(prepared_loci, a=0.001 * (i0 + 1))
+    lik_a = _log_likelihood_admixture(data, a=0.001 * i0)
+    lik_a_plus = _log_likelihood_admixture(data, a=0.001 * (i0 + 1))
     delta = lik_a_plus - lik_a
 
     return lik_a, delta
@@ -3868,9 +3903,11 @@ def _compute_AML_one_triplet(
         mutual_data, focal, parent1, parent2
     )
 
+    data = _vectorize_triplet(prepared_triplet)
+
     i1, i2 = 1, 998
-    lik1, p1 = _pente_lik(prepared_triplet, i1)
-    lik2, p2 = _pente_lik(prepared_triplet, i2)
+    lik1, p1 = _pente_lik(data, i1)
+    lik2, p2 = _pente_lik(data, i2)
 
     if abs(lik1) + abs(lik2) < 1e-10:
         rng = random.Random(seed)
@@ -3882,7 +3919,7 @@ def _compute_AML_one_triplet(
     else:
         while i2 - i1 > 1:
             i3 = (i1 + i2) // 2
-            lik3, p3 = _pente_lik(prepared_triplet, i3)
+            lik3, p3 = _pente_lik(data, i3)
             if p1 * p3 < 0:
                 i2 = i3
                 p2 = p3

@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
+
 
 @dataclass
 class MergeEvent:
@@ -228,3 +230,33 @@ class DnaReplayContext:
     frequencies_per_locus: dict[str, dict[str, float]]
     samples_default: dict[str, int]
     sex_ratio: float
+
+
+@dataclass
+class FocalGenotypeFrequencies:
+    """Contient les informations nécessaires pour calculer l'AML pour un triplet
+    de populations.
+
+    Attributes:
+        haploid_f1: Liste des fréquences haploïdes pour la population 1.
+        haploid_f2: Liste des fréquences haploïdes pour la population 2.
+        homozygous_f1: Liste des fréquences homozygotes pour la population 1.
+        homozygous_f2: Liste des fréquences homozygotes pour la population 2.
+        heterozygous_f1_x: Liste des fréquences hétérozygotes (allèle x) pour la
+            population 1.
+        heterozygous_f2_x: Liste des fréquences hétérozygotes (allèle x) pour la
+            population 2.
+        heterozygous_f1_y: Liste des fréquences hétérozygotes (allèle y) pour la
+            population 1.
+        heterozygous_f2_y: Liste des fréquences hétérozygotes (allèle y) pour la
+            population 2.
+    """
+
+    haploid_f1: np.ndarray
+    haploid_f2: np.ndarray
+    homozygous_f1: np.ndarray
+    homozygous_f2: np.ndarray
+    heterozygous_f1_x: np.ndarray
+    heterozygous_f2_x: np.ndarray
+    heterozygous_f1_y: np.ndarray
+    heterozygous_f2_y: np.ndarray
