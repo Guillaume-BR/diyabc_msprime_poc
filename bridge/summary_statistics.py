@@ -2820,8 +2820,7 @@ def compute_N2P(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
-    genotype_by_sample_per_locus: list[dict[str, list[tuple[int] | tuple[int, int]]]]
-    | None = None,
+    genotypes_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule N2P_i_j : pour chaque paire d'échantillons, la moyenne du nombre d'allèles distincts
     sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
@@ -2831,7 +2830,7 @@ def compute_N2P(
         sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
         length_by_sample_per_locus: Liste de dictionnaires {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus.
-        genotype_by_sample_per_locus: non utilisé mais pour conserver la compatibilité avec le dispatch.
+        genotypes_by_sample_per_locus: non utilisé mais pour conserver la compatibilité avec le dispatch.
 
     Returns:
         Dict {"i.j": N2P}.
@@ -2933,7 +2932,7 @@ def compute_H2P(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
-    genotype_by_sample_per_locus: list[dict[str, list[tuple[int] | tuple[int, int]]]]
+    genotypes_by_sample_per_locus: list[dict[str, list[tuple[int] | tuple[int, int]]]]
     | None = None,
 ) -> dict[str, float]:
     """Calcule la diversité génétique H2P pour toutes les paires
@@ -2944,7 +2943,7 @@ def compute_H2P(
         sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
         length_by_sample_per_locus: Liste de dictionnaires {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus.
-        genotype_by_sample_per_locus: non utilisé mais pour conserver la compatibilité avec le dispatch.
+        genotypes_by_sample_per_locus: non utilisé mais pour conserver la compatibilité avec le dispatch.
 
     Returns:
         Dict {i.j: H2P} pour chaque paire d'échantillons.
@@ -3139,7 +3138,7 @@ def compute_DAS(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
-    genotype_by_sample_per_locus: list[dict[str, list[tuple[int] | tuple[int, int]]]]
+    genotypes_by_sample_per_locus: list[dict[str, list[tuple[int] | tuple[int, int]]]]
     | None = None,
 ) -> dict[str, float]:
     """Calcule la distance d'allèle partagée (DAS) entre toutes les paires
@@ -3150,7 +3149,7 @@ def compute_DAS(
         sample_names: Liste des noms d'échantillon.
         layouts: Un layout par locus, ou None partout si l'appelant n'en fournit pas.
         length_by_sample_per_locus: Liste de dictionnaires {nom_echantillon: [(longueur, nb_sequence), ...]} pour chaque locus.
-        genotype_by_sample_per_locus: non utilisé mais pour conserver la compatibilité avec le dispatch.
+        genotypes_by_sample_per_locus: non utilisé mais pour conserver la compatibilité avec le dispatch.
     Returns:
         Dict {i.j: DAS} pour chaque paire d'échantillons.
     """
@@ -3494,7 +3493,7 @@ def compute_FST(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
-    genotype_by_sample_per_locus: list[dict[str, list[tuple[int] | tuple[int, int]]]]
+    genotypes_by_sample_per_locus: list[dict[str, list[tuple[int] | tuple[int, int]]]]
     | None = None,
 ) -> dict[str, float]:
     """Calcule FST_i_j : pour chaque paire d'échantillons, la moyenne de FST sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
@@ -3504,7 +3503,7 @@ def compute_FST(
         sample_names: Liste des noms d'échantillon.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         length_by_sample_per_locus: non utilisé pour l'instant ; accepté pour que le dispatch appelle toutes les statistiques de ce dict de la même façon.
-        genotype_by_sample_per_locus: non utilisé pour l'instant ; accepté pour que le dispatch appelle toutes les statistiques de ce dict de la même façon.
+        genotypes_by_sample_per_locus: non utilisé pour l'instant ; accepté pour que le dispatch appelle toutes les statistiques de ce dict de la même façon.
     Returns:
         Dict {"i.j": FST}.
     """
@@ -4376,7 +4375,6 @@ def compute_all_statistics_microsat(
                 sample_names,
                 layouts=layouts,
                 length_by_sample_per_locus=length_by_sample_per_locus,
-                genotypes_by_sample_per_locus=genotypes_by_sample_per_locus,
             ).items():
                 samp_index = sample_names.index(samp_name) + 1
                 key = (
@@ -4391,6 +4389,7 @@ def compute_all_statistics_microsat(
                 sample_names,
                 layouts=layouts,
                 length_by_sample_per_locus=length_by_sample_per_locus,
+                genotypes_by_sample_per_locus=genotypes_by_sample_per_locus,
             ).items():
                 key = (
                     f"{stat_name}_{group_number}_{stat_index}"
