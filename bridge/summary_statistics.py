@@ -3347,6 +3347,47 @@ def compute_DM2(
 
 
 # FST : between two samples (Weir and Cockerham 1984)
+def _individuals_by_sample(
+    tree_sequence: tskit.TreeSequence,
+    *,
+    layout: list[tuple[str, np.ndarray]] | None = None,
+) -> dict[str, np.ndarray]:
+    """Retourne, pour chaque échantillon, les indices des individus qui le composent.
+
+    Remplace la recherche `next(pop for pop, nodes in layout if premier_noeud in nodes)`
+    faite individu par individu : un individu appartient à l'échantillon dont le
+    layout contient son premier nœud. Les indices sont dans l'ordre croissant, ce
+    qui est l'ordre d'itération de `tree_sequence.individuals()`.
+
+    Args:
+        tree_sequence: Un objet TreeSequence de tskit.
+        layout: [(nom_echantillon, np.ndarray[indices_de_noeuds]), ...] : si fourni,
+            remplace le découpage par population, utilisé par le chemin sériel où
+            un échantillon n'est plus sa propre population. Par défaut, le layout
+            par population.
+
+    Returns:
+        Dict {nom_echantillon: np.ndarray des indices d'individus}, dans l'ordre
+        du layout.
+
+    Raises:
+        ValueError: Si un individu n'appartient à aucun échantillon du layout
+            (ou à plusieurs).
+    """
+    if layout is None:
+        layout = compute_population_layout(tree_sequence)
+    first_nodes = tree_sequence.individuals_nodes[:, 0]
+    individuals_by_sample = {
+        name: np.flatnonzero(np.isin(first_nodes, nodes)) for name, nodes in layout
+    }
+    n_assigned = sum(len(indices) for indices in individuals_by_sample.values())
+    if n_assigned != tree_sequence.num_individuals:
+        raise ValueError(
+            f"{n_assigned} individu(s) attribué(s) sur {tree_sequence.num_individuals} : "
+            "certains n'appartiennent à aucun échantillon du layout, "
+            "ou appartiennent à plusieurs."
+        )
+    return individuals_by_sample
 
 
 def _length_by_sample_and_individuals(
@@ -3354,42 +3395,48 @@ def _length_by_sample_and_individuals(
     *,
     layout: list[tuple[str, np.ndarray]] | None = None,
 ) -> dict[str, list[tuple[int, int]]]:
-    """Calcule la longueur des séquences pour chaque individupar échantillon.
-    La ploidie de l'individu est détectée par le nombre de noeud dans l'arbre
-    via tree_sequence.individuals(). On retournera à chaque fois un tuple
-    (longueur_1,longueur_2) pour chaque individu et longueur_1 sera répétée si
+    """Calcule la longueur des séquences de chaque individu, par échantillon.
+
+    La ploïdie de l'individu est détectée par son nombre de nœuds
+    (`tree_sequence.individuals_nodes`, complété par -1 pour un individu qui
+    a moins de nœuds que le maximum). On retourne à chaque fois un tuple
+    (longueur_1, longueur_2) pour chaque individu, et longueur_1 est répétée si
     l'individu est haploïde.
 
     Args:
         tree_sequence: Un objet TreeSequence de tskit.
-        layout: [(nom_echantillon, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par échantillon à utilisé par le chemin sériel, où un échantillon n'est plus sa propre échantillon
+        layout: [(nom_echantillon, np.ndarray[indices_de_noeuds]), ...] : si fourni,
+            remplace le découpage par population, utilisé par le chemin sériel où
+            un échantillon n'est plus sa propre population.
 
     Returns:
         Dict {nom_echantillon: [(longueur_1, longueur_2), ...]}.
     """
     if layout is None:
         layout = compute_population_layout(tree_sequence)
-    length_by_sample = {pop: [] for pop, _ in layout}
+    individuals_by_sample = _individuals_by_sample(tree_sequence, layout=layout)
+
+    # Locus monomorphe : un (0, 0) par individu, quelle que soit sa ploïdie.
     if tree_sequence.num_sites == 0:
-        for ind in tree_sequence.individuals():
-            nodes = ind.nodes
-            échantillon = next(pop for pop, inds in layout if nodes[0] in inds)
-            length_by_sample[échantillon].append((0, 0))
-        return length_by_sample
+        return {
+            name: [(0, 0)] * len(indices)
+            for name, indices in individuals_by_sample.items()
+        }
 
     variant = next(tree_sequence.variants())
     tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
-    for ind in tree_sequence.individuals():
-        nodes = ind.nodes
-        échantillon = next(pop for pop, inds in layout if nodes[0] in inds)
-        if len(nodes) == 1:
-            length_by_sample[échantillon].append(
-                (int(tailles[nodes[0]]), int(tailles[nodes[0]]))
-            )
+    individuals_nodes = tree_sequence.individuals_nodes
+    length_by_sample = {}
+    for name, indices in individuals_by_sample.items():
+        nodes = individuals_nodes[indices]
+        first = tailles[nodes[:, 0]]
+        if nodes.shape[1] == 1:
+            second = first
         else:
-            length_by_sample[échantillon].append(
-                (int(tailles[nodes[0]]), int(tailles[nodes[1]]))
-            )
+            # -1 marque l'absence de second nœud (individu haploïde) : on répète
+            # alors la première longueur. tailles[-1] ne lève rien, d'où le where.
+            second = np.where(nodes[:, 1] == -1, first, tailles[nodes[:, 1]])
+        length_by_sample[name] = list(zip(first.tolist(), second.tolist(), strict=True))
 
     return length_by_sample
 
