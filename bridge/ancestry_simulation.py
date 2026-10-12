@@ -491,6 +491,7 @@ def simulate_independent_loci(
         num_replicates=num_loci,
         random_seed=seed,
         ploidy=ploidy,
+        record_provenance=False,
     )
 
 
@@ -2037,6 +2038,7 @@ def simulate_dna_mutations(
         rate=rate_map,
         model=model,
         random_seed=seed,
+        record_provenance=False,
     )
 
     return mutated_ts
@@ -2172,6 +2174,7 @@ def dna_mutation_simulation_per_locus(
                 sequence_length=locus.dnalength,
                 random_seed=seed_offset,
                 ploidy=ploidy,
+                record_provenance=False,
             )
             transition_matrix = matrix_per_locus[locus.name]
             rate_map = rate_map_per_locus[locus.name]
@@ -2586,6 +2589,7 @@ def dna_mutation_simulation_per_locus_from_values(
                 sequence_length=locus.dnalength,
                 random_seed=seed_offset,
                 ploidy=ploidy,
+                record_provenance=False,
             )
             transition_matrix = matrix_per_locus[locus.name]
             rate_map = rate_map_per_locus[locus.name]
@@ -3109,6 +3113,7 @@ def microsat_mutation_simulation_per_locus(
             sequence_length=1,
             random_seed=seed_offset,
             ploidy=ploidy,
+            record_provenance=False,
         )
 
         mutated_ts = msprime.sim_mutations(
@@ -3120,6 +3125,7 @@ def microsat_mutation_simulation_per_locus(
                 root_distribution=matrix_per_locus[locus.name].root_distribution,
                 transition_matrix=matrix_per_locus[locus.name].transition_matrix,
             ),
+            record_provenance=False,
         )
         mutated_tree_sequences[locus.name] = mutated_ts
     return mutated_tree_sequences, group_priors_values
@@ -3382,6 +3388,7 @@ def microsat_mutation_simulation_per_locus_from_values(
             sequence_length=1,
             random_seed=seed_offset,
             ploidy=ploidy,
+            record_provenance=False,
         )
         mutated_ts = msprime.sim_mutations(
             tree_sequences,
@@ -3392,6 +3399,7 @@ def microsat_mutation_simulation_per_locus_from_values(
                 root_distribution=matrix_per_locus[locus.name].root_distribution,
                 transition_matrix=matrix_per_locus[locus.name].transition_matrix,
             ),
+            record_provenance=False,
         )
         mutated_tree_sequences[locus.name] = mutated_ts
     return mutated_tree_sequences
