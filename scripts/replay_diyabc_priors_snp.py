@@ -22,13 +22,17 @@ from bridge.prior_parser import parse_priors
 from bridge.reftable_loop import replay_reftable_simulation_snp, write_reftable_txt
 from bridge.scenario_parser import parse_header_scenarios
 
-REFERENCE_DIR = Path("reference/toy_example4_seriel")
-REAL_REFTABLE_PATH = REFERENCE_DIR / "first_records_of_the_reference_table_1.txt"
+suffix = "0"
+
+REFERENCE_DIR = Path("reference/human_seriel")
+REAL_REFTABLE_PATH = (
+    REFERENCE_DIR / f"first_records_of_the_reference_table_{suffix}.txt"
+)
 # None = utilise les vrais comptes par type déclarés dans header.txt
 # (500 <A> / 50 <X> / 50 <M> / 50 <Y> pour ce dataset), pas un override.
 NUM_LOCI = None
 STATS_FILTER = "HEADER"
-OUTPUT_PATH = REFERENCE_DIR / "reftable_msprime_replay_1.txt"
+OUTPUT_PATH = REFERENCE_DIR / f"reftable_msprime_replay_{suffix}.txt"
 
 start_time = time()
 print("Début du lecture du headerRF.txt")

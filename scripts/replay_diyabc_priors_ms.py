@@ -14,8 +14,8 @@ différent (voir notebook/correlation_N2_N3_HWm_anomaly.ipynb, section
 """
 
 import shutil
+import time
 from pathlib import Path
-from time import time
 
 from bridge.loci_parser import parse_loci_description
 from bridge.prior_parser import parse_group_priors, parse_priors
@@ -26,15 +26,15 @@ from bridge.reftable_loop import (
 )
 from bridge.scenario_parser import parse_header_scenarios
 
-suffix = "1"
+suffix = "0"
 
-REFERENCE_DIR = Path("reference/toy_example1_ms")
+REFERENCE_DIR = Path("reference/toy_example1_ms_modified")
 REAL_REFTABLE_PATH = (
     REFERENCE_DIR / f"first_records_of_the_reference_table_{suffix}.txt"
 )
 OUTPUT_PATH = REFERENCE_DIR / f"reftable_msprime_replay_{suffix}.txt"
 
-start_time = time()
+start_time = time.perf_counter()
 print("Début du lecture du headerRF.txt")
 header_text = (REFERENCE_DIR / "headerRF.txt").read_text()
 
@@ -44,7 +44,7 @@ group_priors_names = group_prior_column_names(header_text)
 
 # TOUS les scénarios candidats, pas un seul : le reftable réel mélange
 scenarios = parse_header_scenarios(header_text)
-t1 = time()
+t1 = time.perf_counter()
 print(
     f"Lecture du headerRF.txt terminée en {t1 - start_time:.2f}s : {len(priors)} priors, {len(group_priors)} group priors, {len(scenarios)} scénarios"
 )
@@ -57,7 +57,7 @@ WORK_DIR.mkdir(parents=True)
 shutil.copy(REFERENCE_DIR / "headerRF.txt", WORK_DIR / "headerRF.txt")
 shutil.copy(REFERENCE_DIR / mss_filename, WORK_DIR / mss_filename)
 
-t2 = time()
+t2 = time.perf_counter()
 print(f"Copie du répertoire de travail terminée en {t2 - t1:.2f}s : {WORK_DIR}")
 
 
@@ -77,13 +77,13 @@ results = replay_reftable_simulation_microsat(
     max_workers=16,
 )
 
-t3 = time()
+t3 = time.perf_counter()
 print(
     f"Rejeu des {len(results)} particules de {total_loci} loci terminé en {t3 - t2:.2f}s"
 )
 
 write_reftable_txt(results, priors, scenarios, OUTPUT_PATH)
-t4 = time()
+t4 = time.perf_counter()
 print(f"Écriture du reftable terminé en {t4 - t3:.2f}s")
 print(f"{len(results)} particules rejouées avec les tirages réels de DIYABC.")
 print(f"Écrit dans {OUTPUT_PATH}")
