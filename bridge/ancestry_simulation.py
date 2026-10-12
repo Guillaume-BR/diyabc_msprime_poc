@@ -3289,13 +3289,15 @@ def build_matrix_microsat_per_locus_from_values(
         if locus.ms_or_seq == "M":
             mut_rate, Pgeom, sni_rate = params_per_locus[locus.name]
             bounds = bounds_per_locus[locus.name]
-            matrix_per_locus[locus.name] = build_transition_matrix_microsat_with_sni(
-                kmin=bounds[0],
-                kmax=bounds[1],
-                motif_size=locus.motif_size,
-                Pgeom=Pgeom,
-                sni_rate=sni_rate,
-                mut_rate=mut_rate,
+            matrix_per_locus[locus.name] = (
+                build_transition_matrix_microsat_with_sni_numpy(
+                    kmin=bounds[0],
+                    kmax=bounds[1],
+                    motif_size=locus.motif_size,
+                    Pgeom=Pgeom,
+                    sni_rate=sni_rate,
+                    mut_rate=mut_rate,
+                )
             )
     return matrix_per_locus
 
