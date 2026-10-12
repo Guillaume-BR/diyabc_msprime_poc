@@ -5,6 +5,7 @@ import pytest
 from bridge.ancestry_simulation import (
     build_transition_matrix_microsat,
     compute_population_layout,
+    compute_sample_layout,
     dna_mutation_simulation_per_locus,
     microsat_mutation_simulation_per_locus,
 )
@@ -26,6 +27,7 @@ from bridge.summary_statistics import (
     _compute_VAR_for_one_sample,
     _genotype_matrix_by_sample,
     _genotypes_by_sample_and_individuals,
+    _individuals_by_sample,
     _length_by_sample,
     _length_by_sample_and_individuals,
     _pool_allele_counts_for_two_samples,
@@ -1817,6 +1819,252 @@ def test_genotypes_by_pop_and_individuals_with_different_layout():
 
         rejoined = half_a + half_b
         assert rejoined == result_without_layout[sample_name]
+
+
+# ---------------------------------------------------------------------------
+# Lecture des individus par échantillon via `ts.individuals_nodes`.
+#
+# `_individuals_by_sample`, `_length_by_sample_and_individuals` et
+# `_genotypes_by_sample_and_individuals` ont remplacé une boucle
+# `for ind in ts.individuals()` (un objet tskit par individu, puis une
+# recherche `nodes[0] in nodes_du_layout`). Cette boucle est conservée ici
+# comme ORACLE : les fonctions vectorisées doivent donner exactement le même
+# résultat, y compris sur ce que les fixtures diploïdes ci-dessus ne voient pas
+# (individus haploïdes, mélange de ploïdies, locus monomorphe, layout sériel).
+# ---------------------------------------------------------------------------
+
+# {nom du scénario: ((nb_individus, ploïdie), ...)} -- un tuple par échantillon.
+_PLOIDY_SCENARIOS = {
+    "diploid": ((4, 2), (3, 2)),
+    "mixed": ((3, 2), (2, 1)),
+    "haploid": ((5, 1), (4, 1)),
+    "three_samples": ((2, 2), (3, 1), (2, 2)),
+}
+
+
+def _ts_with_samples(sample_ploidies, mutation_rate, seed=1):
+    """Construit un TreeSequence à échantillons de ploïdies variables.
+
+    Chaque échantillon est un `SampleSet` daté de `10 * i` générations, dans UNE
+    seule population : c'est la configuration sérielle, où deux échantillons
+    partagent une population msprime. Les mutations suivent un modèle de
+    microsatellite (allèles = tailles entières).
+
+    Args:
+        sample_ploidies: ((nb_individus, ploïdie), ...), un tuple par échantillon.
+        mutation_rate: Taux de mutation. 0.0 donne un locus monomorphe.
+        seed: Graine de la généalogie et des mutations.
+
+    Returns:
+        (ts, counts) où counts est {"s0": nb_individus, "s1": ...}, l'argument
+        attendu par `compute_sample_layout`.
+    """
+    demography = msprime.Demography.isolated_model([200])
+    sample_sets = [
+        msprime.SampleSet(n, ploidy=ploidy, time=10 * i)
+        for i, (n, ploidy) in enumerate(sample_ploidies)
+    ]
+    ts = msprime.sim_ancestry(
+        samples=sample_sets,
+        demography=demography,
+        sequence_length=1,
+        random_seed=seed,
+    )
+    ts = msprime.sim_mutations(
+        ts,
+        rate=mutation_rate,
+        model=msprime.TPM(p=0.3, m=0.4, lo=2, hi=25),
+        random_seed=seed,
+    )
+    # Garde-fou : un test « polymorphe » sans mutation serait vide de sens.
+    assert (ts.num_sites == 0) == (mutation_rate == 0.0)
+    counts = {f"s{i}": n for i, (n, _) in enumerate(sample_ploidies)}
+    return ts, counts
+
+
+def _layout_or_default(ts, counts, use_sample_layout):
+    """Layout sériel (par échantillon) ou None (layout par population)."""
+    return compute_sample_layout(ts, counts) if use_sample_layout else None
+
+
+def _reference_individuals_by_sample(ts, layout):
+    """Ancienne recherche individu par individu : {nom: [indices d'individus]}."""
+    if layout is None:
+        layout = compute_population_layout(ts)
+    by_sample = {name: [] for name, _ in layout}
+    for ind in ts.individuals():
+        name = next(pop for pop, nodes in layout if ind.nodes[0] in nodes)
+        by_sample[name].append(ind.id)
+    return by_sample
+
+
+def _reference_length_by_sample_and_individuals(ts, layout):
+    """Ancienne version de `_length_by_sample_and_individuals` (boucle tskit)."""
+    if layout is None:
+        layout = compute_population_layout(ts)
+    length_by_sample = {name: [] for name, _ in layout}
+    if ts.num_sites == 0:
+        for ind in ts.individuals():
+            name = next(pop for pop, nodes in layout if ind.nodes[0] in nodes)
+            length_by_sample[name].append((0, 0))
+        return length_by_sample
+    variant = next(ts.variants())
+    tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
+    for ind in ts.individuals():
+        nodes = ind.nodes
+        name = next(pop for pop, inds in layout if nodes[0] in inds)
+        if len(nodes) == 1:
+            length_by_sample[name].append(
+                (int(tailles[nodes[0]]), int(tailles[nodes[0]]))
+            )
+        else:
+            length_by_sample[name].append(
+                (int(tailles[nodes[0]]), int(tailles[nodes[1]]))
+            )
+    return length_by_sample
+
+
+def _reference_genotypes_by_sample_and_individuals(ts, layout):
+    """Ancienne version de `_genotypes_by_sample_and_individuals` (boucle tskit)."""
+    if layout is None:
+        layout = compute_population_layout(ts)
+    genotype_by_sample = {name: [] for name, _ in layout}
+    if ts.num_sites == 0:
+        for ind in ts.individuals():
+            name = next(pop for pop, nodes in layout if ind.nodes[0] in nodes)
+            genotype_by_sample[name].append((0, 0))
+        return genotype_by_sample
+    variant = next(ts.variants())
+    tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
+    for ind in ts.individuals():
+        nodes = ind.nodes
+        name = next(pop for pop, inds in layout if nodes[0] in inds)
+        if len(nodes) == 1:
+            genotype_by_sample[name].append((int(tailles[nodes[0]]),))
+        else:
+            genotype_by_sample[name].append(
+                (int(tailles[nodes[0]]), int(tailles[nodes[1]]))
+            )
+    return genotype_by_sample
+
+
+def _all_ploidy_cases(test):
+    """Applique à un test les trois axes : scénario de ploïdie, polymorphisme, layout."""
+    test = pytest.mark.parametrize(
+        "use_sample_layout",
+        [False, True],
+        ids=["population_layout", "sample_layout"],
+    )(test)
+    test = pytest.mark.parametrize(
+        "mutation_rate", [0.0, 0.5], ids=["monomorphic", "polymorphic"]
+    )(test)
+    return pytest.mark.parametrize("scenario", list(_PLOIDY_SCENARIOS))(test)
+
+
+@_all_ploidy_cases
+def test_individuals_by_sample_matches_reference(
+    scenario, mutation_rate, use_sample_layout
+):
+    ts, counts = _ts_with_samples(_PLOIDY_SCENARIOS[scenario], mutation_rate)
+    layout = _layout_or_default(ts, counts, use_sample_layout)
+
+    result = _individuals_by_sample(ts, layout=layout)
+    expected = _reference_individuals_by_sample(ts, layout)
+
+    assert list(result) == list(expected)  # ordre du layout
+    for name in expected:
+        assert result[name].tolist() == expected[name]  # ordre croissant des indices
+
+
+@_all_ploidy_cases
+def test_length_by_sample_and_individuals_matches_reference(
+    scenario, mutation_rate, use_sample_layout
+):
+    ts, counts = _ts_with_samples(_PLOIDY_SCENARIOS[scenario], mutation_rate)
+    layout = _layout_or_default(ts, counts, use_sample_layout)
+
+    result = _length_by_sample_and_individuals(ts, layout=layout)
+    expected = _reference_length_by_sample_and_individuals(ts, layout)
+
+    assert list(result) == list(expected)
+    assert result == expected
+    assert all(type(x) is int for lst in result.values() for t in lst for x in t)
+
+
+@_all_ploidy_cases
+def test_genotypes_by_sample_and_individuals_matches_reference(
+    scenario, mutation_rate, use_sample_layout
+):
+    ts, counts = _ts_with_samples(_PLOIDY_SCENARIOS[scenario], mutation_rate)
+    layout = _layout_or_default(ts, counts, use_sample_layout)
+
+    result = _genotypes_by_sample_and_individuals(ts, layout=layout)
+    expected = _reference_genotypes_by_sample_and_individuals(ts, layout)
+
+    assert list(result) == list(expected)
+    assert result == expected
+    assert all(type(x) is int for lst in result.values() for t in lst for x in t)
+
+
+def test_individuals_by_sample_returns_one_sorted_array_per_sample():
+    """Un tableau d'indices par échantillon, pas une liste qui en contient un."""
+    ts, counts = _ts_with_samples(((3, 2), (2, 2)), 0.5)
+
+    result = _individuals_by_sample(ts, layout=compute_sample_layout(ts, counts))
+
+    assert list(result) == ["s0", "s1"]
+    assert all(isinstance(indices, np.ndarray) for indices in result.values())
+    assert result["s0"].tolist() == [0, 1, 2]
+    assert result["s1"].tolist() == [3, 4]
+
+
+def test_individuals_by_sample_raises_when_an_individual_is_unassigned():
+    ts, counts = _ts_with_samples(_PLOIDY_SCENARIOS["diploid"], 0.5)
+    layout = compute_sample_layout(ts, counts)
+
+    # s1 absent du layout : ses individus n'appartiennent à personne.
+    with pytest.raises(ValueError, match="individu"):
+        _individuals_by_sample(ts, layout=layout[:1])
+
+
+def test_individuals_by_sample_raises_when_an_individual_is_assigned_twice():
+    ts, counts = _ts_with_samples(_PLOIDY_SCENARIOS["diploid"], 0.5)
+    layout = compute_sample_layout(ts, counts)
+
+    # s0 deux fois : ses individus appartiennent à deux entrées du layout.
+    with pytest.raises(ValueError, match="individu"):
+        _individuals_by_sample(ts, layout=[*layout, ("s0_bis", layout[0][1])])
+
+
+def test_genotypes_keep_true_ploidy_but_lengths_duplicate_haploids():
+    """Sur un locus polymorphe, un haploïde donne (x,) pour les génotypes (LIK
+    applique une formule différente selon la ploïdie) et (x, x) pour les longueurs
+    (FST traite un haploïde comme un diploïde homozygote)."""
+    ts, counts = _ts_with_samples(
+        _PLOIDY_SCENARIOS["mixed"], 0.5
+    )  # s0 diploïde, s1 haploïde
+    layout = compute_sample_layout(ts, counts)
+
+    genotypes = _genotypes_by_sample_and_individuals(ts, layout=layout)
+    lengths = _length_by_sample_and_individuals(ts, layout=layout)
+
+    assert {len(t) for t in genotypes["s0"]} == {2}
+    assert {len(t) for t in genotypes["s1"]} == {1}
+    assert all(first == second for first, second in lengths["s1"])
+    assert [(x,) for x, _ in lengths["s1"]] == genotypes["s1"]
+
+
+def test_genotypes_monomorphic_locus_gives_pairs_even_for_haploid():
+    """Comportement historique conservé tel quel : sur un locus sans mutation,
+    TOUS les individus reçoivent (0, 0), haploïdes compris (alors que sur un
+    locus polymorphe un haploïde reçoit un tuple à 1 élément)."""
+    ts, counts = _ts_with_samples(_PLOIDY_SCENARIOS["haploid"], 0.0)
+
+    result = _genotypes_by_sample_and_individuals(
+        ts, layout=compute_sample_layout(ts, counts)
+    )
+
+    assert result == {"s0": [(0, 0)] * 5, "s1": [(0, 0)] * 4}
 
 
 def test_compute_num_den_lik_for_one_individual():

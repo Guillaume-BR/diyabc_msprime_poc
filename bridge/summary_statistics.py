@@ -3604,34 +3604,47 @@ def _genotypes_by_sample_and_individuals(
 
     Args:
         tree_sequence: Un objet TreeSequence de tskit.
-        layout: [(nom_echantillon, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par échantillon à utilisé par le chemin sériel, où un échantillon n'est plus sa propre échantillon
+        layout: [(nom_echantillon, np.ndarray[indices_de_noeuds]), ...] : si fourni,
+            remplace le découpage par population, utilisé par le chemin sériel où
+            un échantillon n'est plus sa propre population.
 
     Returns:
         Dict {nom_echantillon: [(longueur_1, longueur_2) ou (longueur_1,), ...]}.
     """
     if layout is None:
         layout = compute_population_layout(tree_sequence)
-    genotype_by_sample = {pop: [] for pop, _ in layout}
-    if tree_sequence.num_sites == 0:
-        for ind in tree_sequence.individuals():
-            nodes = ind.nodes
-            échantillon = next(pop for pop, inds in layout if nodes[0] in inds)
-            genotype_by_sample[échantillon].append((0, 0))
-        return genotype_by_sample
-    else:
-        variant = next(tree_sequence.variants())
-        tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
-        for ind in tree_sequence.individuals():
-            nodes = ind.nodes
-            échantillon = next(pop for pop, inds in layout if nodes[0] in inds)
-            if len(nodes) == 1:
-                genotype_by_sample[échantillon].append((tailles[nodes[0]],))
-            else:
-                genotype_by_sample[échantillon].append(
-                    (tailles[nodes[0]], tailles[nodes[1]])
-                )
+    individuals_by_sample = _individuals_by_sample(tree_sequence, layout=layout)
 
-        return genotype_by_sample
+    # Locus monomorphe : un (0, 0) par individu, MÊME haploïde -- comportement
+    # historique conservé tel quel (sur un locus polymorphe, un haploïde donne
+    # un tuple à 1 élément).
+    if tree_sequence.num_sites == 0:
+        return {
+            name: [(0, 0)] * len(indices)
+            for name, indices in individuals_by_sample.items()
+        }
+
+    variant = next(tree_sequence.variants())
+    tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
+    individuals_nodes = tree_sequence.individuals_nodes
+    genotype_by_sample = {}
+    for name, indices in individuals_by_sample.items():
+        nodes = individuals_nodes[indices]
+        first = tailles[nodes[:, 0]].tolist()
+        if nodes.shape[1] == 1:
+            # Aucun individu n'a de second nœud : tous haploïdes.
+            genotype_by_sample[name] = [(a,) for a in first]
+            continue
+        # -1 marque l'absence de second nœud (haploïde) : la valeur lue pour ces
+        # individus (tailles[-1], sans erreur) est écartée par le masque.
+        second = tailles[nodes[:, 1]].tolist()
+        haploid = (nodes[:, 1] == -1).tolist()
+        genotype_by_sample[name] = [
+            (a,) if is_haploid else (a, b)
+            for a, b, is_haploid in zip(first, second, haploid, strict=True)
+        ]
+
+    return genotype_by_sample
 
 
 def _compute_num_den_lik_for_one_individual(
