@@ -650,15 +650,16 @@ def compute_sample_layout(
         raise ValueError(
             f"Le nombre total d'individus dans counts_per_sample ({sum(counts_per_sample.values())}) ne correspond pas au nombre d'individus dans la TreeSequence ({ts.num_individuals})."
         )
-    # iter() UNE SEULE FOIS, hors de la boucle : c'est lui le curseur.
-    # Le déplacer à l'intérieur ferait repartir chaque échantillon de
-    # l'individu 0, silencieusement.
-    individuals = iter(ts.individuals())
+    table = ts.individuals_nodes
+    start = 0
     for sample_name, count in counts_per_sample.items():
-        block = list(itertools.islice(individuals, count))
-        if not block:
+        block = table[start : start + count]
+        start += count
+        flatten_block = block.ravel()
+        block_treated = flatten_block[flatten_block != -1]
+        if block_treated.size == 0:
             continue
-        layout.append((sample_name, np.concatenate([ind.nodes for ind in block])))
+        layout.append((sample_name, block_treated))
     return layout
 
 

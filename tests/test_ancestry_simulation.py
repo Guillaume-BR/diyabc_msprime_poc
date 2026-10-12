@@ -2,9 +2,12 @@
 msprime.sim_ancestry, simulation de généalogies indépendantes par locus, et
 mutation Hudson (exactement une mutation par locus, toujours polymorphe)."""
 
+import itertools
+
 import msprime
 import numpy as np
 import pytest
+import tskit
 from conftest import (
     OBSERVED_MSS_FILE_TE2_XY,
     OBSERVED_SNP_FILE_HUMAN,
@@ -65,7 +68,8 @@ from bridge.prior_parser import parse_group_priors
 from bridge.scenario_parser import parse_header_scenarios
 
 
-# Petit helper pour créer un TreeSequence minimal avec une population et un individu, pour tester compute_sample_layout
+# Petit helper pour créer un TreeSequence minimal avec une population et un
+# individu, pour tester compute_sample_layout
 def _ts_from_sample_sets(sample_sets):
     """TreeSequence minimale pour tester un layout : la topologie n'importe
     pas."""
@@ -300,6 +304,68 @@ def test_simulate_genotypes_for_locus_type(snp_context_te5):
                 0,
                 1,
             }, f"Locus non polymorphe : {locus_genotypes}"
+
+
+def _reference_compute_sample_layout(
+    ts: tskit.TreeSequence, counts_per_sample: dict[str, int]
+) -> list[tuple[str | None, np.ndarray]]:
+    layout = []
+
+    if sum(counts_per_sample.values()) != ts.num_individuals:
+        raise ValueError(
+            f"Le nombre total d'individus dans counts_per_sample ({sum(counts_per_sample.values())}) ne correspond pas au nombre d'individus dans la TreeSequence ({ts.num_individuals})."
+        )
+    # iter() UNE SEULE FOIS, hors de la boucle : c'est lui le curseur.
+    # Le déplacer à l'intérieur ferait repartir chaque échantillon de
+    # l'individu 0, silencieusement.
+    individuals = iter(ts.individuals())
+    for sample_name, count in counts_per_sample.items():
+        block = list(itertools.islice(individuals, count))
+        if not block:
+            continue
+        layout.append((sample_name, np.concatenate([ind.nodes for ind in block])))
+    return layout
+
+
+def test_compare_compute_sample_layout_with_reference():
+    """Vérifie que compute_sample_layout renvoie exactement le même résultat
+    que la version de référence, qui utilise un itérateur sur les individus
+    pour garantir l'ordre correct des noeuds dans le layout."""
+    ts = _ts_from_sample_sets(
+        [msprime.SampleSet(7, "pop1"), msprime.SampleSet(3, "pop2")]
+    )
+    samples = {"pop1": 7, "pop2": 3}
+    computed_layout = compute_sample_layout(ts, samples)
+    reference_layout = _reference_compute_sample_layout(ts, samples)
+
+    assert len(computed_layout) == len(reference_layout)
+    for i in range(len(computed_layout)):
+        assert computed_layout[i][0] == reference_layout[i][0]
+        assert np.array_equal(computed_layout[i][1], reference_layout[i][1])
+        assert computed_layout[i][1].dtype == reference_layout[i][1].dtype
+
+
+def test_compare_compute_sample_layout_with_reference_mixed_ploidy():
+    """Vérifie que compute_sample_layout renvoie exactement le même résultat
+    que la version de référence, même avec des ploidies différentes par
+    individu."""
+    ts = _ts_from_sample_sets(
+        [
+            msprime.SampleSet(3, "pop1", ploidy=2),
+            msprime.SampleSet(2, "pop1", ploidy=1),
+            msprime.SampleSet(4, "pop2", ploidy=2),
+            msprime.SampleSet(1, "pop2", ploidy=1),
+        ]
+    )
+    samples = {"pop1": 5, "pop2": 5}
+    computed_layout = compute_sample_layout(ts, samples)
+    reference_layout = _reference_compute_sample_layout(ts, samples)
+
+    assert len(computed_layout) == len(reference_layout)
+    for i in range(len(computed_layout)):
+        assert computed_layout[i][0] == reference_layout[i][0]
+        assert np.array_equal(computed_layout[i][1], reference_layout[i][1])
+        assert computed_layout[i][1].dtype == reference_layout[i][1].dtype
 
 
 def test_compute_sample_layout_different_count():

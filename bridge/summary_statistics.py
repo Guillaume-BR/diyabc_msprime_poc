@@ -31,6 +31,7 @@ cal_snfsti...) pour faciliter la traçabilité entre le code Python et sa
 source C++ de référence.
 """
 
+import functools
 import random
 from itertools import combinations, permutations
 
@@ -1243,6 +1244,7 @@ def compute_NSS(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
+    minor_counts_per_locus: list[dict[str, int]] | None = None,
 ) -> dict[str, float]:
     """Calcule NSS_i (cal_nss1p) : pour chaque échantillon, la moyenne du
     nombre de sites ségrégeants sur tous les loci du groupe passé en
@@ -1268,7 +1270,7 @@ def compute_NSS(
         sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
-
+        minor_allele_counts_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
     Returns:
         Un dict {nom_echantillon: valeur_moyenne}.
     """
@@ -1329,6 +1331,7 @@ def compute_NHA(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
+    minor_counts_per_locus: list[dict[str, int]] | None = None,
 ) -> dict[str, float]:
     """Calcule le nombre moyen d'haplotypes distincts par échantillon sur un
     groupe de loci.
@@ -1339,6 +1342,7 @@ def compute_NHA(
         sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
+        minor_counts_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
     Returns:
         Un dict {nom_echantillon: valeur_moyenne}.
     """
@@ -1371,6 +1375,21 @@ def compute_NHA(
 # ---------------------------------------------------------------------------
 
 
+@functools.cache
+def _triu_indices(n: int) -> tuple[np.ndarray, np.ndarray]:
+    """Indices de la partie triangulaire supérieure d'une matrice carrée.
+    Mise en cache pour éviter de recalculer les indices pour la même taille de matrice.
+
+    Args:
+        n: Taille de la matrice carrée (n, n).
+
+    Returns:
+        Tuple (i, j) d'indices 1D pour accéder à la partie triangulaire
+        supérieure (i < j) d'une matrice carrée (n, n).
+    """
+    return np.triu_indices(n, k=1)
+
+
 def _pairwise_hamming_distances(matrix: np.ndarray) -> np.ndarray:
     """Calcule les distances de Hamming par paire d'échantillons.
 
@@ -1389,7 +1408,7 @@ def _pairwise_hamming_distances(matrix: np.ndarray) -> np.ndarray:
         raise ValueError("La matrice de génotypes est vide.")
 
     matrix_hammming = (matrix[:, :, None] != matrix[:, None, :]).sum(axis=0)
-    triangle_sup = np.triu_indices(matrix_hammming.shape[0], k=1)
+    triangle_sup = _triu_indices(matrix_hammming.shape[0])
     return matrix_hammming[triangle_sup]
 
 
@@ -1399,6 +1418,7 @@ def compute_MPD(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
+    minor_counts_per_locus: list[dict[str, int]] | None = None,
 ) -> dict[str, float]:
     """Calcule MPD_i (cal_mpd1p) : pour chaque échantillon, la moyenne du
     nombre de différences par paire (distance de Hamming) sur tous les
@@ -1434,6 +1454,7 @@ def compute_MPD(
         sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
+        minor_counts_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
 
     Returns:
         Un dict {nom_echantillon: valeur_moyenne}.
@@ -1497,6 +1518,7 @@ def compute_VPD(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
+    minor_counts_per_locus: list[dict[str, int]] | None = None,
 ) -> dict[str, float]:
     """Calcule VPD_i (cal_vpd1p) : pour chaque échantillon, la variance du
     nombre de différences par paire (distance de Hamming) sur tous les
@@ -1532,7 +1554,7 @@ def compute_VPD(
         sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
-
+        minor_counts_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
     Returns:
         Un dict {nom_echantillon: valeur_variance}.
     """
@@ -1663,6 +1685,7 @@ def compute_DTA(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
+    minor_counts_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule DTA_i (cal_dta1p) : pour chaque échantillon, la moyenne du
     D de Tajima (_tajima_d_per_locus) sur tous les loci du groupe passé
@@ -1692,6 +1715,8 @@ def compute_DTA(
         sample_names: Le nom des échantillons attendus.
         layouts: Les layouts à utiliser pour chaque locus, ou None si aucun n'est fourni.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
+        minor_counts_per_locus: Liste des comptes d'allèle minoritaire, un dict par locus, ou None partout si l'appelant n'en fournit pas.
+
     Returns:
         Un dict {nom_echantillon: valeur_moyenne}.
     """
@@ -1775,6 +1800,7 @@ def compute_PSS(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
+    minor_counts_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule PSS_i (cal_pss1p) : pour chaque échantillon, la moyenne du
     nombre de sites ségrégeants privés (_private_segregating_sites_per_ locus)
@@ -1803,7 +1829,7 @@ def compute_PSS(
             dataset).
         layouts: Les layouts à utiliser pour chaque locus, ou None si aucun n'est fourni.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
-
+        minor_counts_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
     Returns:
         Un dict {nom_echantillon: valeur_moyenne}.
     """
@@ -1862,12 +1888,25 @@ def _minor_allele_counts_at_segregating_sites(matrix: np.ndarray) -> np.ndarray:
     """
     if matrix.shape[1] == 0:
         raise ValueError("La matrice de génotypes est vide.")
-    minor_counts = []
-    for site in matrix:
-        _, counts = np.unique(site, return_counts=True)
-        if len(counts) > 1:
-            minor_counts.append(counts.min())
-    return np.array(minor_counts, dtype=float)
+    if matrix.shape[0] == 0:
+        return np.array([], dtype=float)
+    n_states = np.max(matrix) + 1
+    counts = np.stack(
+        [(matrix == state).sum(axis=1) for state in range(n_states)], axis=1
+    )
+    n_present = (counts > 0).sum(axis=1)
+    smallest = np.where(counts == 0, counts.max() + 1, counts).min(axis=1)
+    return smallest[n_present > 1].astype(float)
+
+
+def _minor_counts_per_locus(genotype_matrices_per_locus, sample_names):
+    return [
+        {
+            samp_name: _minor_allele_counts_at_segregating_sites(matrices[samp_name])
+            for samp_name in sample_names
+        }
+        for matrices in genotype_matrices_per_locus
+    ]
 
 
 def compute_MNS(
@@ -1876,6 +1915,7 @@ def compute_MNS(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
+    minor_counts_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule MNS_i (cal_mns1p) : pour chaque échantillon, la moyenne,
     sur les loci du groupe, de la moyenne (par locus) des comptes
@@ -1901,6 +1941,7 @@ def compute_MNS(
         sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
+        minor_counts_per_locus: Liste des comptes d'allèle minoritaire, un dict par locus, ou None partout si l'appelant n'en fournit pas.
 
     Returns:
         Un dict {nom_echantillon: valeur_moyenne}.
@@ -1916,13 +1957,13 @@ def compute_MNS(
             _genotype_matrix_by_sample(ts, layout=layout)
             for ts, layout in zip(tree_sequences, layouts, strict=True)
         ]
-    for _, genotype_matrices in zip(
-        tree_sequences, genotype_matrices_per_locus, strict=True
-    ):
+    if minor_counts_per_locus is None:
+        minor_counts_per_locus = _minor_counts_per_locus(
+            genotype_matrices_per_locus, sample_names
+        )
+    for matrices in minor_counts_per_locus:
         for samp_name in sample_names:
-            minor_counts = _minor_allele_counts_at_segregating_sites(
-                genotype_matrices[samp_name]
-            )
+            minor_counts = matrices[samp_name]
             if len(minor_counts) > 0:
                 mean_mns[samp_name] += minor_counts.mean()
 
@@ -1939,6 +1980,7 @@ def compute_VNS(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
+    minor_counts_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule VNS_i (cal_vns1p) : pour chaque échantillon, la moyenne,
     sur les loci du groupe, de la variance (par locus) des comptes
@@ -1970,7 +2012,7 @@ def compute_VNS(
         sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
-
+        minor_counts_per_locus: Liste des comptes d'allèle minoritaire, un dict par locus, ou None partout si l'appelant n'en fournit pas.
     Returns:
         Un dict {nom_echantillon: valeur_moyenne}.
     """
@@ -1985,15 +2027,16 @@ def compute_VNS(
             _genotype_matrix_by_sample(ts, layout=layout)
             for ts, layout in zip(tree_sequences, layouts, strict=True)
         ]
-    for _, genotype_matrices in zip(
-        tree_sequences, genotype_matrices_per_locus, strict=True
-    ):
+    if minor_counts_per_locus is None:
+        minor_counts_per_locus = _minor_counts_per_locus(
+            genotype_matrices_per_locus, sample_names
+        )
+
+    for matrices in minor_counts_per_locus:
         for samp_name in sample_names:
-            minor_counts = _minor_allele_counts_at_segregating_sites(
-                genotype_matrices[samp_name]
-            )
+            minor_counts = matrices[samp_name]
             if len(minor_counts) > 1:
-                variance_vns[samp_name] += minor_counts.var()
+                variance_vns[samp_name] += minor_counts.var(ddof=0)
 
     if num_loci > 0:
         for samp_name in sample_names:
@@ -4425,12 +4468,17 @@ def compute_all_statistics_dna(
             _genotype_matrix_by_sample(ts, layout=layout)
             for ts, layout in zip(tree_sequences, layouts_for_genotypes, strict=True)
         ]
+        minor_counts_per_locus = _minor_counts_per_locus(
+            genotype_matrices_per_locus, sample_names
+        )
+
         for stat_name, stat_fn in _DNA_PER_SAMPLE_STATS.items():
             for samp_name, value in stat_fn(
                 tree_sequences,
                 sample_names,
                 layouts=layouts,
                 genotype_matrices_per_locus=genotype_matrices_per_locus,
+                minor_counts_per_locus=minor_counts_per_locus,
             ).items():
                 samp_index = sample_names.index(samp_name) + 1
                 key = (
