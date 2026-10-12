@@ -467,11 +467,6 @@ under the date given.
 
 - **Residual statistical bias (17/07)** — not a simulator bug. Shrinks and
   vanishes as loci count grows; 0/130 significant on `human` at 5000 loci.
-- **Performance gap vs. DIYABC (20/07)** — understood, not a bug. ~300s vs
-  ~137s on `human` 1000 particles × 5000 loci. Per-particle single-threaded
-  cost is nearly identical to DIYABC's; the gap is the 8-physical-core ceiling
-  plus materializing a `TreeSequence` per locus. **Don't re-investigate the
-  stat formulas or `max_workers`.**
 - **G3 `<M>` variance deficit in DNA stats (02/09)** — cause: `<M>` loci were
   each drawing an independent genealogy instead of sharing one. Fixed with
   `_SHARED_M_ANCESTRY_SEED_OFFSET`; KS-significant columns 11/42 → 2/42. The
@@ -821,8 +816,9 @@ their type (`simulate_shared_ancestry_loci`, `particuleC.cpp:2422-2435`
   boundary cases (flat → uniform random `a`; always negative → `a=0`; always
   positive → `a=1`). No pseudo-count, unlike `LIK` — a zero-frequency term is
   skipped. Frequencies must be hoisted out of the bisection loop
-  (`_prepare_loci_for_admixture`): ~20 evaluations per triplet, measured 15.2s
-  → 0.77s per particle. Seeds must vary per triplet **and** per group.
+  (`_prepare_triplet_for_admixture`, fed by `_extract_mutual_data`, once per group):
+  ~20 evaluations per triplet, measured 15.2s → 0.77s per particle. Seeds must vary
+  per triplet **and** per group.
 
 ### DNA sequences
 
@@ -1075,6 +1071,145 @@ because DIYABC's own output depends on them.
 - **Review-checklist patterns** (numpy bool addition, seed reuse, pairwise
   accumulators, duplicate `def` names, name shadowing, signature refactors)
   live in the persistent memory files, not here.
+
+## Performance — measured state (07/10; MicroSat updated 12/10)
+
+Verdicts only; each case below is meant to be worked in its **own session**.
+Narrative and raw numbers: `notes/exploration.md`.
+
+**Protocol.** Replay of the 1000 real DIYABC particles of each `reference/`
+directory (`replay_reftable_simulation_*`, `max_workers=16`) against
+`time ./diyabc -p ./ -R ALL -r 1000 -g 1000 -m -t 16`, same machine (8 physical
+cores / 16 threads). Every DIYABC run was checked: `reftable.log` ends in
+`END|1000|`. msprime wall time **excludes** the reftable write. **One run per
+case: the variance is not measured.**
+
+| Case | Directory | Loci | DIYABC | msprime | msprime / DIYABC | msprime time: sim / stats |
+|---|---|---|---|---|---|---|
+| IndSeq Hudson | `human` | 5000 | 129.7 s | 291.6 s | 2.2x | 99.3 / 0.7 % |
+| IndSeq MAF > 0 | `toy_example3_500loci` | 500 | 5.9 s | 49.0 s | **8.3x** | 99.1 / 0.9 % |
+| IndSeq serial | `human_seriel` | 5000 | 141.7 s | 268.4 s | 1.9x | 99.2 / 0.8 % |
+| PoolSeq Hudson | `toy_example4_hudson` | 100 | 28.6 s | 22.5 s | 0.79x | 98.7 / 1.3 % |
+| PoolSeq MRC > 0 | `toy_example4` | 100 | 93.5 s | 46.8 s | 0.50x | 99.4 / 0.6 % |
+| PoolSeq serial | `toy_example4_seriel` | 1000 | 571.7 s | 255.4 s | 0.45x | 99.8 / 0.2 % |
+| DNA | `toy_example2_ms_dna_50loci_TN` | 110 | 1.7 s | 104.1 s | **60x** | 74 / 26 % |
+| DNA serial | `..._50loci_TN_seriel` | 110 | 1.6 s | 104.1 s | **64x** | 74 / 26 % |
+| MicroSat | `toy_example1_ms_modified` | 50 | 2.3 s | **41.0 s** (228.7 s before 12/10) | **18x** | not re-measured |
+| MicroSat serial | `toy_example1_ms_seriel` | 50 | 2.4 s | 256.7 s (before 12/10, not re-measured) | 105x | 30 / 70 % |
+
+- **Orchestration is not the problem.** In all ten cases
+  `(sum sim + sum stats) / 16` lands within 0.5-1.5 % of the wall time, so
+  pickling the context, worker start-up and queueing cost ~1 %. **Don't
+  re-investigate `max_workers`** (16 beat 8 and 7 on `human`) **nor the SNP stat
+  formulas** (at most 1.3 % of the time in every SNP case).
+- Per-particle seconds measured at 16 workers are inflated by hyperthreading:
+  trust shares and ratios, not the absolute cost of a particle (use a
+  `max_workers=1` run for that).
+- **SNP IndSeq: the simulation is everything.** On `human`, ~93 % of a particle
+  is in `simulate_snp_genotypes`, ~40 % of it the per-locus `TreeSequence`
+  overhead (population-layout caching already done). **MAF > 0 is the outlier
+  (8.3x against 2.2x)**: the rejection / resimulation path of `with_maf_filter`
+  carries the extra cost (batching already done, x26.8 over the original).
+- **PoolSeq: msprime is already faster** (0.45-0.79x). DIYABC's slowness on the
+  serial case is plausibly its discrete coalescent (see the `evalcriterium`
+  entry), **unverified**. Nothing to do.
+- **MicroSat: `ms_modified` replay 228.7 s → 41.0 s (x5.6); gap to DIYABC 100x → 18x
+  (12/10).** One run, variance not measured. KS unchanged against the real reftable;
+  **the sign test on `rdiff_mean` has not been run on this series.** Each step is
+  output-neutral at equal seed (`compare_particles_microsat`: 0 differences on 30
+  particles x 152 values). One particle in-process without a profiler (seed 1, drawing
+  path): 1.364 → 0.255 s. DNA (60-64x) is untouched: it has its own matrices and no AML.
+  - **AML**: `_extract_mutual_data` computes `(length_by_sample, genotypes_by_sample)`
+    once per group, not once per triplet (12 x 50 extractions → 50);
+    `_prepare_triplet_for_admixture` only filters; `_vectorize_triplet` turns a
+    triplet's frequencies into arrays (haploid / homozygous / heterozygous) so
+    `_log_likelihood_admixture` evaluates each `a` on whole arrays. A heterozygote with
+    ONE zero frequency contributes 0 as a whole genotype, not a partial log (kept from
+    the loop).
+  - **SNI matrices**: `_gsm_matrix_numpy` replaces `msprime.TPM(p=ε, m, lo=0, hi)`,
+    whose `general_microsat_rate_matrix` is a pure-Python O(n²) loop (152 100
+    `gamma_microsat` calls per particle). Tested against msprime on 161 `(hi, m)` pairs,
+    max difference 1.1e-15. `Pgeom` is drawn per locus (50 distinct values over 50
+    loci), so memoizing across loci is useless. Wired in BOTH siblings (drawing and
+    `..._from_values`), see the traps below.
+  - **Shared reads**: `compute_all_statistics_microsat` reads `_length_by_sample` and
+    `_genotypes_by_sample_and_individuals` once per locus and passes them to every
+    statistic as `length_by_sample_per_locus` / `genotypes_by_sample_per_locus` (11
+    reads → 1, 2 → 1). A dispatch dict calls all its statistics alike, so the ones that
+    do not read them (`FST` among others) accept the keyword and ignore it; their
+    docstrings say so.
+  - **Reads by array**: `_individuals_by_sample`,
+    `_length_by_sample_and_individuals` and `_genotypes_by_sample_and_individuals` read
+    `ts.individuals_nodes` (padded with -1) instead of `ts.individual(k)` per
+    individual (16 150 calls per particle). `_individuals_by_sample` raises
+    `ValueError` for an individual in no sample or in several. Kept on purpose: a
+    monomorphic locus gives `(0, 0)` to EVERY individual, haploid ones included, in
+    `_genotypes_by_sample_and_individuals`. Changed: elements are Python `int`, no
+    longer `np.int64`. The old loops are the `_reference_*` oracles of
+    `tests/test_summary_statistics.py`.
+  - Replay path before the numpy matrix reached it (3 particles, `time_stages_microsat`):
+    matrices 61 %, `sim_ancestry` 19 %, `sim_mutations` 4 %, all statistics together
+    13 %. `ms_seriel` was not re-measured.
+- **DNA** is split 74 % simulation / 26 % statistics; not profiled.
+
+**Open leads, one session each**: (1) MicroSat: re-run `time_stages_microsat` on the
+replay path for the post-optimization split (the 87 / 13 % simulation / statistics of
+12/10 predates the numpy matrix on that path); what remains is mostly
+`msprime.sim_ancestry` / `sim_mutations`, library code called 50 times per particle.
+DNA needs a profile first and may carry the same redundancies. (2) IndSeq MAF > 0.
+(3) IndSeq Hudson / serial: per-locus tskit overhead. (4) PoolSeq: none. **Every
+optimization touches code validated against DIYABC**: outputs must stay identical at
+equal seed (golden tests, then `compare_particles_microsat`, then a paired replay read
+with the KS **and** the sign test on `rdiff_mean`), and the sibling rule applies unless
+the user decides otherwise — ask first.
+
+**Measuring, traps already met**
+- Profile **one particle in-process**, never the replay: under a
+  `ProcessPoolExecutor`, `cProfile` sees only the main process. It also inflates
+  call-heavy code ~1.7x (`ts.individual()`, `gamma_microsat`): use it to rank,
+  confirm with `perf_counter`. `python -m cProfile -m` needs Python >= 3.12;
+  the environment is 3.11.
+- SNP simulation is a **lazy generator**: `simulate_particle_genotypes_from_values`
+  returns before simulating anything. Time the call **and** the `list(...)`
+  that consumes it. (The MicroSat path is eager.)
+- Wrapping a statistic to time it must patch the **dispatch dicts**
+  (`_MICROSAT_*_STATS`), which hold their own references; patching the module
+  attribute changes nothing.
+- Running DIYABC for a timing: copy the directory first (never run in
+  `reference/`), pass `cwd=` the copy (`-p ./` is relative to the **process**),
+  initialise the RNG with `-n "t:16"` (`;`-separated `t:` / `c:` / `s:` / `f:`
+  options, not a bare number), always `-R ALL`, and check the log ends in
+  `END|<nrec>|`.
+- **A drawing/replay pair must be optimized AND checked on both halves.** The numpy
+  matrix was wired into `build_matrix_microsat_per_locus` only;
+  `build_matrix_microsat_per_locus_from_values` (the replay path) kept `msprime.TPM`
+  until 12/10, while every profile and identity check ran on the drawing path. Symptom:
+  a single-particle gain far larger than the replay gain (x4 against x1.4). Time the
+  replay path itself (`time_stages_microsat`).
+- **A useless computation is invisible to the tests and to the identity check.** `N2P`
+  briefly recomputed genotypes it never read (~9 % of a particle under `cProfile`,
+  identical outputs).
+  After sharing a computation, count the calls with `pstats.Stats.print_callers`:
+  `_length_by_sample` and `_genotypes_by_sample_and_individuals` must each run once
+  per locus.
+- Identity check of an optimization: `compare_particles_microsat save ref.json` on the
+  code BEFORE (`git stash`), `compare ref.json` after. Exact equality, no tolerance.
+
+**Where the tooling lives.** Tracked in this repository:
+`scripts/compare_particles_microsat.py` (`save` / `compare` a JSON of N particles at
+equal seed: the identity check, exact equality, drawing path only),
+`scripts/profile_particle_microsat.py` (one particle, `cProfile`) and
+`scripts/time_aml_microsat.py`. The **stage timer** `scripts/time_stages_microsat.py`,
+the benchmark scripts (`benchmark_1000_msprime.py`, `bench_1000_diyabc.py`),
+`scripts/profile_particle.py` and the `timings` plumbing of `pipeline.py` /
+`reftable_loop.py` live on the branch **`bench/timings`**, checked out as the git
+worktree `../diyabc-msprime-poc_timings` (its `reference` is a symlink to this
+repository's). **Never merge `bench/timings` into `main`**: the plumbing makes
+`replay_reftable_simulation_*` return a 5-tuple, which breaks
+`scripts/replay_diyabc_priors_*.py` (`AttributeError: 'list' object has no attribute
+'group_priors_values'`). Bring `main` into it with `git merge main`; run replays from
+`main`. Don't recopy `bridge/` between directories (it overwrites uncommitted work):
+the worktree exists for that.
 
 ## Open work
 

@@ -4127,3 +4127,152 @@ jeu, ce que seul le test synthétique prouvait jusque-là.
 - Non rejoués avec le code final : `toy_example2_ms_dna_{JK,K2P}` à 5 loci par groupe
   (leurs versions à 50 loci le sont) et `toy_example2_ms_dna_TN` à 5 loci (remplacé par
   le `TN` à 50 loci, qui couvre le même chemin).
+
+
+## 2026-10-12 — Optimisation MicroSat : le rejeu de `ms_modified` passe de 228,7 s à 41,0 s
+
+Séance du 08 au 12/10. Le chiffre qui compte est celui du rejeu des 1000 particules réelles
+de DIYABC (`replay_reftable_simulation_microsat`, 16 workers) ; une seule mesure par étape,
+la variance n'est pas mesurée. Les verdicts sont dans `CLAUDE.md` (section Performance) ;
+ce qui suit est le récit, y compris les erreurs.
+
+### 1. Le point de départ
+
+Profil d'une particule en un seul processus, sans profileur (seed 1, 50 loci, 4 échantillons,
+chemin de tirage) : 1,364 s. Sous `cProfile` (qui gonfle ×1,6 à ×2 ce code fait de petits
+appels, donc seules les parts comptent) : AML ≈ 49 %, matrices SNI ≈ 34 %, `sim_ancestry`
+≈ 8 %. Pour AML, la préparation (`_length_by_sample` + `_genotypes_by_sample_and_individuals`
+de chaque locus) pesait 78 % et la vraisemblance 22 %, alors que la préparation ne dépend
+pas du triplet.
+
+### 2. Les étapes, dans l'ordre, avec ce que chacune a donné
+
+| étape | particule seed 1 (1 proc.) | rejeu 1000 particules |
+|---|---|---|
+| départ | 1,364 s | 228,7 s |
+| cache AML (`_extract_mutual_data`, une fois par groupe) | AML 49 % → 22 % de la particule | 139 s |
+| `_log_likelihood_admixture` vectorisée | 0,466 s | 113 s |
+| lectures partagées (`length_by_sample_per_locus`, `genotypes_by_sample_per_locus`) | 0,321 s | 98,5 s |
+| lecture par `ts.individuals_nodes` (3 fonctions) | 0,255 s | 90 s |
+| matrice numpy branchée sur le **rejeu** | (déjà comptée) | **41,0 s** |
+
+Détails des étapes :
+
+- **Cache AML.** `_prepare_loci_for_admixture` recalculait, pour chacun des 12 triplets,
+  les deux lectures de chaque locus : 600 extractions pour 50 loci distincts. Scindée en
+  `_extract_mutual_data` (une fois par groupe) et `_prepare_triplet_for_admixture` (filtre
+  par triplet). Le « 139 s » a d'abord été attribué à la matrice numpy ; on a compris
+  ensuite que le rejeu ne l'utilisait pas encore (§4), donc ce gain est celui du cache.
+- **Vraisemblance.** La boucle sur loci × individus × `dict.get` devient des tableaux par
+  classe de génotype (haploïde, homozygote, hétérozygote), préparés une fois par triplet
+  (`_vectorize_triplet`). Piège de fidélité : un hétérozygote dont **un seul** allèle a une
+  fréquence nulle contribue 0 en entier, pas un `log` partiel. Le masque est donc par
+  génotype.
+- **Matrice SNI.** `msprime.TPM(p=ε, m, lo=0, hi)` appelle `general_microsat_rate_matrix`,
+  une double boucle Python : 152 100 appels de `gamma_microsat` par particule (39² × 100).
+  `_gsm_matrix_numpy` calcule la même matrice par diffusion (`np.arange(hi + 1)` en ligne
+  et en colonne, `np.where` pour le sens montée/descente). Validée contre msprime sur 161
+  couples `(hi, m)` dont `m` = 1e-16 et 1 − 1e-16 : écart maximal 1,1e-15. Une mémoïsation
+  par paramètres aurait été inutile : `Pgeom` est tiré par locus (50 valeurs distinctes sur
+  50 loci).
+- **Lectures partagées.** `_length_by_sample` était lue 11 fois par locus (une par
+  statistique plus le cache d'AML), `_genotypes_by_sample_and_individuals` 2 fois. Elles
+  sont calculées une fois dans `compute_all_statistics_microsat` et transmises. Les
+  statistiques d'un dictionnaire de dispatch qui ne s'en servent pas (`FST`…) acceptent le
+  paramètre et l'ignorent, ce que leur docstring dit.
+- **Lecture par tableaux.** `ts.individual(k)` était appelé 16 150 fois par particule (2
+  fonctions × 50 loci × ~160 individus). `_individuals_by_sample` s'appuie sur
+  `ts.individuals_nodes` (tskit 1.0.3 : `(n_individus, ploïdie_max)`, complété par −1). La
+  valeur lue pour un haploïde via `tailles[-1]` ne lève rien, d'où un `np.where` explicite.
+
+### 3. Ce que le contrôle d'identité garantit, et ce qu'il ne garantit pas
+
+`scripts/compare_particles_microsat.py` enregistre les 152 statistiques de 30 particules à
+seed égal, puis compare l'état suivant en égalité stricte : 0 différence sur 4 560 valeurs
+à chaque étape. Il ne couvre que le **chemin de tirage**. Pour les fonctions vectorisées,
+l'ancienne boucle est conservée comme oracle dans `tests/test_summary_statistics.py`
+(`_reference_*`) : 1 600 cas identiques sur 200 seeds, avec locus monomorphes, ploïdies
+mélangées, layout sériel, et vérification de l'ordre des tuples. Pour vérifier que les
+tests protègent, on a cassé le code de cinq façons (plus de `where` sur le −1, génotypes
+toujours en paires, garde-fou des individus orphelins retiré, ordre inversé, monomorphe
+haploïde en 1-tuple) : les cinq sont détectées. Les axes « layout sériel » et « trois
+échantillons » des 48 cas paramétrés n'ont, eux, été démontrés nécessaires par aucune de
+ces mutations.
+
+Deux comportements historiques sont conservés : un locus monomorphe donne `(0, 0)` à
+**tous** les individus dans `_genotypes_by_sample_and_individuals`, haploïdes compris
+(alors qu'un haploïde polymorphe donne un tuple à un élément) ; et les éléments sont
+désormais des `int` Python, plus des `np.int64`.
+
+### 4. La découverte : le rejeu n'utilisait pas la matrice numpy
+
+Le rejeu gagnait environ moitié moins que la particule isolée à chaque étape (×2,5 contre
+×5,3 au total), et deux fois de suite. L'hypothèse « la seed 1 n'est pas représentative »
+était plausible, mais n'était pas la cause principale (elle n'est ni confirmée ni infirmée
+par la suite, voir §6). Cause, trouvée en lisant l'appelant de la ligne 3292 de
+`ancestry_simulation.py` : `build_matrix_microsat_per_locus` (tirage) appelait la version
+numpy, `build_matrix_microsat_per_locus_from_values` (rejeu) appelait encore la version
+msprime. Tous les profils et toutes les comparaisons d'identité avaient été faits sur le
+chemin de tirage ; le rejeu n'avait jamais vu le gain.
+
+Mesure sur le chemin de rejeu avant correction (`time_stages_microsat`, 3 particules,
+surcoût des wrappers 1,8 %) : particule 0,623 s, dont matrices 61 %, `sim_ancestry` 19 %,
+`sim_mutations` 4 %, toutes les statistiques ensemble 13 %. Après changement d'une ligne :
+**41,0 s**, KS inchangé contre le reftable réel. C'est exactement la leçon déjà consignée
+pour la paire tirage/rejeu (IndSeq sériel, 06/10) : un refactor sur une moitié se vérifie
+sur l'autre.
+
+### 5. Erreurs de méthode, consignées
+
+- **Extrapoler le gain d'une particule au rejeu.** La seed 1 en un processus sert à
+  classer les postes, pas à prédire le temps du rejeu. L'écart entre les deux était un
+  signal, pas du bruit.
+- **Un test « qui passe » dans un état autre que le fichier.** Deux fois, un « ça passe »
+  portait sur une version non enregistrée ou définie dans une session (la fonction du
+  fichier gardait `np.arange(hi)` et `np.max(0, …)`). Tester en important la fonction
+  depuis le module, dans un processus neuf.
+- **Un `max` qui avale les NaN.** Mon balayage comparait `max(worst, np.abs(a - b).max())` :
+  `max(x, nan)` renvoie `x`. Remplacé par `assert np.allclose(a, b, rtol=0, atol=1e-12)`,
+  qui échoue sur un NaN.
+- **Un oracle tronqué.** L'ancienne fonction extraite de `git show HEAD:` par expression
+  régulière s'arrêtait au premier `return genotype_by_sample` (celui de la branche
+  monomorphe) : l'oracle renvoyait `None` et la comparaison échouait pour la mauvaise
+  raison. Le script vérifie désormais que l'oracle contient ses deux boucles.
+- **Un calcul inutile invisible aux tests.** Un paramètre « accepté et ignoré » de `N2P`
+  recalculait quand même les génotypes (50 lectures, ≈ 9 % d'une particule sous `cProfile`, donc
+  surestimé) avec des sorties identiques. Seul le décompte des appelants (`pstats.print_callers`) l'a montré.
+  Après un partage, chaque lecture doit apparaître 50 fois, pas plus.
+- **Un dossier recopié.** `bridge/` du dépôt principal a été déplacé vers la copie de
+  travail le 09/10 (le principal n'avait plus de `bridge/`, git le voyait supprimé), et
+  l'instrumentation `timings` de la copie a été écrasée. Récupérée via l'historique local
+  de VS Code (versions du 07/10 de `pipeline.py` et `reftable_loop.py`, qui ne
+  différaient de l'état courant que par l'instrumentation), puis le principal restauré
+  depuis `HEAD` plus le seul `summary_statistics.py` non commité de la copie. Remplacé par
+  un `git worktree` sur la branche `bench/timings` (`reference` y est un lien symbolique
+  vers celui du principal ; les 21 fichiers suivis de `reference/` marqués
+  `skip-worktree`). Cette branche ne se fusionne jamais dans `main` : l'instrumentation
+  fait renvoyer un tuple de 5 éléments aux fonctions de rejeu, ce qui casse
+  `replay_diyabc_priors_*.py` (`AttributeError: 'list' object has no attribute
+  'group_priors_values'`, rencontré en lançant le rejeu depuis le worktree).
+- **Un hook qui réécrit puis refuse.** Les hooks `pre-commit` (ruff, ruff format)
+  reformatent les fichiers et font échouer le commit ; il faut réindexer et recommencer.
+
+### 6. Ce qu'il reste
+
+- **Le test des signes sur `rdiff_mean`** n'a pas été fait sur cette série (le KS est
+  aveugle à un décalage global). À faire sur le rejeu à 41 s, en excluant les colonnes de
+  paramètres.
+- **Comparaison fine avec l'ancien rejeu** (fichier à 90 s) colonne par colonne : pas faite
+  à ma connaissance ; c'est la preuve la plus directe pour le chemin de rejeu avec la
+  matrice numpy.
+- **Remesurer la répartition par postes sur le chemin de rejeu** après correction : le
+  87 % / 13 % simulation / statistiques date d'avant. Ce qui reste est surtout
+  `sim_ancestry` / `sim_mutations`, du code de bibliothèque appelé 50 fois par particule.
+- Le coût CPU du rejeu (41 s × 16 workers / 1000 ≈ 0,66 s par particule) reste supérieur
+  à celui d'une particule isolée (0,255 s) : hyperthreading, priors réels plus lourds, ou
+  les deux ; non mesuré.
+- Non remesurés : `toy_example1_ms_seriel` (256,7 s avant) et les cas DNA, qui n'ont ni
+  AML ni la même matrice mais ont peut-être les mêmes redondances de lecture.
+- L'écart AML entre `ms_modified` et `ms_seriel` (0,67 s contre 0,93 s à appels
+  identiques), noté le 07/10, n'a pas été revu ; AML ne pesant plus que ~3 % d'une
+  particule, il perd son intérêt.
