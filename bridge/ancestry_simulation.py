@@ -2136,6 +2136,8 @@ def dna_mutation_simulation_per_locus(
     matrix_per_locus = build_matrix_dna_per_locus(context, seed)
 
     mutated_tree_sequences = {}
+    ancestry_parameters_by_heritage = {}
+    shared_tree_sequences = {}
 
     for i, locus in enumerate(list_loci):
         if locus.ms_or_seq != "S":
@@ -2156,27 +2158,53 @@ def dna_mutation_simulation_per_locus(
                     f"Type d'héritage de locus non supporté: {locus.heritage!r}"
                 )
 
-            locus_demography, ploidy = ms_dna_ancestry_parameters_for_heritage(
-                locus.heritage, demography, sex_ratio
-            )
+            if locus.heritage not in ancestry_parameters_by_heritage:
+                ancestry_parameters_by_heritage[locus.heritage] = (
+                    ms_dna_ancestry_parameters_for_heritage(
+                        locus.heritage, demography, sex_ratio
+                    )
+                )
+
+            locus_demography, ploidy = ancestry_parameters_by_heritage[locus.heritage]
+
             if locus.heritage == "M":
                 # Pour les loci mitochondriaux, on utilise la même graine pour tous les loci
                 seed_offset = _locus_seed(seed, _SHARED_M_ANCESTRY_SEED_OFFSET, 0)
+                key = (locus.heritage, locus.dnalength)
+                if key not in shared_tree_sequences:
+                    shared_tree_sequences[key] = msprime.sim_ancestry(
+                        samples=samples,
+                        demography=locus_demography,
+                        sequence_length=locus.dnalength,
+                        random_seed=seed_offset,
+                        ploidy=ploidy,
+                        record_provenance=False,
+                    )
+                tree_sequences = shared_tree_sequences[key]
             elif locus.heritage == "Y":
                 # Pour les loci Y, on utilise la même graine pour tous les loci
                 seed_offset = _locus_seed(seed, _SHARED_Y_ANCESTRY_SEED_OFFSET, 0)
+
+                tree_sequences = msprime.sim_ancestry(
+                    samples=samples,
+                    demography=locus_demography,
+                    sequence_length=locus.dnalength,
+                    random_seed=seed_offset,
+                    ploidy=ploidy,
+                    record_provenance=False,
+                )
             else:
                 # Pour les autres loci, on utilise une graine différente pour chaque locus
                 seed_offset = _locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)
+                tree_sequences = msprime.sim_ancestry(
+                    samples=samples,
+                    demography=locus_demography,
+                    sequence_length=locus.dnalength,
+                    random_seed=seed_offset,
+                    ploidy=ploidy,
+                    record_provenance=False,
+                )
 
-            tree_sequences = msprime.sim_ancestry(
-                samples=samples,
-                demography=locus_demography,
-                sequence_length=locus.dnalength,
-                random_seed=seed_offset,
-                ploidy=ploidy,
-                record_provenance=False,
-            )
             transition_matrix = matrix_per_locus[locus.name]
             rate_map = rate_map_per_locus[locus.name]
             frequencies = frequencies_by_locus[locus.name]
@@ -2551,6 +2579,8 @@ def dna_mutation_simulation_per_locus_from_values(
     )
 
     mutated_tree_sequences = {}
+    ancestry_parameters_by_heritage = {}
+    shared_tree_sequences = {}
 
     for i, locus in enumerate(list_loci):
         if locus.ms_or_seq != "S":
@@ -2571,27 +2601,50 @@ def dna_mutation_simulation_per_locus_from_values(
                     f"Type d'héritage de locus non supporté: {locus.heritage!r}"
                 )
 
-            locus_demography, ploidy = ms_dna_ancestry_parameters_for_heritage(
-                locus.heritage, demography, sex_ratio
-            )
+            if locus.heritage not in ancestry_parameters_by_heritage:
+                ancestry_parameters_by_heritage[locus.heritage] = (
+                    ms_dna_ancestry_parameters_for_heritage(
+                        locus.heritage, demography, sex_ratio
+                    )
+                )
+
+            locus_demography, ploidy = ancestry_parameters_by_heritage[locus.heritage]
             if locus.heritage == "M":
                 # Pour les loci mitochondriaux, on utilise la même graine pour tous les loci
                 seed_offset = _locus_seed(seed, _SHARED_M_ANCESTRY_SEED_OFFSET, 0)
+                key = (locus.heritage, locus.dnalength)
+                if key not in shared_tree_sequences:
+                    shared_tree_sequences[key] = msprime.sim_ancestry(
+                        samples=samples,
+                        demography=locus_demography,
+                        sequence_length=locus.dnalength,
+                        random_seed=seed_offset,
+                        ploidy=ploidy,
+                        record_provenance=False,
+                    )
+                tree_sequences = shared_tree_sequences[key]
             elif locus.heritage == "Y":
                 # Pour les loci Y, on utilise la même graine pour tous les loci
                 seed_offset = _locus_seed(seed, _SHARED_Y_ANCESTRY_SEED_OFFSET, 0)
+                tree_sequences = msprime.sim_ancestry(
+                    samples=samples,
+                    demography=locus_demography,
+                    sequence_length=locus.dnalength,
+                    random_seed=seed_offset,
+                    ploidy=ploidy,
+                    record_provenance=False,
+                )
             else:
                 # Pour les autres loci, on utilise une graine différente pour chaque locus
                 seed_offset = _locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)
-
-            tree_sequences = msprime.sim_ancestry(
-                samples=samples,
-                demography=locus_demography,
-                sequence_length=locus.dnalength,
-                random_seed=seed_offset,
-                ploidy=ploidy,
-                record_provenance=False,
-            )
+                tree_sequences = msprime.sim_ancestry(
+                    samples=samples,
+                    demography=locus_demography,
+                    sequence_length=locus.dnalength,
+                    random_seed=seed_offset,
+                    ploidy=ploidy,
+                    record_provenance=False,
+                )
             transition_matrix = matrix_per_locus[locus.name]
             rate_map = rate_map_per_locus[locus.name]
             frequencies = frequencies_by_locus[locus.name]
@@ -3077,6 +3130,8 @@ def microsat_mutation_simulation_per_locus(
     )
 
     mutated_tree_sequences = {}
+    ancestry_parameters_by_heritage = {}
+    shared_tree_sequences = {}
 
     for i, locus in enumerate(list_loci):
         if locus.ms_or_seq != "M":
@@ -3096,26 +3151,49 @@ def microsat_mutation_simulation_per_locus(
             raise NotImplementedError(
                 f"Type d'héritage de locus non supporté: {locus.heritage!r}"
             )
-        locus_demography, ploidy = ms_dna_ancestry_parameters_for_heritage(
-            locus.heritage, demography, sex_ratio
-        )
+        if locus.heritage not in ancestry_parameters_by_heritage:
+            ancestry_parameters_by_heritage[locus.heritage] = (
+                ms_dna_ancestry_parameters_for_heritage(
+                    locus.heritage, demography, sex_ratio
+                )
+            )
+
+        locus_demography, ploidy = ancestry_parameters_by_heritage[locus.heritage]
         if locus.heritage == "M":
             # Pour les loci mitochondriaux, on utilise la même graine pour tous les loci
             seed_offset = _locus_seed(seed, _SHARED_M_ANCESTRY_SEED_OFFSET, 0)
+            if locus.heritage not in shared_tree_sequences:
+                shared_tree_sequences[locus.heritage] = msprime.sim_ancestry(
+                    samples=samples,
+                    demography=locus_demography,
+                    sequence_length=1,
+                    random_seed=seed_offset,
+                    ploidy=ploidy,
+                    record_provenance=False,
+                )
+            tree_sequences = shared_tree_sequences[locus.heritage]
         elif locus.heritage == "Y":
             # Pour les loci Y, on utilise la même graine pour tous les loci
             seed_offset = _locus_seed(seed, _SHARED_Y_ANCESTRY_SEED_OFFSET, 0)
+            tree_sequences = msprime.sim_ancestry(
+                samples=samples,
+                demography=locus_demography,
+                sequence_length=1,
+                random_seed=seed_offset,
+                ploidy=ploidy,
+                record_provenance=False,
+            )
         else:
             # Pour les autres loci, on utilise une graine différente pour chaque locus
             seed_offset = _locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)
-        tree_sequences = msprime.sim_ancestry(
-            samples=samples,
-            demography=locus_demography,
-            sequence_length=1,
-            random_seed=seed_offset,
-            ploidy=ploidy,
-            record_provenance=False,
-        )
+            tree_sequences = msprime.sim_ancestry(
+                samples=samples,
+                demography=locus_demography,
+                sequence_length=1,
+                random_seed=seed_offset,
+                ploidy=ploidy,
+                record_provenance=False,
+            )
 
         mutated_ts = msprime.sim_mutations(
             tree_sequences,
@@ -3352,7 +3430,8 @@ def microsat_mutation_simulation_per_locus_from_values(
     params_per_locus = build_local_param_microsat_per_locus_from_values(
         header_text, group_priors_values, seed
     )
-
+    ancestry_parameters_by_heritage = {}
+    shared_tree_sequences = {}
     for i, locus in enumerate(list_loci):
         if locus.ms_or_seq != "M":
             continue
@@ -3371,26 +3450,51 @@ def microsat_mutation_simulation_per_locus_from_values(
             raise NotImplementedError(
                 f"Type d'héritage de locus non supporté: {locus.heritage!r}"
             )
-        locus_demography, ploidy = ms_dna_ancestry_parameters_for_heritage(
-            locus.heritage, demography, sex_ratio
-        )
+
+        if locus.heritage not in ancestry_parameters_by_heritage:
+            ancestry_parameters_by_heritage[locus.heritage] = (
+                ms_dna_ancestry_parameters_for_heritage(
+                    locus.heritage, demography, sex_ratio
+                )
+            )
+
+        locus_demography, ploidy = ancestry_parameters_by_heritage[locus.heritage]
+
         if locus.heritage == "M":
             # Pour les loci mitochondriaux, on utilise la même graine pour tous les loci
             seed_offset = _locus_seed(seed, _SHARED_M_ANCESTRY_SEED_OFFSET, 0)
+            if locus.heritage not in shared_tree_sequences:
+                shared_tree_sequences[locus.heritage] = msprime.sim_ancestry(
+                    samples=samples,
+                    demography=locus_demography,
+                    sequence_length=1,
+                    random_seed=seed_offset,
+                    ploidy=ploidy,
+                    record_provenance=False,
+                )
+            tree_sequences = shared_tree_sequences[locus.heritage]
         elif locus.heritage == "Y":
             # Pour les loci Y, on utilise la même graine pour tous les loci
             seed_offset = _locus_seed(seed, _SHARED_Y_ANCESTRY_SEED_OFFSET, 0)
+            tree_sequences = msprime.sim_ancestry(
+                samples=samples,
+                demography=locus_demography,
+                sequence_length=1,
+                random_seed=seed_offset,
+                ploidy=ploidy,
+                record_provenance=False,
+            )
         else:
             # Pour les autres loci, on utilise une graine différente pour chaque locus
             seed_offset = _locus_seed(seed, _ANCESTRY_SEED_OFFSET, i)
-        tree_sequences = msprime.sim_ancestry(
-            samples=samples,
-            demography=locus_demography,
-            sequence_length=1,
-            random_seed=seed_offset,
-            ploidy=ploidy,
-            record_provenance=False,
-        )
+            tree_sequences = msprime.sim_ancestry(
+                samples=samples,
+                demography=locus_demography,
+                sequence_length=1,
+                random_seed=seed_offset,
+                ploidy=ploidy,
+                record_provenance=False,
+            )
         mutated_ts = msprime.sim_mutations(
             tree_sequences,
             rate=params_per_locus[locus.name][0],
