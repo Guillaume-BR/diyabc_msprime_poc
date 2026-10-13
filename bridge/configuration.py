@@ -47,6 +47,11 @@ _LOCUS_TYPE_SEED_OFFSET = {
     "M": 4_000_000,
 }
 
+_FAMILY_SEED_OFFSET = {
+    "M": 5_000_000,
+    "S": 6_000_000,
+}
+
 # ── Tailles de lot ──────────────────────────────────────────────────────────
 
 _MAF_BATCH_SIZE = 20  # ancestry_simulation.py (with_maf_filter)

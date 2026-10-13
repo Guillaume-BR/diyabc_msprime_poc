@@ -25,6 +25,7 @@ import tskit
 from bridge.configuration import (
     _ANCESTRY_SEED_OFFSET,
     _BINOMIAL_SEED_OFFSET,
+    _FAMILY_SEED_OFFSET,
     _KAPPA1_SEED_OFFSET,
     _KAPPA2_SEED_OFFSET,
     _MAF_BATCH_SEED_OFFSET,
@@ -38,6 +39,7 @@ from bridge.configuration import (
     _MRC_REJECTION_SEED_OFFSET,
     _MUS_RATE_SEED_OFFSET,
     _MUTATION_SEED_OFFSET,
+    _SHARED_A_ANCESTRY_SEED_OFFSET,
     _SHARED_M_ANCESTRY_SEED_OFFSET,
     _SHARED_Y_ANCESTRY_SEED_OFFSET,
     _SITE_RATE_SEED_OFFSET,
@@ -2086,7 +2088,7 @@ def ms_dna_ancestry_parameters_for_heritage(
 
 def _grouping_loci_by_group_and_heritage(
     list_loci: list[LociDescriptionDetailed], family: str
-) -> dict[str, dict[str, list[LociDescriptionDetailed]]]:
+) -> dict[str, dict[tuple[str, int], list[LociDescriptionDetailed]]]:
     """Regroupe les loci par type d'héritage.
 
     Args:
@@ -2094,7 +2096,7 @@ def _grouping_loci_by_group_and_heritage(
         type: Le type de locus à filtrer : "S" pour séquence ADN et "M" pour microsatellite.
 
     Returns:
-        Un dict {nom_groupe: {heritage: [loci]}} regroupant les loci d'une même famille par groupe, et par type d'héritage.
+        Un dict {nom_groupe: {(heritage,length): [loci]}} regroupant les loci d'une même famille par groupe, et par type d'héritage.
     Raises:
         ValueError: Si le type de locus n'est pas supporté.
     """
@@ -2140,6 +2142,9 @@ def _simulate_ancestries_for_loci(
     ancestry_parameters_by_heritage = {}
     shared_tree_sequences = {}
     tree_sequences = {}
+    batch_A_counter = (
+        0  # Compteur pour les loci de type <A> afin de gérer les graines partagées
+    )
     for _, heritage_dict in grouped_loci.items():
         for (heritage, length), loci in heritage_dict.items():
             if heritage in ("A", "H", "M"):
@@ -2207,31 +2212,24 @@ def _simulate_ancestries_for_loci(
                     tree_sequences[locus.name] = tree_sequence
 
             elif heritage == "A":
-                for locus in loci:
-                    seed_offset = _locus_seed(
-                        seed, _ANCESTRY_SEED_OFFSET, position_of[locus.name]
-                    )
-                    tree_sequence = msprime.sim_ancestry(
-                        samples=samples,
-                        demography=loci_demography,
-                        sequence_length=length,
-                        random_seed=seed_offset,
-                        ploidy=ploidy,
-                        record_provenance=False,
-                    )
+                batch_A_counter += 1
+                seed_offset = _locus_seed(
+                    seed,
+                    _SHARED_A_ANCESTRY_SEED_OFFSET,
+                    _FAMILY_SEED_OFFSET[family] + batch_A_counter,
+                )
+                replicates = msprime.sim_ancestry(
+                    samples=samples,
+                    demography=loci_demography,
+                    sequence_length=length,
+                    random_seed=seed_offset,
+                    ploidy=ploidy,
+                    num_replicates=len(loci),
+                    record_provenance=False,
+                )
+
+                for locus, tree_sequence in zip(loci, replicates, strict=True):
                     tree_sequences[locus.name] = tree_sequence
-                # replicates = msprime.sim_ancestry(
-                #    samples=samples,
-                #    demography=loci_demography,
-                #    sequence_length=length,
-                #    random_seed=seed_offset,
-                #    ploidy=ploidy,
-                #    num_replicates=len(loci),
-                #    record_provenance=False,
-                # )
-            #
-            # for locus,tree_sequence in zip(loci, replicates, strict=True):
-            #    tree_sequences[locus.name]=tree_sequence
 
             elif heritage == "X":
                 for locus in loci:

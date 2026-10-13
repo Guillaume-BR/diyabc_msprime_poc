@@ -383,8 +383,8 @@ def test_compute_summary_statistics_dna(dna_context_te2):
     )
 
     assert len(stats) == 42
-    assert stats["NSS_2_1"] == pytest.approx(9.8)
-    assert stats["HST_2_1.2"] == pytest.approx(0.012362823348065015)
+    assert stats["NSS_2_1"] == pytest.approx(9.6)
+    assert stats["HST_2_1.2"] == pytest.approx(0.02197126)
     assert stats["NH2_3_1.2"] == pytest.approx(5.0)
 
 
@@ -402,9 +402,9 @@ def test_compute_summary_statistics_microsat(microsat_context_te2_xy):
     )
 
     assert len(summary_stats) == 16
-    assert summary_stats["FST_1_1.2"] == pytest.approx(0.007081532724996798)
-    assert summary_stats["LIK_1_1.2"] == pytest.approx(1.8115736105446298)
-    assert summary_stats["LIK_1_2.1"] == pytest.approx(1.7855891126163377)
+    assert summary_stats["FST_1_1.2"] == pytest.approx(0.0119165839)
+    assert summary_stats["LIK_1_1.2"] == pytest.approx(1.7822692958)
+    assert summary_stats["LIK_1_2.1"] == pytest.approx(1.8497326365)
 
 
 # -------------------------------------------------------------

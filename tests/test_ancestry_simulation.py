@@ -18,9 +18,11 @@ from conftest import (
 from bridge.ancestry_simulation import (
     _distribution_from_position,
     _group_prior_values_dna_from_columns,
+    _grouping_loci_by_group_and_heritage,
     _gsm_matrix_numpy,
     _place_gsm_row_on_dense_grid,
     _reindex_reads_by_msprime_name,
+    _simulate_ancestries_for_loci,
     _sni_row_on_dense_grid,
     build_local_param_dna_per_locus,
     build_local_param_dna_per_locus_from_values,
@@ -1184,6 +1186,168 @@ def test_count_loci_per_group(header_text_te2):
 
     with pytest.raises(ValueError, match="Différents types de loci"):
         count_loci_per_group(list_loci_invalid)
+
+
+def test_grouping_loci_by_group_and_heritage(header_text_te2):
+    """Vérifie que la fonction grouping_loci_by_group_and_heritage retourne le
+    bon dictionnaire de regroupement des loci par groupe et par héritage."""
+    list_loci = parse_loci_description(header_text_te2)
+    grouped_loci = _grouping_loci_by_group_and_heritage(list_loci, family="S")
+    assert len(grouped_loci) == 2  # 2 groupes
+    assert all(
+        group in grouped_loci for group in ["G2", "G3"]
+    )  # Tous les groupes sont présents
+    assert grouped_loci["G3"].keys() == {
+        ("M", 100)
+    }  # Tous les héritages sont présents pour chaque groupe
+    for value in grouped_loci["G3"].values():
+        for locus in value:
+            assert locus.name in [
+                "Locus_S_M_16_",
+                "Locus_S_M_17_",
+                "Locus_S_M_18_",
+                "Locus_S_M_19_",
+                "Locus_S_M_20_",
+            ]  # Les loci sont correctement regroupés
+
+    # Aucun locus perdu : le total regroupé égale le nombre de loci "S" de
+    # l'entrée, compté ici sans passer par la fonction testée. Un test sur
+    # les seules clés ne voit pas la perte des loci qui suivent le premier
+    # d'un groupe.
+    n_sequence_loci = sum(1 for locus in list_loci if locus.ms_or_seq == "S")
+    n_grouped_loci = sum(
+        len(loci)
+        for loci_by_key in grouped_loci.values()
+        for loci in loci_by_key.values()
+    )
+    assert n_sequence_loci > 0  # garde-fou : la fixture contient bien des loci "S"
+    assert n_grouped_loci == n_sequence_loci
+
+    # Aucun locus d'une autre famille ne s'est glissé dans le résultat.
+    assert any(
+        locus.ms_or_seq == "M" for locus in list_loci
+    )  # sinon le test serait vide
+    assert all(
+        locus.ms_or_seq == "S"
+        for loci_by_key in grouped_loci.values()
+        for loci in loci_by_key.values()
+        for locus in loci
+    )
+
+
+def test_grouping_loci_by_group_and_heritage_invalid_family(header_text_te2):
+    """Vérifie que la fonction grouping_loci_by_group_and_heritage lève une
+    exception pour une famille invalide."""
+    list_loci = parse_loci_description(header_text_te2)
+    with pytest.raises(ValueError, match="Famille de loci invalide"):
+        _grouping_loci_by_group_and_heritage(list_loci, family="INVALID_FAMILY")
+
+
+def test_grouping_loci_by_group_and_heritage_null_length():
+    list_loci = [
+        LociDescriptionDetailed(
+            name="locus1",
+            heritage="A",
+            ms_or_seq="S",
+            group="G1",
+            motif_size=None,
+            motif_range=None,
+            dnalength=None,
+        ),
+        LociDescriptionDetailed(
+            name="locus2",
+            heritage="A",
+            ms_or_seq="S",
+            group="G1",
+            motif_size=None,
+            motif_range=None,
+            dnalength=0,
+        ),
+    ]
+
+    with pytest.raises(
+        ValueError, match="La longueur de la séquence ADN n'est pas définie"
+    ):
+        _grouping_loci_by_group_and_heritage(list_loci, family="S")
+
+
+def test_independent_family_trees(header_text_te2):
+    list_loci = parse_loci_description(header_text_te2)
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    _dna_ancestries = _simulate_ancestries_for_loci(
+        list_loci,
+        family="S",
+        demography=demography,
+        sex_ratio=0.5,
+        seed=42,
+        samples_default={"pop1": 5, "pop2": 5},
+        mss_file_path="blabla",
+    )
+
+    loci_name_dna = [locus.name for locus in list_loci if locus.ms_or_seq == "S"]
+    assert len(_dna_ancestries) > 0
+    _ms_ancestries = _simulate_ancestries_for_loci(
+        list_loci,
+        family="M",
+        demography=demography,
+        sex_ratio=0.5,
+        seed=42,
+        samples_default={"pop1": 5, "pop2": 5},
+        mss_file_path="blabla",
+    )
+
+    loci_name_ms = [locus.name for locus in list_loci if locus.ms_or_seq == "M"]
+    assert len(_ms_ancestries) > 0
+    for i in range(min(len(_dna_ancestries), len(_ms_ancestries))):
+        assert not np.array_equal(
+            np.sort(_dna_ancestries[loci_name_dna[i]].tables.nodes.time),
+            np.sort(_ms_ancestries[loci_name_ms[i]].tables.nodes.time),
+        )
+
+
+def test_batch_A_counter():
+    """Vérifie que le counter de lot de type A est bien construit"""
+    list_loci = [
+        LociDescriptionDetailed(
+            name="locus1",
+            heritage="A",
+            ms_or_seq="S",
+            group="G1",
+            motif_size=None,
+            motif_range=None,
+            dnalength=100,
+        ),
+        LociDescriptionDetailed(
+            name="locus2",
+            heritage="A",
+            ms_or_seq="S",
+            group="G2",
+            motif_size=None,
+            motif_range=None,
+            dnalength=200,
+        ),
+    ]
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    _dna_ancestries = _simulate_ancestries_for_loci(
+        list_loci,
+        family="S",
+        demography=demography,
+        sex_ratio=0.5,
+        seed=42,
+        samples_default={"pop1": 5, "pop2": 5},
+        mss_file_path="blabla",
+    )
+
+    assert not np.array_equal(
+        np.sort(_dna_ancestries["locus1"].tables.nodes.time),
+        np.sort(_dna_ancestries["locus2"].tables.nodes.time),
+    )
 
 
 def test_build_local_param_dna_per_locus(header_text_te2):
