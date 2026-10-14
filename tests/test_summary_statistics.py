@@ -31,6 +31,7 @@ from bridge.summary_statistics import (
     _individuals_by_sample,
     _length_by_sample,
     _length_by_sample_and_individuals,
+    _pairwise_distances_per_locus,
     _pairwise_hamming_distances,
     _pool_allele_counts_for_two_samples,
     _prepare_matrices_poolseq,
@@ -547,6 +548,44 @@ def test_pairwise_hamming_distances_around_the_state_threshold():
         matrix = rng.integers(0, max_state + 1, size=(20, 40)).astype(np.int32)
         matrix[0, :] = np.arange(40) % (max_state + 1)  # force tous les états présents
         compare_pairwise_hamming_distances(matrix)
+
+
+def test_pairwise_distances_per_locus(dna_context_te2):
+    """Le helper renvoie une liste alignée sur les loci du groupe (et non un
+    dictionnaire par nom de locus), avec pour chaque locus un vecteur par
+    échantillon égal à `_pairwise_hamming_distances` de sa matrice."""
+    demography, _ = build_random_demography_for_scenario_index(
+        dna_context_te2.header_text, scenario_index=1, seed=42
+    )
+    mutated, _ = dna_mutation_simulation_per_locus(
+        demography=demography, context=dna_context_te2, seed=42
+    )
+    sample_names = ["pop1", "pop2"]
+    names = [locus.name for locus in dna_context_te2.list_loci if locus.group == "G2"]
+    tree_sequences = [mutated[name] for name in names]
+    genotype_matrices_per_locus = [
+        _genotype_matrix_by_sample(ts) for ts in tree_sequences
+    ]
+
+    distances_per_locus = _pairwise_distances_per_locus(
+        genotype_matrices_per_locus, sample_names
+    )
+
+    assert isinstance(distances_per_locus, list)
+    assert len(distances_per_locus) == len(tree_sequences) > 0
+    for matrices, distances in zip(
+        genotype_matrices_per_locus, distances_per_locus, strict=True
+    ):
+        assert list(distances) == sample_names
+        for samp_name in sample_names:
+            expected = _pairwise_hamming_distances(matrices[samp_name])
+            assert np.array_equal(distances[samp_name], expected)
+            assert distances[samp_name].dtype == np.int64
+
+
+def test_pairwise_distances_per_locus_empty_group():
+    """Un groupe sans locus donne une liste vide, sans exception."""
+    assert _pairwise_distances_per_locus([], ["pop1", "pop2"]) == []
 
 
 def test_pairwise_hamming_distances_int8_extremes():
