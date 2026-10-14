@@ -31,6 +31,7 @@ from bridge.summary_statistics import (
     _individuals_by_sample,
     _length_by_sample,
     _length_by_sample_and_individuals,
+    _pairwise_hamming_distances,
     _pool_allele_counts_for_two_samples,
     _prepare_matrices_poolseq,
     compute_all_statistics_dna,
@@ -413,6 +414,147 @@ def test_count_distinct_haplotypes_int8_extremes():
     matrix = np.array([[127, -128, 127], [-128, 127, -128]], dtype=np.int8)
     assert _count_distinct_haplotypes(matrix) == 2
     assert _count_distinct_haplotypes(np.full((3, 4), -128, dtype=np.int8)) == 1
+
+
+def _reference_pairwise_hamming_distances(matrix: np.ndarray) -> np.ndarray:
+    """Calcule les distances de Hamming par paire d'échantillons.
+
+    Args:
+        matrix: Matrice de génotypes (n_sites, n_samples).
+
+    Returns:
+        Un vecteur 1D de longueur C(n_samples, 2) -- une valeur par
+        paire (i, j) avec i < j, pas la matrice carrée
+        (n_samples, n_samples) complète.
+
+    Raises:
+        ValueError: Si matrix.shape[1] == 0 (échantillon sans échantillon).
+    """
+    if matrix.shape[1] == 0:
+        raise ValueError("La matrice de génotypes est vide.")
+
+    # Oracle volontairement naïf : comparaison de toutes les paires de colonnes
+    # par diffusion, et indices du triangle supérieur recalculés à chaque appel
+    # (sans le cache ni le produit matriciel de la version rapide).
+    matrix_hamming = (matrix[:, :, None] != matrix[:, None, :]).sum(axis=0)
+    triangle_sup = np.triu_indices(matrix_hamming.shape[0], k=1)
+    return matrix_hamming[triangle_sup]
+
+
+def compare_pairwise_hamming_distances(matrix: np.ndarray) -> None:
+    """Compare les distances de Hamming par paire calculées par la fonction
+    de référence et la fonction optimisée.
+
+    Args:
+        matrix: Matrice de génotypes (n_sites, n_samples).
+
+    Raises:
+        AssertionError: Si les résultats des deux fonctions diffèrent.
+    """
+    reference_distances = _reference_pairwise_hamming_distances(matrix)
+    optimized_distances = _pairwise_hamming_distances(matrix)
+    assert np.array_equal(reference_distances, optimized_distances), (
+        f"Les distances de Hamming par paire diffèrent pour la matrice :\n{matrix}\n"
+        f"Référence : {reference_distances}\nOptimisé : {optimized_distances}"
+    )
+    # Même forme et même type : les statistiques en aval (somme, moyenne,
+    # variance) dépendent du type entier de ce vecteur.
+    assert optimized_distances.shape == reference_distances.shape
+    assert optimized_distances.dtype == reference_distances.dtype, (
+        f"type {optimized_distances.dtype} au lieu de {reference_distances.dtype}"
+    )
+
+
+def test_pairwise_hamming_distances_known_values():
+    """Vérifie que la fonction optimisée _pairwise_hamming_distances renvoie les
+    mêmes résultats que la fonction de référence pour des matrices de génotypes
+    connues."""
+    # Cas simple : 3 échantillons avec 2 sites
+    matrix1 = np.array([[0, 1, 0], [1, 0, 1]])
+    compare_pairwise_hamming_distances(matrix1)
+
+    # Cas avec des colonnes identiques : 4 échantillons avec 3 sites
+    matrix2 = np.array([[0, 0, 1, 1], [1, 1, 0, 0], [0, 0, 1, 1]])
+    compare_pairwise_hamming_distances(matrix2)
+
+    # Cas sans aucun échantillon (zéro colonne) : doit lever une exception
+    with pytest.raises(ValueError, match="La matrice de génotypes est vide"):
+        _pairwise_hamming_distances(np.array([[]]))
+
+
+def test_pairwise_hamming_distances_hand_derived_values():
+    """Valeurs calculées à la main, sans passer par l'oracle."""
+    # 3 sites, 3 échantillons : les haplotypes sont (0,2,0), (1,1,0) et (1,2,0).
+    # Paires (0,1), (0,2), (1,2) : ils diffèrent aux sites {0,1}, {0}, {1}.
+    matrix = np.array([[0, 1, 1], [2, 1, 2], [0, 0, 0]])
+    assert _pairwise_hamming_distances(matrix).tolist() == [2, 1, 1]
+    # Aucun site (locus sans mutation) : les 4 gènes sont identiques, donc les
+    # 4*3/2 = 6 paires sont à distance 0 (et non un vecteur vide).
+    no_site = _pairwise_hamming_distances(np.zeros((0, 4), dtype=np.int32))
+    assert no_site.tolist() == [0, 0, 0, 0, 0, 0]
+    assert no_site.dtype == np.int64
+    # Un seul échantillon : aucune paire.
+    single = _pairwise_hamming_distances(np.ones((5, 1), dtype=np.int32))
+    assert single.shape == (0,)
+    assert single.dtype == np.int64
+
+
+def test_pairwise_hamming_distances_states_not_starting_at_zero():
+    """Les états n'ont pas à commencer à 0 (ni à être consécutifs) : les
+    distances ne dépendent que de l'égalité entre états. Un calcul qui
+    comparerait les états décalés aux indices 0, 1, ... de la matrice
+    d'origine ne verrait aucun accord."""
+    # Colonnes (5,7), (7,7), (5,5) : paires (0,1), (0,2), (1,2) -> 1, 1 et 2
+    # (la dernière paire diffère aux deux sites).
+    matrix = np.array([[5, 7, 5], [7, 7, 5]])
+    assert _pairwise_hamming_distances(matrix).tolist() == [1, 1, 2]
+    # Mêmes distances avec des états négatifs (donnée manquante -1).
+    matrix = np.array([[-1, 1, -1], [1, 1, -1]])
+    assert _pairwise_hamming_distances(matrix).tolist() == [1, 1, 2]
+    compare_pairwise_hamming_distances(matrix)
+    compare_pairwise_hamming_distances(matrix + 3)
+
+
+def test_pairwise_hamming_distances_matches_reference_on_random_matrices():
+    """La version rapide doit égaler l'oracle (valeurs, forme et type) sur des
+    matrices aléatoires à graine fixe : tailles du pipeline (20, 40 et 80
+    colonnes), 1 à 12 états (de part et d'autre du seuil de 8 états qui change
+    de méthode), alphabets à trous, états négatifs, et les trois types
+    d'entiers."""
+    rng = np.random.default_rng(2024)
+    n_sites_choices = [0, 1, 2, 5, 11, 30, 60, 120]
+    n_samples_choices = [1, 2, 5, 20, 40, 80]
+    n_states_choices = [1, 2, 3, 4, 6, 8, 9, 12]
+    dtypes = [np.int8, np.int32, np.int64]
+    for _ in range(1500):
+        n_sites = int(rng.choice(n_sites_choices))
+        n_samples = int(rng.choice(n_samples_choices))
+        n_states = int(rng.choice(n_states_choices))
+        states = rng.choice(12, size=n_states, replace=False)
+        if rng.random() < 0.15:
+            states = states - 1  # inclut -1 (donnée manquante)
+        dtype = dtypes[int(rng.integers(len(dtypes)))]
+        matrix = rng.choice(states, size=(n_sites, n_samples)).astype(dtype)
+        compare_pairwise_hamming_distances(matrix)
+
+
+def test_pairwise_hamming_distances_around_the_state_threshold():
+    """Jusqu'à 8 états la fonction passe par un produit matriciel par état ;
+    au-delà, par la comparaison directe de toutes les paires. Les deux côtés
+    du seuil doivent donner le même résultat que l'oracle."""
+    rng = np.random.default_rng(11)
+    for max_state in (6, 7, 8, 9, 10):  # 8 états = états 0..7, 9 états = 0..8
+        matrix = rng.integers(0, max_state + 1, size=(20, 40)).astype(np.int32)
+        matrix[0, :] = np.arange(40) % (max_state + 1)  # force tous les états présents
+        compare_pairwise_hamming_distances(matrix)
+
+
+def test_pairwise_hamming_distances_int8_extremes():
+    """Soustraire le minimum dans le type d'origine déborderait pour `int8` :
+    les bornes -128 et 127 doivent donner les bonnes distances."""
+    matrix = np.array([[127, -128, 127], [-128, 127, -128]], dtype=np.int8)
+    assert _pairwise_hamming_distances(matrix).tolist() == [2, 0, 2]
+    compare_pairwise_hamming_distances(matrix)
 
 
 def test_mean_pairwise_differences_per_group(dna_context_te2):

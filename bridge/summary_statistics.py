@@ -1423,10 +1423,22 @@ def _pairwise_hamming_distances(matrix: np.ndarray) -> np.ndarray:
     """
     if matrix.shape[1] == 0:
         raise ValueError("La matrice de génotypes est vide.")
-
-    matrix_hammming = (matrix[:, :, None] != matrix[:, None, :]).sum(axis=0)
-    triangle_sup = _triu_indices(matrix_hammming.shape[0])
-    return matrix_hammming[triangle_sup]
+    if matrix.shape[0] == 0:
+        return np.zeros((matrix.shape[1] * (matrix.shape[1] - 1)) // 2, dtype=int)
+    shifted = matrix.astype(np.int64) - int(matrix.min())
+    K = int(shifted.max()) + 1  # nombre d'états (0..K-1), entier Python
+    n_sites = shifted.shape[0]
+    if K > 8:
+        # Boucler sur plus que 8 états coute plus cher que la comparaison directe.
+        matrix_hamming = (matrix[:, :, None] != matrix[:, None, :]).sum(axis=0)
+    else:
+        pairwise_matrix = np.zeros((matrix.shape[1], matrix.shape[1]), dtype=np.float32)
+        for k in range(K):
+            X = shifted == k
+            pairwise_matrix += X.T @ X.astype(np.float32)
+        matrix_hamming = n_sites - pairwise_matrix
+    triangle_sup = _triu_indices(matrix_hamming.shape[0])
+    return np.rint(matrix_hamming[triangle_sup]).astype(np.int64)
 
 
 def compute_MPD(
