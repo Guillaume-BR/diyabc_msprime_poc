@@ -42,6 +42,18 @@ independent DIYABC runs, no column in common, `ML3p_2.3.4` absent). Any column f
 once and not again is noise; the flags that were not were traced to their cause (see
 Closed investigations: `DTA_2_2`, `ML3p_2.3.4`, the serial IndSeq replay).
 
+**Validation status after the 13-14/10 changes (`<A>` replicates, shared `<M>` tree,
+seed-independent replays).** The `<A>` batching changes every DNA and MicroSat
+value at equal seed, so these were re-replayed against the real DIYABC:
+`toy_example2_ms_dna_50loci_{JK,K2P,TN}` (two replays each, no KS flag; `TN` is the
+mixed header), the non-serial MicroSat sets (no divergence reported) and
+`toy_example1_ms_seriel`. On the latter, `AML_2_3.1.2` and `AML_2_1.3.4` were flagged
+with the base seeds and both **vanished with `seed_offset`** (p = 0.005 → 0.79 for
+the first); the sign test stays at −0.4 % to −1.3 %, unchanged by the batching (the
+known loci-count residual, 50 loci here). SNP code is untouched by the batching.
+Statistics optimizations of the same days are output-identical and were checked by
+`scripts/compare_particles_dna.py` / `compare_particles_microsat.py`, not by replay.
+
 Validation means a *paired* comparison: the real DIYABC priors are replayed
 particle-by-particle through our pipeline (`replay_reftable_simulation_snp*`,
 `scripts/replay_diyabc_priors*.py`) and the two reftables compared
@@ -311,7 +323,18 @@ Each stage is a separate module with no cross-cutting logic:
    (`with_maf_filter`) rejects and resimulates below threshold, mirroring
    `ParticleC::mafreached`; `<MAF=hudson>` is the no-op fast path. Also holds
    the whole DNA-sequence and MicroSat mutation machinery (see "Domain
-   knowledge" below).
+   knowledge" below). **DNA and MicroSat genealogies are built in one place since
+   13/10**: `_simulate_ancestries_for_loci(list_loci, family, ...)` (`family` =
+   `"S"` DNA or `"M"` MicroSat) returns `{locus name: TreeSequence}`, grouped by
+   `_grouping_loci_by_group_and_heritage` on the key `(heritage, sequence length)`
+   (length is `locus.dnalength` for DNA and **1 for MicroSat**). The four mutation
+   loops (drawing and `_from_values`, DNA and MicroSat) only *read* that dict and
+   keep their own mutation seeds, `_locus_seed(seed, _MUTATION_SEED_OFFSET, i)` with
+   `i` the position in the **full** `list_loci`. Per heritage type: `<M>` one
+   `sim_ancestry` per `(heritage, length)` (one shared tree, bit-identical to the old
+   per-locus calls); `<A>` one `sim_ancestry(num_replicates=len(group))` per group
+   (**changes every value at equal seed**, see Closed investigations); `<X>`, `<Y>`,
+   `<H>` one call per locus with their own samples and seeds.
 
 9. **`snp_writer.py`** — `.snp` output, only used by the deprecated
    subprocess path.
@@ -319,7 +342,17 @@ Each stage is a separate module with no cross-cutting logic:
 10. **`summary_statistics.py`** — pure numpy reimplementation of all stats:
     130 SNP (ML1-3, HW, HB, FST1-4, NEI, AML, F3, F4), 13 DNA-sequence, 11
     MicroSat + `AML`. Each function's docstring names the exact `sumstat.cpp`
-    function it transcribes — **check there before changing a formula.**
+    function it transcribes — **check there before changing a formula.** The DNA
+    dispatch (`_DNA_PER_SAMPLE_STATS`, `_DNA_PAIRWISE_STATS`) calls every statistic
+    with the same keywords, and `compute_all_statistics_dna` computes once per
+    group and per locus what several statistics share: `layouts`,
+    `genotype_matrices_per_locus`, `minor_counts_per_locus` (MNS, VNS) and
+    `pairwise_distances_per_locus` (MPD, VPD, DTA, MP2 and the *within* half of HST;
+    the *between* distances of MPB and HST are a different function and are not
+    shared). **A new shared input is a new keyword on all 13 statistics**: the ones
+    that do not read it accept it and ignore it (say so in the docstring), and each
+    consumer keeps a fallback (`if x is None: x = <build it>` before its loop) so it
+    stays callable alone, which is what the unit tests do.
 
 11. **`pipeline.py`** — orchestrates 1-10, no logic of its own.
     `compute_summary_statistics_snp` (+ `_dna` / `_microsat` / `_from_values`
@@ -459,6 +492,31 @@ locus/particle.
   made before 05/10 are no longer comparable to a fresh run. Every validated dataset
   was re-replayed after the full conversion (see the validation status under the
   table at the top).
+
+- **A batch seed must be unique per (family, batch), and the KS cannot tell.** The
+  `<A>` replicates of `_simulate_ancestries_for_loci` draw their seed with
+  `_locus_seed(seed, _SHARED_A_ANCESTRY_SEED_OFFSET, _FAMILY_SEED_OFFSET[family] +
+  batch_A_counter)` (`_FAMILY_SEED_OFFSET = {"M": 5_000_000, "S": 6_000_000}`;
+  `batch_A_counter` counts the `<A>` batches of the call). The first version used
+  index **0 for every batch and one constant for both families**: within a particle,
+  the 10 MicroSat `<A>` trees were *bit-identical* to the first 10 DNA `<A>` trees
+  (and two batches of one family would have been too). Every column kept its correct
+  marginal distribution, so **no per-column KS could see it**; it was found by
+  comparing the trees themselves, and is guarded by
+  `test_independent_family_trees`. Any new derived seed needs a test that two
+  consumers which must be independent get different trees. (Note the name
+  `_SHARED_A_...` is historical: the replicates are independent, only `<M>` and `<Y>`
+  share a genealogy.)
+- **A persistent KS flag across two replays only counts with independent msprime
+  noise, and `seed_offset` is how to get it.** Particle seeds are `particle_index + 1`
+  in every replay, so a second replay of the same prior draws re-uses the same random
+  streams. `replay_reftable_simulation_microsat` (and its worker) take
+  `seed_offset: int = 0`, added to the raw particle seed (the one seed that stays raw);
+  `scripts/replay_diyabc_priors_ms.py` exposes it as `SEED_OFFSET`. Re-run a
+  suspicious replay with an offset (100 000, 200 000) before investigating a flagged
+  column: a flag that moves is noise (`DTA_2_2`, `ML3p_2.3.4`, `AML_2_3.1.2`). Only the
+  MicroSat chain has the parameter; the other replay entry points still use
+  `particle_index + 1` (add it the same way when needed).
 
 ## Closed investigations — do not reopen
 
@@ -750,6 +808,30 @@ under the date given.
   −0.05 %).** Lesson: a refactor that
   touches one half of a drawing/replay pair must be checked against the other half, and
   a feature validated by replay needs a test that replays it.
+
+- **`<A>` genealogies batched with `num_replicates` (13/10) — statistically equivalent,
+  not identical.** One `sim_ancestry(num_replicates=n)` per `(heritage, length)` group
+  replaces `n` calls (about 1.25 ms of fixed msprime cost each, against 0.15 ms
+  batched, measured on the real demography; the SNP path already used this
+  technique, `simulate_independent_loci`). Replicates draw from one stream, so
+  **every DNA and MicroSat statistic changed at equal seed** (44 golden values in 28
+  tests regenerated by a script that rewrites each literal from the actual value,
+  median relative move 12 %, 90th percentile 78 % on 5-10 loci); validated by replay, see the validation
+  status at the top. Two things it must keep: the batch index (previous bullet under
+  Hard rules) and the iteration: the generator is lazy, consumed with
+  `zip(loci, replicates, strict=True)` inside the helper, so a locus count that
+  disagrees with the replicate count raises instead of shifting trees. The `<M>`
+  shared tree (one call per `(heritage, length)`) is the exact half of the change:
+  bit-identical to the old per-locus calls (`compare_particles_*` 0 differences).
+- **`AML_2_3.1.2` / `AML_2_1.3.4` on `toy_example1_ms_seriel` (14/10) — correlated
+  noise, not a defect.** Flagged at p = 0.005 (run 0, scenario 2) and p = 0.001 (run 1,
+  scenario 1) with the base seeds, **identically before and after the batching**
+  because they sit in G2, the 5 `<M>` loci, which are bit-identical to the old code
+  (86 of 162 columns of the replay identical). With `seed_offset` 100 000 / 200 000
+  they disappear (p = 0.79 for the first) and other columns appear (`MGW_2_3`,
+  `MGW_2_4`, `FST_1_1.2`, `DM2_2_3.4`, p between 0.007 and 0.047, none present with
+  the base seeds), well below the ~7.6 flags per 152 columns expected at 5 %. G2 has
+  5 loci sharing one tree: one random realization per particle.
 
 ## Domain knowledge
 
@@ -1072,7 +1154,7 @@ because DIYABC's own output depends on them.
   accumulators, duplicate `def` names, name shadowing, signature refactors)
   live in the persistent memory files, not here.
 
-## Performance — measured state (07/10; MicroSat updated 12/10)
+## Performance — measured state (07/10; MicroSat 12/10; DNA and MicroSat 13-14/10)
 
 Verdicts only; each case below is meant to be worked in its **own session**.
 Narrative and raw numbers: `notes/exploration.md`.
@@ -1086,16 +1168,22 @@ case: the variance is not measured.**
 
 | Case | Directory | Loci | DIYABC | msprime | msprime / DIYABC | msprime time: sim / stats |
 |---|---|---|---|---|---|---|
-| IndSeq Hudson | `human` | 5000 | 129.7 s | 291.6 s | 2.2x | 99.3 / 0.7 % |
-| IndSeq MAF > 0 | `toy_example3_500loci` | 500 | 5.9 s | 49.0 s | **8.3x** | 99.1 / 0.9 % |
-| IndSeq serial | `human_seriel` | 5000 | 141.7 s | 268.4 s | 1.9x | 99.2 / 0.8 % |
-| PoolSeq Hudson | `toy_example4_hudson` | 100 | 28.6 s | 22.5 s | 0.79x | 98.7 / 1.3 % |
-| PoolSeq MRC > 0 | `toy_example4` | 100 | 93.5 s | 46.8 s | 0.50x | 99.4 / 0.6 % |
-| PoolSeq serial | `toy_example4_seriel` | 1000 | 571.7 s | 255.4 s | 0.45x | 99.8 / 0.2 % |
-| DNA | `toy_example2_ms_dna_50loci_TN` | 110 | 1.7 s | 104.1 s | **60x** | 74 / 26 % |
-| DNA serial | `..._50loci_TN_seriel` | 110 | 1.6 s | 104.1 s | **64x** | 74 / 26 % |
-| MicroSat | `toy_example1_ms_modified` | 50 | 2.3 s | **41.0 s** (228.7 s before 12/10) | **18x** | not re-measured |
-| MicroSat serial | `toy_example1_ms_seriel` | 50 | 2.4 s | 256.7 s (before 12/10, not re-measured) | 105x | 30 / 70 % |
+| IndSeq Hudson | `human` | 5000 | 129.7 s | 238.4 s (291.6 s on 07/10) | 1.8x | 99.2 / 0.8 % |
+| IndSeq MAF > 0 | `toy_example3_500loci` | 500 | 5.9 s | 39.7 s (49.0 s) | **6.7x** | 99.1 / 0.9 % |
+| IndSeq serial | `human_seriel` | 5000 | 141.7 s | 228.7 s (268.4 s) | 1.6x | 99.2 / 0.8 % |
+| PoolSeq Hudson | `toy_example4_hudson` | 100 | 28.6 s | 22.5 s (07/10, not re-run) | 0.79x | 98.7 / 1.3 % |
+| PoolSeq MRC > 0 | `toy_example4` | 100 | 93.5 s | 41.0 s (46.8 s) | 0.44x | 99.4 / 0.6 % |
+| PoolSeq serial | `toy_example4_seriel` | 1000 | 571.7 s | 228.8 s (255.4 s) | 0.40x | 99.8 / 0.2 % |
+| DNA | `toy_example2_ms_dna_50loci_TN` | 110 | 1.7 s | **13.4 s** (104.1 s on 07/10; 16.4 s at the 14/10 morning benchmark) | **7.9x** | ~63 / 34 % (one particle, 14/10) |
+| DNA serial | `..._50loci_TN_seriel` | 110 | 1.6 s | 104.1 s (07/10, not re-run) | 64x | 74 / 26 % |
+| MicroSat | `toy_example1_ms_modified` | 50 | 2.3 s | **20.4 s** (41.0 s on 12/10, 228.7 s before) | **8.9x** | 44 / 56 % |
+| MicroSat serial | `toy_example1_ms_seriel` | 50 | 2.4 s | **23.6 s** (256.7 s on 07/10) | **9.8x** | 38 / 62 % |
+
+The 14/10 morning benchmark (`benchmark_results.csv` on `bench/timings`) ran the code
+with the `<A>` batching and the shared `<M>` tree, **before** the DNA statistics work of
+the same day; the DNA 13.4 s is a later single run after it. The SNP gains are not
+isolated (candidates: `record_provenance=False` on every `sim_ancestry` /
+`sim_mutations`, and the sample layout read by array). One run per row.
 
 - **Orchestration is not the problem.** In all ten cases
   `(sum sim + sum stats) / 16` lands within 0.5-1.5 % of the wall time, so
@@ -1150,18 +1238,52 @@ case: the variance is not measured.**
   - Replay path before the numpy matrix reached it (3 particles, `time_stages_microsat`):
     matrices 61 %, `sim_ancestry` 19 %, `sim_mutations` 4 %, all statistics together
     13 %. `ms_seriel` was not re-measured.
-- **DNA** is split 74 % simulation / 26 % statistics; not profiled.
+- **DNA: 104.1 s → 13.4 s (x7.8), one particle 426 → 90 ms in-process (14/10).** Every
+  step output-identical at equal seed except the `<A>` batching (Closed investigations).
+  Floor check: 1000 particles x 90 ms / 8 physical cores = 11.3 s, measured 13.4 s
+  (x1.19: pool start-up, hyperthreading); **the benchmark scales with physical
+  cores**, not 16. Steps, with the gain measured *in situ* (single particle, then
+  `perf_counter`): provenance off (3-4 %, `cProfile` said 10 %); genotype matrix read
+  once per locus (1290 → 100 calls); `_minor_allele_counts_at_segregating_sites`
+  without the per-site `np.unique` (65 → 13 ms under `cProfile`); `_triu_indices`
+  cached; `compute_sample_layout` from `ts.individuals_nodes` (111 → 3 µs per call);
+  `rescale_demography` once per heritage type (1 copy instead of 50: **6 ms real**,
+  56 ms under `cProfile`); shared `<M>` tree and batched `<A>` replicates
+  (`sim_ancestry` 100 → 2 calls; one particle 0.294 → 0.123 s); `_count_distinct_haplotypes` as a
+  base-K integer code (54 → 9 µs per call); `_pairwise_hamming_distances` as one
+  indicator matrix product per state (22 → 14 µs) and computed once per
+  (locus, sample) and shared (926 → 200 calls per particle, -11 ms).
+  - `_count_distinct_haplotypes`: columns coded in base K = max state + 1 after a
+    shift by the minimum (in `int64`: `int8` extremes overflow otherwise); **the
+    overflow guard `K ** n_sites > 2**62` must be evaluated with Python ints**, numpy
+    ints wrap silently; above it, falls back to `np.unique(axis=1)`. Zero sites → 1.
+  - `_pairwise_hamming_distances`: K ≤ 8 states → sum over states of
+    `(shifted == k).T @ (shifted == k)` in `float32` (exact), distance = sites − agreements,
+    upper triangle by cached `_triu_indices`; K > 8 → the old broadcast. **Output is
+    `int64`** (a float output flips every downstream type). Zero sites → zeros of length
+    `n(n−1)/2`, not an empty vector.
+  - **What remains (90 ms per particle):** `sim_mutations` 36 % (100 calls x 0.3 ms: ~0.18 ms
+    fixed msprime cost plus ~0.115 ms for the 100-interval `RateMap`; cannot be
+    batched, each locus has its own matrix, rate map and seed), statistics 34 % (13
+    statistics, none above ~3 ms, plus ~9 ms of shared preparation), site rates 13 %
+    (10 000 `random.gammavariate` calls; numpy would change the stream, so a replay
+    revalidation for at most -9 ms), `sim_ancestry` 12 %, matrices 2 %. **Verdict: DNA is
+    done.** The remaining ratio to DIYABC (~7-8x) is the one-library-call-per-locus
+    model, not a local defect.
 
-**Open leads, one session each**: (1) MicroSat: re-run `time_stages_microsat` on the
-replay path for the post-optimization split (the 87 / 13 % simulation / statistics of
-12/10 predates the numpy matrix on that path); what remains is mostly
-`msprime.sim_ancestry` / `sim_mutations`, library code called 50 times per particle.
-DNA needs a profile first and may carry the same redundancies. (2) IndSeq MAF > 0.
-(3) IndSeq Hudson / serial: per-locus tskit overhead. (4) PoolSeq: none. **Every
-optimization touches code validated against DIYABC**: outputs must stay identical at
-equal seed (golden tests, then `compare_particles_microsat`, then a paired replay read
-with the KS **and** the sign test on `rdiff_mean`), and the sibling rule applies unless
-the user decides otherwise — ask first.
+**Open leads, one session each**: (1) MicroSat statistics are now 56-62 % of a
+particle (126 ms in-process on `ms_modified`: 67 ms of statistics). `FST` alone is
+23.7 ms (35 % of them): precomputing the per-sample allele counts once per locus and
+keeping the original `set` iteration order for the float sums gave **bit-identical**
+results on the real captured calls and 28.8 → 10.8 ms per particle (x2.7); a plain
+vectorization over alleles only x1.7. Not applied. Then `AML` 14.5 ms, `LIK` 7.5 ms and
+~15 ms of shared reads and layouts. (2) IndSeq MAF > 0 (6.7x). (3) IndSeq Hudson /
+serial: per-locus tskit overhead. (4) PoolSeq: none. (5) DNA: see the verdict above.
+**Every optimization touches code validated against DIYABC**: an output-neutral one
+must stay *identical* at equal seed (`compare_particles_dna` / `_microsat`, then the
+golden tests); one that changes the random stream (the `<A>` batching) is validated by
+a paired replay read with the KS, the sign test **and a re-run with `seed_offset`**. The
+sibling rule applies unless the user decides otherwise — ask first.
 
 **Measuring, traps already met**
 - Profile **one particle in-process**, never the replay: under a
@@ -1193,12 +1315,34 @@ the user decides otherwise — ask first.
   `_length_by_sample` and `_genotypes_by_sample_and_individuals` must each run once
   per locus.
 - Identity check of an optimization: `compare_particles_microsat save ref.json` on the
-  code BEFORE (`git stash`), `compare ref.json` after. Exact equality, no tolerance.
+  code BEFORE, `compare ref.json` after. Exact equality, no tolerance. **Take the
+  reference on `HEAD` in a clean worktree** (`git worktree add --detach <tmp> HEAD`,
+  symlink `reference` into it, `save` there, `compare` from the main tree) rather than
+  with `git stash`, which also stashes unrelated work; **a reference older than a
+  statistical change is void** (`ref_stats_dna.json` stopped being valid at the `<A>`
+  batching).
+- **`cProfile` ranks, `perf_counter` decides, and the synthetic micro-benchmark lies
+  too.** Small numpy calls are inflated 2-5x: provenance (10 % predicted, 3-4 % real),
+  `rescale_demography` (12 % predicted, 2 % real), `_pairwise_hamming_distances`
+  (66 µs predicted by a miscounted loop, 22 µs real). A function benchmarked on a
+  synthetic matrix of 11 sites x 20 columns (9 µs) cost 22 µs on the real matrices,
+  which include 40- and 80-gene merges. Capture the real arguments with a spy (keep
+  the original function in a variable *before* patching, or the spy times itself) and
+  time the function on them; count calls with `print_callers`.
+- **Single-particle timings carry ±7 % noise** (the same code gave 0.410 and 0.382 s):
+  run 10-20 particles and take the minimum or the median; a gain under ~5 % is not
+  detectable on one.
+- **Golden tests pin the seeded simulation, not the formula.** They stayed green
+  through all the output-neutral refactors (their use) and moved with the first statistical
+  change; regenerating them proves nothing about correctness (the replay does). A
+  formula test should be built on a hand-made `TreeSequence`.
 
 **Where the tooling lives.** Tracked in this repository:
-`scripts/compare_particles_microsat.py` (`save` / `compare` a JSON of N particles at
-equal seed: the identity check, exact equality, drawing path only),
-`scripts/profile_particle_microsat.py` (one particle, `cProfile`) and
+`scripts/compare_particles_microsat.py` and `scripts/compare_particles_dna.py`
+(`save` / `compare` a JSON of N particles at equal seed: the identity check, exact
+equality, drawing path only; **the replay paths are covered by no identity script**),
+`scripts/profile_particle_microsat.py` and `scripts/profile_particle_dna.py` (one
+particle, `cProfile` plus a wall time without profiler) and
 `scripts/time_aml_microsat.py`. The **stage timer** `scripts/time_stages_microsat.py`,
 the benchmark scripts (`benchmark_1000_msprime.py`, `bench_1000_diyabc.py`),
 `scripts/profile_particle.py` and the `timings` plumbing of `pipeline.py` /

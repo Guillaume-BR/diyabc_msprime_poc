@@ -4276,3 +4276,259 @@ sur l'autre.
 - L'écart AML entre `ms_modified` et `ms_seriel` (0,67 s contre 0,93 s à appels
   identiques), noté le 07/10, n'a pas été revu ; AML ne pesant plus que ~3 % d'une
   particule, il perd son intérêt.
+
+
+## 2026-10-14 — Optimisation DNA : une particule de 426 à 90 ms, et tout ce que le profileur a laissé croire
+
+Séance du 12 au 14/10 (menée en mode mentor : le code des optimisations a été écrit par
+l'utilisateur, l'assistant mesurait, relisait et écrivait les tests). Le chiffre de départ
+est le benchmark du 07/10 : DNA 104,1 s pour 1000 particules, 60× DIYABC, 74 % simulation /
+26 % statistiques. Les verdicts sont dans `CLAUDE.md` (section Performance) ; ce qui suit
+est le récit, y compris les erreurs.
+
+### 1. Le point de départ
+
+Profil d'une particule en un seul processus (`scripts/profile_particle_dna.py`, seed 1,
+scénario 1, `toy_example2_ms_dna_50loci_TN`, 110 loci dont 100 ADN) : **0,426 s** sans
+profileur, 0,690 s sous `cProfile` (×1,62), 1 126 404 appels de fonction. Parts sous
+`cProfile` : simulation (`dna_mutation_simulation_per_locus`) 64 %, statistiques 32 %.
+Les postes qui sortaient : `sim_ancestry` (100 appels, 38 %) dont `Simulator.__init__`
+(0,107 s propres), `copy.deepcopy` (53 000 appels, dont 50 copies de
+`rescale_demography`), la sérialisation JSON de la provenance, `np.unique` (4 704
+appels), `genotype_matrix` (1 290 appels : 13 statistiques × 100 loci), `individual()`
+(4 000 appels), `random.gammavariate` (10 744 appels).
+
+### 2. Les étapes, dans l'ordre
+
+| étape | particule (1 processus) | appels de fonction | remarque |
+|---|---|---|---|
+| départ | 0,426 s | 1 126 404 | |
+| provenance désactivée (`record_provenance=False`, 8 sites) | 0,410 / 0,382 s | 982 404 | le même code a donné deux temps à 7 % d'écart : c'est le bruit |
+| matrice de génotypes lue une fois par locus ; compte d'allèle minoritaire vectorisé | 0,321 s | 809 564 | stats sous `cProfile` 0,224 → 0,133 s |
+| `_triu_indices` en cache ; `compute_sample_layout` par tableau | 0,305 s | | 111 → 3 µs par appel de layout |
+| `rescale_demography` : une copie par type d'hérédité | 0,294 s | 472 693 | **6 ms réels** (56 ms sous `cProfile`) |
+| arbre `<M>` partagé | 0,199 s | 347 204 | `sim_ancestry` 100 → 51 appels |
+| helper des généalogies + réplicats `<A>` | **0,123 s** | | `sim_ancestry` 51 → 2 appels |
+| haplotypes en base K | 108 ms | | 54 → 9 µs par appel |
+| distances de Hamming : produit matriciel | 106 ms | | −2 à −4 ms |
+| distances de Hamming : partagées (926 → 200 appels) | **95 ms** | | −11 ms |
+| remesure par étapes (12 particules) | 90 ms | | voir §8 |
+
+Le benchmark complet (1000 particules, 16 workers) : 16,4 s au matin du 14/10 (code avec
+lot et arbre partagé, avant les statistiques), **13,41 s** après les statistiques sur
+`50loci_TN` seul. Plancher : 1000 × 90 ms / 8 cœurs physiques = 11,3 s ; mesuré ×1,19. Le
+benchmark suit les cœurs physiques, pas les 16 fils.
+
+### 3. Ce que le profileur a laissé croire
+
+Le fil rouge de la séance. `cProfile` ajoute un coût fixe à chaque petit appel numpy et
+gonfle ce code de 2 à 5×. Trois prévisions faites sur le classement par `cumtime`, puis
+mesurées :
+
+- **Provenance** : prévue ~10 % (0,069 s de JSON), gain réel 3 à 4 % (0,426 → 0,410 s).
+- **`rescale_demography`** : prévue 12 % (0,056 s), gain réel **6 ms**, 2 % (0,12 ms par
+  copie, mesuré sur la vraie démographie à 5 populations).
+- **`_pairwise_hamming_distances`** : 0,053 s sous `cProfile`, 20 ms réels par particule.
+
+Deux erreurs de mesure de l'assistant, notées parce qu'elles auraient pu tromper : un
+micro-benchmark synthétique (11 sites × 20 colonnes, 9 µs) sous-estimait le coût réel
+(22 µs sur les vraies matrices, qui comptent des fusions de 40 et 80 gènes) ; et un
+« 67 µs par appel » venait d'une division par le mauvais nombre d'appels. Règle retenue :
+capturer les arguments réels par un espion, chronométrer sur eux, compter les appels avec
+`print_callers`. Autre piège rencontré : l'espion remplaçait la fonction que le script
+relisait ensuite comme « originale » ; les mesures agrandissaient la liste qu'elles
+parcouraient (boucle infinie, mémoire saturée, code 137). Garder l'original dans une
+variable avant de patcher.
+
+### 4. Les généalogies : l'arbre `<M>` partagé (exact) et les lots `<A>` (statistique)
+
+**Le plancher de msprime** (vraie démographie, 20 + 20 individus, minimum de 15 tours) :
+1,25 ms par appel `sim_ancestry` séparé, 0,15 ms par locus quand les 50 réplicats sont
+demandés en un appel (×8 à ×10). La longueur de séquence (1 contre 100) et le nombre de
+populations (3 contre 5) n'y changent presque rien : c'est un surcoût fixe par appel
+(analyse des arguments, validation de la démographie, allocation du simulateur). Le
+premier tour de mesure donnait 2,2 ms : machine froide, d'où le minimum de plusieurs
+tours. Le chemin SNP utilisait déjà cette technique (`simulate_independent_loci`).
+
+**Levier 1, exact.** Tous les loci `<M>` reçoivent la graine
+`_locus_seed(seed, _SHARED_M_ANCESTRY_SEED_OFFSET, 0)` : avec les mêmes `samples`, la
+même démographie et la même longueur, `sim_ancestry` produit 50 fois la même
+`TreeSequence`. Un appel par `(hérédité, longueur)` suffit, sortie identique au bit près
+(`compare_particles_dna` et `_microsat`). Pour MicroSat la longueur est toujours 1 (un
+locus est un site à alphabet d'allèles ; les nombres `2 40` du header décrivent la
+mutation, pas la généalogie ; `dnalength` y vaut `None`).
+
+**Levier 2, statistique.** Un `sim_ancestry(num_replicates=len(lot))` par lot de loci `<A>`
+de même longueur. Les valeurs changent à graine égale. Le travail a été fait en deux temps
+pour que le risque soit séparable : (A) un refactor pur, `_simulate_ancestries_for_loci`
+appelé par les quatre boucles de mutation, un appel par locus avec `i` = position dans le
+`list_loci` complet — sortie **identique** ; puis (B) le lot.
+
+**Le piège de la graine du lot.** La première version utilisait l'indice 0 pour tous les
+lots et une seule constante pour les deux familles. Vérifié à la main sur le jeu TN
+(graine 7) : l'arbre 0 des `<A>` ADN est égal à l'arbre 0 des `<A>` MicroSat, de même pour
+l'arbre 1, alors que l'arbre 0 diffère de l'arbre 1 au sein de l'ADN. Les dix loci `<A>`
+MicroSat réutilisaient les dix premiers arbres de l'ADN. Chaque colonne gardait la bonne
+loi marginale : **un KS par colonne ne peut pas voir une corrélation entre familles**. Le
+correctif : `_FAMILY_SEED_OFFSET = {"M": 5_000_000, "S": 6_000_000}` plus un compteur de
+lots, `_locus_seed(seed, _SHARED_A_ANCESTRY_SEED_OFFSET, _FAMILY_SEED_OFFSET[family] +
+batch_A_counter)`, gardé par `test_independent_family_trees` (vérifié rouge avant, vert
+après). Le nom `_SHARED_A_...` est trompeur : seuls `<M>` et `<Y>` partagent un arbre.
+
+Erreurs de relecture attrapées sur le helper, dans l'ordre où elles sont apparues (toutes
+visibles par un test ou par `compare_particles_*`) : un regroupement par groupe du header
+qui ignorait la longueur (un lot de longueurs mélangées aurait pris celle du premier
+locus) ; le filtre de famille perdu en route (les loci `[M]` entraient dans le regroupement
+`"S"`) ; `key` indenté sous le `if group not in` (seul le premier locus de chaque groupe
+était gardé, puis une clé périmée dans un groupe mixte) ; `UnboundLocalError` d'une
+variable calculée dans un `if` ; l'indice `i` d'un `enumerate` de lots utilisé comme
+graine (tous les loci d'un lot recevaient la même graine) ; `samples_by_locus` utilisé pour
+`<A>` ; `family="S"` copié dans les deux fonctions MicroSat (`KeyError: 'Locus_M_A_1_'`) ;
+le dictionnaire entier passé à `simulate_dna_mutations` dans le rejeu DNA ; `if not
+block_treated.size == 0: continue` (condition inversée, 68 tests rouges) ; le masque
+`flatten_block != 1` au lieu de `!= -1` dans la version par tableau de
+`compute_sample_layout`.
+
+### 5. Les valeurs dorées : 28 tests, 44 valeurs
+
+Après le lot `<A>`, 28 tests échouaient, tous par écart de valeurs (jamais d'exception).
+Un script jetable (dans le dossier temporaire de la séance, pas dans le dépôt) relançait
+chaque test, lisait la valeur réelle dans l'assertion en échec et réécrivait le littéral
+attendu ; pour les valeurs dérivées à la main, il conservait la forme et recalculait le
+numérateur (`94 / 10` → `85 / 10`). Rapport de plausibilité : écart relatif médian 12 %,
+90e centile 78 %, maximum 730 % (`DM2`, un seul résultat très variable) ; D de Tajima de
+`pop2` qui change de signe sur 5 loci ; aucune valeur passée à 0. Ce sont des échantillons
+de 5 à 10 loci. Réflexion retenue : ces tests épinglent la simulation tirée avec la graine
+42, pas la formule. Ils sont restés verts pendant toutes les étapes à sortie identique et
+ont échoué à la seule étape statistique — c'est leur valeur. Les régénérer ne prouve rien
+de la justesse. Une fixture de formule devrait être une `TreeSequence` construite à la
+main, dont les valeurs se calculent sur le papier. Non fait.
+
+### 6. La validation par rejeu
+
+- **DNA** `toy_example2_ms_dna_50loci_{JK,K2P,TN}` : deux rejeux chacun, aucune colonne
+  flaguée au KS (rapporté par l'utilisateur). Un rejeu mixte TN avant la correction de la
+  graine du lot : 20,82 s et 21,15 s.
+- **MicroSat non sériel** : aucune divergence (rapporté).
+- **`toy_example1_ms_seriel`** : `AML_2_3.1.2` flaguée dans les deux rejeux. Les rejeux du
+  06/10 (ancien code) et de la veille (nouveau code) donnent, pour G2 (les 5 loci `<M>`),
+  des colonnes **bit-identiques** : 86 colonnes sur 162 sont égales (scénario, 9
+  paramètres, 76 statistiques de G2) ; seules les 76 de G1 (45 loci `<A>`) ont changé. Le
+  drapeau ne vient donc pas du lot.
+
+  Run DIYABC 0, scénario 2 : `AML_2_3.1.2` p = 0,005 (graines de base) → 0,787 (avec
+  `seed_offset` 100 000) ; `MGW_2_3` 0,019 → 0,028 ; `MGW_2_4` 0,213 → 0,047. Run 1 :
+
+  | version | scénario 1 | scénario 2 |
+  |---|---|---|
+  | ancien code, graines de base | `AML_2_1.3.4` (0,001), `AML_1_4.1.2` (0,017), `AML_2_2.3.4` (0,030) | `AML_2_3.1.2` (0,033) |
+  | nouveau code, graines de base | `AML_2_1.3.4` (0,001), `AML_2_2.3.4` (0,030) | `AML_2_3.1.2` (0,033) |
+  | nouveau code, graines +200 000 | aucune à 5 % | `FST_1_1.2` (0,007), `DM2_2_3.4` (0,039) |
+
+  À 5 % on attend ~7,6 colonnes flaguées sur 152 ; on en observe 0 à 4. Les priors sont
+  appariés (`max|diff| = 0`). Test des signes (priors et paramètres de mutation exclus) :
+  G1 de −0,4 % à −1,2 %, stable à ±0,5 point entre ancien et nouveau code, donc pas un
+  effet du lot ; G2 de +0,1 % à −1,3 %, de l'ordre du bruit de graines. Verdict : bruit
+  corrélé de graines identiques entre rejeux, comme `DTA_2_2` et `ML3p_2.3.4`.
+
+  **`seed_offset`.** Les graines de particule sont `particle_index + 1` dans tous les
+  rejeux, donc deux rejeux des mêmes priors réutilisent les mêmes flux. Ajout de
+  `seed_offset: int = 0` à `replay_reftable_simulation_microsat` et
+  `_run_single_particle_microsat_from_values` (`seed = particle_index + 1 + seed_offset`),
+  exposé comme `SEED_OFFSET` dans `scripts/replay_diyabc_priors_ms.py` (et `_mixed.py`).
+  La règle « jamais de graine par addition » vise les graines *dérivées* ; la graine de
+  particule reste brute, et toutes les dérivées passent ensuite par `_locus_seed`. Le
+  défaut 0 reproduit l'ancien comportement.
+
+### 7. Les statistiques DNA (14/10)
+
+Mesure au chronomètre de chacune des 13 statistiques (dispatch enveloppé, 10 particules),
+à 117 ms par particule dont 61 ms (52 %) de statistiques : `NHA` 10,0 ms, `DTA` 7,3, `HST`
+7,1, `NH2` 6,6, `VPD` 5,9, `MPD` 5,1, `MP2` 4,8, `PSS` 2,9, `MPB` 2,4, `NSS` 1,5. Deux
+familles de calcul dominaient : le comptage d'haplotypes distincts (~14 ms) et les
+distances de Hamming (~20 ms, **926 appels pour 200 matrices distinctes**, soit 100 loci ×
+2 échantillons, chacune recalculée 4,6 fois).
+
+- **Haplotypes.** `np.unique(matrix, axis=1)` (47 µs par appel) remplacé par un codage en
+  base K : chaque colonne devient un entier, puis un `np.unique` à une dimension. Trois
+  versions fausses avant la bonne, chacune attrapée par la comparaison à l'ancienne sur des
+  matrices aléatoires : la base prise égale au **nombre de sites** (collision :
+  `[[2, 0], [0, 1]]` donnait 1 haplotype au lieu de 2 ; 36 résultats faux et 1 694
+  exceptions sur 3 000 matrices) ; l'exposant `range(K)` au lieu de `range(n_sites)`
+  (3 835 exceptions sur 4 000) ; `K` entier numpy (`matrix.max() + 1`) : la garde de
+  dépassement `K ** n_sites > 2**62` déborde en silence en numpy. Version finale : décalage
+  par le minimum en `int64`, `K` entier Python, repli sur `np.unique(axis=1)`. 8 002
+  matrices (0 à 120 sites, trois types d'entiers, états négatifs, bornes `int8`) :
+  identiques. 54 → 9,2 µs par appel ; `NHA` 10,0 → 2,9 ms.
+- **Hamming.** Trois variantes mesurées sur 2 780 matrices réelles : diffusion d'origine
+  20,2 ms par particule, `scipy.spatial.distance.pdist` 14,6 ms, produit matriciel par état
+  12,7 ms (choisi, K ≤ 8, repli sur la diffusion au-delà). Erreurs de l'écriture : un nom
+  de variable à deux orthographes (2 545 exceptions sur 3 000), la comparaison faite sur
+  `matrix` au lieu de la matrice décalée (1 623 résultats faux dès que les états ne
+  commencent pas à 0), un résultat flottant au lieu d'`int64` (3 673 types différents).
+  Gain réel de la fonction seule : 2 à 4 ms par particule, très inférieur aux 7,5 ms du
+  micro-benchmark. Le partage, lui, vaut 11 ms : `_pairwise_distances_per_locus`, calculé
+  une fois par groupe et par locus dans `compute_all_statistics_dna`, passé en
+  `pairwise_distances_per_locus` aux 13 statistiques ; consommé par `MPD`, `VPD`, `DTA`
+  (via `_tajima_d_per_locus`), `MP2` et la partie « à l'intérieur » de `HST` (la partie
+  « entre » de `HST` et `MPB` utilisent `_pairwise_hamming_distances_between`, une autre
+  fonction non partageable). Compteur après : 200 appels par particule.
+- **`MNS`/`VNS`** : le compte d'allèle minoritaire est calculé deux fois ; le partager
+  (`minor_counts_per_locus`) a été fait, mais il ne rapporte que ~6 ms sous `cProfile`
+  (~1 % en réel) pour un paramètre de plus sur toutes les statistiques. Fait pour
+  l'exercice et pour la méthode ; ne pas refaire ce calcul de rentabilité.
+- **Une piste MicroSat non appliquée**, mesurée parce que `FST` est le premier poste des
+  statistiques MicroSat (23,7 ms, 35 %) : la vectorisation simple sur les allèles donne le
+  même résultat au bit près sur 900 appels réels pour ×1,7 (18,7 → 11,3 ms) ; en
+  précalculant les comptes d'allèles par échantillon et par locus et en gardant l'ordre
+  d'itération du `set` d'origine pour les sommes flottantes, bit-identique sur les appels
+  capturés, 28,8 → 10,8 ms par particule (×2,7). Mesurée hors de la session DNA : à
+  reprendre dans la session MicroSat.
+
+### 8. Le bilan, et ce qu'il reste
+
+Répartition d'une particule de 90 ms (12 particules, une moyenne de chronomètres) :
+
+| étape | temps | part |
+|---|---|---|
+| mutations (`simulate_dna_mutations`, 100 appels) | 32,4 ms | 36 % |
+| statistiques | 30,4 ms | 34 % |
+| taux de mutation par locus (tirages gamma par site) | 11,3 ms | 12,6 % |
+| généalogies | 10,8 ms | 12 % |
+| matrices de substitution | 1,6 ms | 1,8 % |
+| layouts, démographie, divers | 3,3 ms | 3,7 % |
+
+Benchmark du 14/10 au matin (`benchmark_results.csv`, une exécution) : IndSeq Hudson 238,4 s
+(1,8×), MAF > 0 39,7 s (6,7×), IndSeq sériel 228,7 s (1,6×), PoolSeq MRC 41,0 s (0,44×),
+PoolSeq sériel 228,8 s (0,40×), DNA 16,4 s, MS 20,4 s (8,9×), MS sériel 23,6 s (9,8×) ;
+PoolSeq Hudson et DNA sériel n'ont pas été rejoués. Le mieux des SNP (291,6 → 238,4 s sur
+`human`) n'est pas isolé.
+
+Pourquoi on s'arrête là sur DNA : `sim_mutations` coûte 0,3 ms par appel (183 µs avec un taux
+constant, +115 µs pour la `RateMap` à 100 intervalles, 2 µs pour construire le modèle) et
+ne peut pas être groupé, chaque locus ayant sa matrice, sa carte de taux et sa graine ;
+réécrire la pose des mutations en numpy changerait le flux et demanderait une
+revalidation complète pour au plus 20 %. Les tirages gamma (~9 ms) idem. Les statistiques
+n'ont plus de poste au-dessus de ~3 ms. L'écart restant avec DIYABC (~7 à 8×) tient au
+modèle « un appel de bibliothèque par locus ».
+
+### 9. Choses pratiques
+
+- **Le worktree `bench/timings`** était en retard de 4 puis 5 commits sur `main` quand le
+  benchmark a été lancé : mesurer sans fusionner mesure l'ancien code. La fusion s'était
+  arrêtée avant le commit de fusion (conflits résolus, `git commit --no-edit` manquant) ;
+  vérification : seuls `bridge/pipeline.py` et `bridge/reftable_loop.py` diffèrent de
+  `main`, ce que doit faire cette branche (chronomètres, retour en 5-tuple).
+- **Une édition faite dans le mauvais dépôt** (le cache de `rescale_demography` écrit dans
+  le worktree `timings`) : le profil ne bougeait pas du tout — mêmes 694 467 appels que
+  la veille. Comparer les *compteurs* avant de chercher ailleurs : un changement réel
+  déplace toujours au moins un compteur.
+- **`ruff format` pendant une édition en parallèle** : le formateur a réécrit
+  `summary_statistics.py` pendant que l'utilisateur modifiait le même fichier ; le fichier
+  d'origine d'un `Edit` est périmé dès qu'il est modifié entre deux lectures.
+- **Scripts de la séance** : `scripts/compare_particles_dna.py` et
+  `scripts/profile_particle_dna.py` (jumeaux des scripts MicroSat) ; les chronomètres par
+  statistique, par étape et les prototypes `FST` étaient jetables.
+- **Références d'identité** : prises sur `HEAD` dans un `git worktree` propre (lien
+  symbolique `reference`), jamais avec `git stash`. `ref_stats_dna.json` est périmé depuis
+  le lot `<A>`.
