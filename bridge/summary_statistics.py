@@ -1245,6 +1245,7 @@ def compute_NSS(
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
     minor_counts_per_locus: list[dict[str, int]] | None = None,
+    pairwise_distances_per_locus: list[dict[tuple[str, str], float]] | None = None,
 ) -> dict[str, float]:
     """Calcule NSS_i (cal_nss1p) : pour chaque échantillon, la moyenne du
     nombre de sites ségrégeants sur tous les loci du groupe passé en
@@ -1271,6 +1272,8 @@ def compute_NSS(
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
         minor_allele_counts_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
+        pairwise_distances_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
+
     Returns:
         Un dict {nom_echantillon: valeur_moyenne}.
     """
@@ -1349,6 +1352,7 @@ def compute_NHA(
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
     minor_counts_per_locus: list[dict[str, int]] | None = None,
+    pairwise_distances_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule le nombre moyen d'haplotypes distincts par échantillon sur un
     groupe de loci.
@@ -1360,6 +1364,8 @@ def compute_NHA(
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
         minor_counts_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
+        pairwise_distances_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
+
     Returns:
         Un dict {nom_echantillon: valeur_moyenne}.
     """
@@ -1441,6 +1447,41 @@ def _pairwise_hamming_distances(matrix: np.ndarray) -> np.ndarray:
     return np.rint(matrix_hamming[triangle_sup]).astype(np.int64)
 
 
+def _pairwise_distances_per_locus(
+    genotype_matrices_per_locus: list[dict[str, np.ndarray]],
+    sample_names: list[str],
+) -> list[dict[str, np.ndarray]]:
+    """Calcule UNE FOIS les distances de Hamming par paire de chaque
+    échantillon de chaque locus, pour que les statistiques qui en ont besoin
+    (MPD, VPD, DTA, MP2, HST) les lisent au lieu de les recalculer.
+
+    Sœur de `_minor_counts_per_locus` : même forme d'entrée et de sortie, et
+    les matrices viennent de l'appelant (`genotype_matrices_per_locus`), qui les
+    a déjà lues une seule fois par locus.
+
+    Args:
+        genotype_matrices_per_locus: Une entrée par locus, dans l'ordre des
+            `tree_sequences` du groupe : {nom_échantillon: matrice (n_sites,
+            n_gènes)}.
+        sample_names: Le nom des échantillons attendus.
+
+    Returns:
+        Une liste alignée sur `genotype_matrices_per_locus` : pour chaque locus,
+        {nom_échantillon: vecteur des distances de Hamming des C(n_gènes, 2)
+        paires (voir `_pairwise_hamming_distances`)}.
+
+    Raises:
+        ValueError: Si un échantillon n'a aucun gène sur un locus.
+    """
+    return [
+        {
+            samp_name: _pairwise_hamming_distances(matrices[samp_name])
+            for samp_name in sample_names
+        }
+        for matrices in genotype_matrices_per_locus
+    ]
+
+
 def compute_MPD(
     tree_sequences: list[tskit.TreeSequence],
     sample_names: list[str],
@@ -1448,6 +1489,7 @@ def compute_MPD(
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
     minor_counts_per_locus: list[dict[str, int]] | None = None,
+    pairwise_distances_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule MPD_i (cal_mpd1p) : pour chaque échantillon, la moyenne du
     nombre de différences par paire (distance de Hamming) sur tous les
@@ -1483,6 +1525,7 @@ def compute_MPD(
         sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
+        pairwise_distances_per_locus: Liste des distances de Hamming, un dict par locus, ou None partout si l'appelant n'en fournit pas.
         minor_counts_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
 
     Returns:
@@ -1498,8 +1541,12 @@ def compute_MPD(
             _genotype_matrix_by_sample(ts, layout=layout)
             for ts, layout in zip(tree_sequences, layouts, strict=True)
         ]
-    for ts, genotype_matrices in zip(
-        tree_sequences, genotype_matrices_per_locus, strict=True
+    if pairwise_distances_per_locus is None:
+        pairwise_distances_per_locus = _pairwise_distances_per_locus(
+            genotype_matrices_per_locus, sample_names
+        )
+    for ts, pairwise_distances_by_sample in zip(
+        tree_sequences, pairwise_distances_per_locus, strict=True
     ):
         # ---------------------------------------------------------------
         # BUG DIYABC REPRODUIT -- voir "G2 `MPD`/`VPD` residual" dans
@@ -1528,8 +1575,7 @@ def compute_MPD(
         if ts.num_sites == 0:
             continue
         for samp_name in sample_names:
-            matrix = genotype_matrices[samp_name]
-            pairwise_distances = _pairwise_hamming_distances(matrix)
+            pairwise_distances = pairwise_distances_by_sample[samp_name]
             if len(pairwise_distances) > 0:
                 mean_pairwise_differences[samp_name] += pairwise_distances.mean()
                 valid_loci_count[samp_name] += 1
@@ -1548,6 +1594,7 @@ def compute_VPD(
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
     minor_counts_per_locus: list[dict[str, int]] | None = None,
+    pairwise_distances_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule VPD_i (cal_vpd1p) : pour chaque échantillon, la variance du
     nombre de différences par paire (distance de Hamming) sur tous les
@@ -1584,6 +1631,7 @@ def compute_VPD(
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
         minor_counts_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
+        pairwise_distances_per_locus: Liste des distances de Hamming, un dict par locus, ou None partout si l'appelant n'en fournit pas.
     Returns:
         Un dict {nom_echantillon: valeur_variance}.
     """
@@ -1597,8 +1645,12 @@ def compute_VPD(
             _genotype_matrix_by_sample(ts, layout=layout)
             for ts, layout in zip(tree_sequences, layouts, strict=True)
         ]
-    for ts, genotype_matrices in zip(
-        tree_sequences, genotype_matrices_per_locus, strict=True
+    if pairwise_distances_per_locus is None:
+        pairwise_distances_per_locus = _pairwise_distances_per_locus(
+            genotype_matrices_per_locus, sample_names
+        )
+    for ts, pairwise_distances_by_sample in zip(
+        tree_sequences, pairwise_distances_per_locus, strict=True
     ):
         # ---------------------------------------------------------------
         # BUG DIYABC REPRODUIT -- voir "G2 `MPD`/`VPD` residual" dans
@@ -1627,8 +1679,7 @@ def compute_VPD(
         if ts.num_sites == 0:
             continue
         for samp_name in sample_names:
-            matrix = genotype_matrices[samp_name]
-            pairwise_distances = _pairwise_hamming_distances(matrix)
+            pairwise_distances = pairwise_distances_by_sample[samp_name]
             if len(pairwise_distances) > 1:
                 variance_pairwise_differences[samp_name] += pairwise_distances.var(
                     ddof=1
@@ -1672,7 +1723,9 @@ def _tajima_constants(n_samples: int) -> tuple[float, float, float]:
     return a1, e1, e2
 
 
-def _tajima_d_per_locus(matrix: np.ndarray) -> float | None:
+def _tajima_d_per_locus(
+    matrix: np.ndarray, distance_matrix: np.ndarray
+) -> float | None:
     """D de Tajima (cal_dta1pl) pour UN échantillon sur UN locus.
 
     `D = (pi - S/a1) / sqrt(e1*S + e2*S*(S-1))` -- pi = MPD (moyenne des
@@ -1704,7 +1757,7 @@ def _tajima_d_per_locus(matrix: np.ndarray) -> float | None:
     if denominator <= 0:
         return 0.0
 
-    pi = _pairwise_hamming_distances(matrix).mean()
+    pi = distance_matrix.mean()
     return (pi - S / a1) / np.sqrt(denominator)
 
 
@@ -1715,6 +1768,7 @@ def compute_DTA(
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
     minor_counts_per_locus: list[dict[str, np.ndarray]] | None = None,
+    pairwise_distances_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule DTA_i (cal_dta1p) : pour chaque échantillon, la moyenne du
     D de Tajima (_tajima_d_per_locus) sur tous les loci du groupe passé
@@ -1745,7 +1799,7 @@ def compute_DTA(
         layouts: Les layouts à utiliser pour chaque locus, ou None si aucun n'est fourni.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
         minor_counts_per_locus: Liste des comptes d'allèle minoritaire, un dict par locus, ou None partout si l'appelant n'en fournit pas.
-
+        pairwise_distances_per_locus: Liste des distances de Hamming, un dict par locus, ou None partout si l'appelant n'en fournit pas.
     Returns:
         Un dict {nom_echantillon: valeur_moyenne}.
     """
@@ -1759,12 +1813,20 @@ def compute_DTA(
             _genotype_matrix_by_sample(ts, layout=layout)
             for ts, layout in zip(tree_sequences, layouts, strict=True)
         ]
-    for _, genotype_matrices in zip(
-        tree_sequences, genotype_matrices_per_locus, strict=True
+    if pairwise_distances_per_locus is None:
+        pairwise_distances_per_locus = _pairwise_distances_per_locus(
+            genotype_matrices_per_locus, sample_names
+        )
+    for _, genotype_matrices, pairwise_distances in zip(
+        tree_sequences,
+        genotype_matrices_per_locus,
+        pairwise_distances_per_locus,
+        strict=True,
     ):
         for samp_name in sample_names:
             matrix = genotype_matrices[samp_name]
-            tajima_d = _tajima_d_per_locus(matrix)
+            distance_matrix = pairwise_distances[samp_name]
+            tajima_d = _tajima_d_per_locus(matrix, distance_matrix)
             if tajima_d is not None:
                 mean_tajima_d[samp_name] += tajima_d
                 valid_loci_count[samp_name] += 1
@@ -1830,6 +1892,7 @@ def compute_PSS(
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
     minor_counts_per_locus: list[dict[str, np.ndarray]] | None = None,
+    pairwise_distances_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule PSS_i (cal_pss1p) : pour chaque échantillon, la moyenne du
     nombre de sites ségrégeants privés (_private_segregating_sites_per_ locus)
@@ -1859,6 +1922,7 @@ def compute_PSS(
         layouts: Les layouts à utiliser pour chaque locus, ou None si aucun n'est fourni.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
         minor_counts_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
+        pairwise_distances_per_locus: Liste des distances de Hamming, ignoré ici pour que le dispatch fonctionne
     Returns:
         Un dict {nom_echantillon: valeur_moyenne}.
     """
@@ -1945,6 +2009,7 @@ def compute_MNS(
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
     minor_counts_per_locus: list[dict[str, np.ndarray]] | None = None,
+    pairwise_distances_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule MNS_i (cal_mns1p) : pour chaque échantillon, la moyenne,
     sur les loci du groupe, de la moyenne (par locus) des comptes
@@ -1971,7 +2036,7 @@ def compute_MNS(
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
         minor_counts_per_locus: Liste des comptes d'allèle minoritaire, un dict par locus, ou None partout si l'appelant n'en fournit pas.
-
+        pairwise_distances_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
     Returns:
         Un dict {nom_echantillon: valeur_moyenne}.
     """
@@ -2009,6 +2074,7 @@ def compute_VNS(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
+    pairwise_distances_per_locus: list[dict[str, np.ndarray]] | None = None,
     minor_counts_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule VNS_i (cal_vns1p) : pour chaque échantillon, la moyenne,
@@ -2041,6 +2107,7 @@ def compute_VNS(
         sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
+        pairwise_distances_per_locus: Liste des distances de Hamming, un dict par locus, ou None partout si l'appelant n'en fournit pas.
         minor_counts_per_locus: Liste des comptes d'allèle minoritaire, un dict par locus, ou None partout si l'appelant n'en fournit pas.
     Returns:
         Un dict {nom_echantillon: valeur_moyenne}.
@@ -2085,6 +2152,7 @@ def compute_NH2(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
+    pairwise_distances_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule NH2_ij (cal_nh2p) : pour chaque paire d'échantillons, la
     moyenne du nombre d'haplotypes distincts sur tous les loci du groupe
@@ -2103,8 +2171,7 @@ def compute_NH2(
         sample_names: Le nom des échantillons attendus.
         layouts: Liste des layouts, un par locus, ou None partout si l'appelant n'en fournit pas.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
-
-    Returns:
+        pairwise_distances_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
         Un dict {"i.j": valeur_moyenne}, une entrée par paire d'échantillons.
     """
     num_loci = len(tree_sequences)
@@ -2154,6 +2221,7 @@ def compute_NS2(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
+    pairwise_distances_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule NS2_ij (cal_ns2p) : pour chaque paire d'échantillons, la
     moyenne du nombre de sites ségrégeants sur tous les loci du groupe
@@ -2172,6 +2240,7 @@ def compute_NS2(
         sample_names: Le nom des échantillons attendus.
         layouts: Un layout par locus, ou None partout si l'appelant n'en
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
+        pairwise_distances_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
     Returns:
         Un dict {"i.j": valeur_moyenne}, une entrée par paire d'échantillons.
     """
@@ -2215,7 +2284,7 @@ def compute_NS2(
 
 
 def _mean_pairwise_differences_within_per_locus(
-    genotype_matrices: dict[str, np.ndarray], samp_a: str, samp_b: str
+    distance_matrices: dict[str, np.ndarray], samp_a: str, samp_b: str
 ) -> float:
     """Calcule MP2 "within" pour un locus : ratio poolé des sommes, PAS la
     moyenne des deux MPD.
@@ -2227,7 +2296,7 @@ def _mean_pairwise_differences_within_per_locus(
     compute_MP2).
 
     Args:
-        genotype_matrices: Dict {nom_echantillon: matrice}, au moins
+        distance_matrices: Dict {nom_echantillon: matrice}, au moins
             samp_a et samp_b.
         samp_a: Nom du premier échantillon.
         samp_b: Nom du second échantillon.
@@ -2236,8 +2305,8 @@ def _mean_pairwise_differences_within_per_locus(
         Le ratio poolé (somme des différences / somme des paires),
         0.0 si aucune des deux échantillons n'a de paire.
     """
-    distances_a = _pairwise_hamming_distances(genotype_matrices[samp_a])
-    distances_b = _pairwise_hamming_distances(genotype_matrices[samp_b])
+    distances_a = distance_matrices[samp_a]
+    distances_b = distance_matrices[samp_b]
     total_pairs = len(distances_a) + len(distances_b)
     total_differences = distances_a.sum() + distances_b.sum()
     if total_pairs > 0:
@@ -2251,6 +2320,7 @@ def compute_MP2(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
+    pairwise_distances_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule MP2_ij (cal_mp2p) : pour chaque paire d'échantillons, la
     moyenne du nombre de différences par paire (distance de Hamming)
@@ -2269,7 +2339,7 @@ def compute_MP2(
         sample_names: Le nom des échantillons attendus.
         layouts: Un layout par locus, ou None partout si l'appelant n'en
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
-
+        pairwise_distances_per_locus: Liste des distances de Hamming, un dict par locus, ou None partout si l'appelant n'en fournit pas.
     Returns:
         Un dict {"i.j": valeur_moyenne}, une entrée par paire d'échantillons.
     """
@@ -2288,8 +2358,12 @@ def compute_MP2(
             _genotype_matrix_by_sample(ts, layout=layout)
             for ts, layout in zip(tree_sequences, layouts, strict=True)
         ]
-    for _, genotype_matrices in zip(
-        tree_sequences, genotype_matrices_per_locus, strict=True
+    if pairwise_distances_per_locus is None:
+        pairwise_distances_per_locus = _pairwise_distances_per_locus(
+            genotype_matrices_per_locus, sample_names
+        )
+    for _, pairwise_distances in zip(
+        tree_sequences, pairwise_distances_per_locus, strict=True
     ):
         for ia, ib in pairs:
             samp_a = sample_names[ia]
@@ -2297,7 +2371,7 @@ def compute_MP2(
             key = f"{ia + 1}.{ib + 1}"
             mean_pairwise_differences[key] += (
                 _mean_pairwise_differences_within_per_locus(
-                    genotype_matrices, samp_a, samp_b
+                    pairwise_distances, samp_a, samp_b
                 )
             )
 
@@ -2381,6 +2455,7 @@ def compute_MPB(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
+    pairwise_distances_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule MPB_ij (cal_mpb2p) : pour chaque paire d'échantillons, la
     moyenne du nombre de différences par paire (distance de Hamming)
@@ -2401,7 +2476,7 @@ def compute_MPB(
         layouts: Un layout par locus, ou None partout si l'appelant n'en
             fournit pas.
         genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
-
+        pairwise_distances_per_locus: Optionnel ici, juste pour que le dispatch fonctionne.
     Returns:
         Un dict {"i.j": valeur_moyenne}, une entrée par paire d'échantillons.
     """
@@ -2452,6 +2527,7 @@ def compute_HST(
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     genotype_matrices_per_locus: list[dict[str, np.ndarray]] | None = None,
+    pairwise_distances_per_locus: list[dict[str, np.ndarray]] | None = None,
 ) -> dict[str, float]:
     """Calcule HST_ij (cal_fst2p) : pour chaque paire d'échantillons,
     une mesure de différenciation type FST à partir des loci du groupe
@@ -2477,7 +2553,8 @@ def compute_HST(
         sample_names: Le nom des échantillons attendus.
         layouts: Un layout par locus, ou None partout si l'appelant n'en
             fournit pas.
-
+        genotype_matrices_per_locus: Liste des matrices de génotypes, un dict par locus, ou None partout si l'appelant n'en fournit pas.
+        pairwise_distances_per_locus: Liste des distances de Hamming, un dict par locus, ou None partout si l'appelant n'en fournit pas.
     Returns:
         Un dict {"i.j": valeur}, une entrée par paire d'échantillons.
     """
@@ -2497,9 +2574,15 @@ def compute_HST(
             _genotype_matrix_by_sample(ts, layout=layout)
             for ts, layout in zip(tree_sequences, layouts, strict=True)
         ]
-
-    for _, genotype_matrices in zip(
-        tree_sequences, genotype_matrices_per_locus, strict=True
+    if pairwise_distances_per_locus is None:
+        pairwise_distances_per_locus = _pairwise_distances_per_locus(
+            genotype_matrices_per_locus, sample_names
+        )
+    for _, genotype_matrices, pairwise_distances in zip(
+        tree_sequences,
+        genotype_matrices_per_locus,
+        pairwise_distances_per_locus,
+        strict=True,
     ):
         for ia, ib in pairs:
             samp_a = sample_names[ia]
@@ -2509,7 +2592,7 @@ def compute_HST(
                 genotype_matrices, samp_a, samp_b
             )
             mpw = _mean_pairwise_differences_within_per_locus(
-                genotype_matrices, samp_a, samp_b
+                pairwise_distances, samp_a, samp_b
             )
             num[key] += mpb - mpw
             den[key] += mpb
@@ -4501,6 +4584,10 @@ def compute_all_statistics_dna(
             genotype_matrices_per_locus, sample_names
         )
 
+        pairwise_distances_per_locus = _pairwise_distances_per_locus(
+            genotype_matrices_per_locus, sample_names
+        )
+
         for stat_name, stat_fn in _DNA_PER_SAMPLE_STATS.items():
             for samp_name, value in stat_fn(
                 tree_sequences,
@@ -4508,6 +4595,7 @@ def compute_all_statistics_dna(
                 layouts=layouts,
                 genotype_matrices_per_locus=genotype_matrices_per_locus,
                 minor_counts_per_locus=minor_counts_per_locus,
+                pairwise_distances_per_locus=pairwise_distances_per_locus,
             ).items():
                 samp_index = sample_names.index(samp_name) + 1
                 key = (
@@ -4523,6 +4611,7 @@ def compute_all_statistics_dna(
                 sample_names,
                 layouts=layouts,
                 genotype_matrices_per_locus=genotype_matrices_per_locus,
+                pairwise_distances_per_locus=pairwise_distances_per_locus,
             ).items():
                 key = (
                     f"{stat_name}_{group_number}_{pair_key}"
