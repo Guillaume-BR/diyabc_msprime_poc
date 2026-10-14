@@ -1813,6 +1813,7 @@ def _run_single_particle_microsat_from_values(
     group_priors_values: dict[str, float],
     *,
     stats_filter: str,
+    seed_offset: int = 0,
 ) -> ParticleResult:
     """Variante de _run_single_particle_microsat qui NE TIRE AUCUN paramètre.
 
@@ -1833,11 +1834,12 @@ def _run_single_particle_microsat_from_values(
             connues, {nom_colonne: valeur} (voir
             compute_summary_statistics_dna_from_values).
         stats_filter: "ALL" ou "HEADER".
+        seed_offset: Décalage à ajouter à la seed dérivée de particle_index
 
     Returns:
         Le ParticleResult de cette particule.
     """
-    seed = particle_index + 1
+    seed = particle_index + 1 + seed_offset
     summary_statistics = compute_summary_statistics_microsat_from_values(
         context=context,
         scenario_index=scenario_index,
@@ -1863,6 +1865,7 @@ def replay_reftable_simulation_microsat(
     real_reftable_path: str | Path,
     stats_filter: str = "ALL",
     max_workers: int | None = None,
+    seed_offset: int = 0,
 ) -> list[ParticleResult]:
     """Rejoue, particule par particule, les tirages RÉELS de DIYABC (équivalent
     microsat de replay_reftable_simulation_snp).
@@ -1939,6 +1942,7 @@ def replay_reftable_simulation_microsat(
                 values,
                 group_priors_values,
                 stats_filter=stats_filter,
+                seed_offset=seed_offset,
             ): particle_index
             for particle_index, (
                 scenario_index,
