@@ -25,6 +25,7 @@ from bridge.summary_statistics import (
     _compute_V2P_constants,
     _compute_VAR_constants,
     _compute_VAR_for_one_sample,
+    _count_distinct_haplotypes,
     _genotype_matrix_by_sample,
     _genotypes_by_sample_and_individuals,
     _individuals_by_sample,
@@ -328,6 +329,90 @@ def test_mean_distinct_haplotypes_per_group_empty_defaults_to_zero():
     tree_sequences_empty = []
     mean_empty = compute_NHA(tree_sequences_empty, sample_names)
     assert mean_empty == {"pop1": 0.0, "pop2": 0.0}
+
+
+def _reference_count_distinct_haplotypes(matrix):
+    """Version d'origine de `_count_distinct_haplotypes` (déduplication des
+    colonnes par `np.unique(axis=1)`), gardée comme oracle : la version
+    actuelle code chaque colonne par un entier en base K, plus rapide, et doit
+    donner exactement les mêmes décomptes."""
+    return np.unique(matrix, axis=1).shape[1]
+
+
+def test_count_distinct_haplotypes_matches_reference_on_random_matrices():
+    """La version rapide doit égaler l'oracle sur des matrices aléatoires (graine
+    fixe) qui couvrent les tailles du pipeline (20, 40 et 80 colonnes), des
+    alphabets avec trous (`{0, 3}`), des états négatifs (donnée manquante), les
+    trois types d'entiers, des colonnes dupliquées, et des nombres de sites
+    de part et d'autre du seuil de repli (30 à 33 sites avec 4 états)."""
+    rng = np.random.default_rng(12345)
+    n_sites_choices = [0, 1, 2, 3, 5, 11, 20, 30, 31, 32, 33, 40, 60, 120]
+    n_samples_choices = [1, 2, 5, 20, 40, 80]
+    dtypes = [np.int8, np.int32, np.int64]
+    for _ in range(1500):
+        n_sites = int(rng.choice(n_sites_choices))
+        n_samples = int(rng.choice(n_samples_choices))
+        n_states = int(rng.integers(1, 5))
+        states = rng.choice(4, size=n_states, replace=False)
+        if rng.random() < 0.15:
+            states = states - 1  # inclut -1 (donnée manquante)
+        dtype = dtypes[int(rng.integers(len(dtypes)))]
+        matrix = rng.choice(states, size=(n_sites, n_samples)).astype(dtype)
+        if n_samples > 2 and rng.random() < 0.3:
+            matrix[:, 1] = matrix[:, 0]  # deux haplotypes identiques
+
+        result = _count_distinct_haplotypes(matrix)
+        expected = _reference_count_distinct_haplotypes(matrix)
+        assert result == expected, (
+            f"forme {matrix.shape}, type {matrix.dtype}, états {sorted(states)} : "
+            f"{result} au lieu de {expected}"
+        )
+        assert type(result) is int
+
+
+def test_count_distinct_haplotypes_known_values():
+    """Valeurs dérivées à la main."""
+    # Toutes les colonnes identiques : 1 haplotype.
+    assert _count_distinct_haplotypes(np.ones((5, 4), dtype=np.int32)) == 1
+    # Toutes les colonnes différentes : autant d'haplotypes que de colonnes.
+    assert _count_distinct_haplotypes(np.eye(4, dtype=np.int32)) == 4
+    # Cas qui a révélé une erreur de codage : les colonnes (2, 0) et (0, 1)
+    # sont distinctes, mais coderaient le même nombre si la base était le
+    # nombre de sites (2) au lieu du nombre d'états (3).
+    assert _count_distinct_haplotypes(np.array([[2, 0], [0, 1]])) == 2
+    # Une seule colonne : un seul haplotype.
+    assert _count_distinct_haplotypes(np.array([[0], [3], [1]])) == 1
+
+
+def test_count_distinct_haplotypes_without_site_or_sample():
+    """Un locus sans mutation (aucun site) a un seul haplotype, vide ; une
+    matrice sans échantillon est une erreur."""
+    assert _count_distinct_haplotypes(np.zeros((0, 7), dtype=np.int32)) == 1
+    with pytest.raises(ValueError, match="vide"):
+        _count_distinct_haplotypes(np.zeros((5, 0), dtype=np.int32))
+
+
+def test_count_distinct_haplotypes_around_the_overflow_threshold():
+    """Avec 4 états, 4**30 tient dans un entier 64 bits mais 4**32 non : la
+    fonction bascule alors sur la déduplication des colonnes. Les deux côtés
+    du seuil doivent donner le même résultat que l'oracle (un dépassement non
+    détecté confondrait des haplotypes sans lever d'erreur)."""
+    assert 4**30 <= 2**62 < 4**32  # le test encadre bien le seuil
+    rng = np.random.default_rng(7)
+    for n_sites in (30, 31, 32, 33):
+        matrix = rng.integers(0, 4, size=(n_sites, 40)).astype(np.int32)
+        matrix[:, 5] = matrix[:, 4]  # au moins un doublon
+        assert _count_distinct_haplotypes(matrix) == (
+            _reference_count_distinct_haplotypes(matrix)
+        ), f"{n_sites} sites"
+
+
+def test_count_distinct_haplotypes_int8_extremes():
+    """Soustraire le minimum dans le type d'origine déborderait pour `int8` :
+    les bornes -128 et 127 doivent donner le bon décompte."""
+    matrix = np.array([[127, -128, 127], [-128, 127, -128]], dtype=np.int8)
+    assert _count_distinct_haplotypes(matrix) == 2
+    assert _count_distinct_haplotypes(np.full((3, 4), -128, dtype=np.int8)) == 1
 
 
 def test_mean_pairwise_differences_per_group(dna_context_te2):

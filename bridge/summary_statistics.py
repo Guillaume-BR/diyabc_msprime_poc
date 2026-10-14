@@ -1319,10 +1319,27 @@ def _count_distinct_haplotypes(matrix: np.ndarray) -> int:
     """
     if matrix.shape[1] == 0:
         raise ValueError("La matrice de génotypes est vide.")
-    # np.unique(axis=1) déduplique les colonnes (les haplotypes) --
-    # le résultat a la forme (n_sites, n_haplotypes_distincts).
-    distinct_haplotypes = np.unique(matrix, axis=1)
-    return distinct_haplotypes.shape[1]
+    if matrix.shape[0] == 0:
+        return 1  # pas de sites, mais un haplotype vide
+    # Décalage par le minimum, en int64 : un état négatif (donnée manquante,
+    # -1) fausserait le codage en base K, et soustraire le minimum dans le
+    # type d'origine (int8, par exemple) pourrait déborder. Décaler toutes les
+    # valeurs d'une même constante ne change pas les colonnes identiques.
+    shifted = matrix.astype(np.int64) - int(matrix.min())
+    K = int(shifted.max()) + 1  # nombre d'états (0..K-1), entier Python
+    n_sites = shifted.shape[0]
+    # Garde AVANT de construire les poids : K ** n_sites est calculé en entiers
+    # Python, qui ne débordent pas (en entiers numpy, il déborderait en silence).
+    if K**n_sites > 2**62:
+        # Trop de sites pour tenir dans un entier 64 bits : on déduplique les
+        # colonnes entières (lent, mais exact), le résultat a la forme
+        # (n_sites, n_haplotypes_distincts).
+        return np.unique(shifted, axis=1).shape[1]
+    # Chaque colonne devient un nombre écrit en base K (un chiffre par site) :
+    # deux colonnes ont le même nombre si et seulement si elles sont égales.
+    power_K = np.array([K**i for i in range(n_sites)], dtype=np.int64)
+    identifying_numbers = power_K @ shifted
+    return np.unique(identifying_numbers).size
 
 
 def compute_NHA(
