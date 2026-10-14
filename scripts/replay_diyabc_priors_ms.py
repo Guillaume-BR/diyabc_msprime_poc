@@ -26,9 +26,10 @@ from bridge.reftable_loop import (
 )
 from bridge.scenario_parser import parse_header_scenarios
 
-suffix = "0"
+suffix = "1"
+SEED_OFFSET = 200_000
 
-REFERENCE_DIR = Path("reference/toy_example1_ms_modified")
+REFERENCE_DIR = Path("reference/toy_example1_ms_seriel")
 REAL_REFTABLE_PATH = (
     REFERENCE_DIR / f"first_records_of_the_reference_table_{suffix}.txt"
 )
@@ -75,6 +76,7 @@ results = replay_reftable_simulation_microsat(
     real_reftable_path=REAL_REFTABLE_PATH,
     stats_filter="ALL",
     max_workers=16,
+    seed_offset=SEED_OFFSET,
 )
 
 t3 = time.perf_counter()

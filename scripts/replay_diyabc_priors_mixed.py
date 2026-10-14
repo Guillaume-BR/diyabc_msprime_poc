@@ -26,7 +26,7 @@ from bridge.reftable_loop import (
 )
 from bridge.scenario_parser import parse_header_scenarios
 
-suffix = "1"
+suffix = "0"
 model = "TN"
 
 REFERENCE_DIR = Path(f"reference/toy_example2_ms_dna_50loci_{model}")
