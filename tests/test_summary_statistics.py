@@ -1,3 +1,6 @@
+import dataclasses
+import itertools
+
 import msprime
 import numpy as np
 import pytest
@@ -11,6 +14,7 @@ from bridge.ancestry_simulation import (
 )
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.summary_statistics import (
+    FocalGenotypeFrequencies,
     _allele_counts_by_sample,
     _compute_DM2_for_one_locus,
     _compute_FST_constants_for_two_samples_combined,
@@ -31,6 +35,7 @@ from bridge.summary_statistics import (
     _individuals_by_sample,
     _length_by_sample,
     _length_by_sample_and_individuals,
+    _log_likelihood_admixture,
     _pairwise_distances_per_locus,
     _pairwise_hamming_distances,
     _pool_allele_counts_for_two_samples,
@@ -2421,6 +2426,117 @@ def test_genotypes_monomorphic_locus_gives_pairs_even_for_haploid():
     )
 
     assert result == {"s0": [(0, 0)] * 5, "s1": [(0, 0)] * 4}
+
+
+def _reference_log_likelihood_admixture(
+    data: FocalGenotypeFrequencies,
+    a: float,
+) -> float:
+    """Ancienne version conservée comme oracle"""
+    lik = 0.0
+
+    # haploïd
+    freq = a * data.haploid_f1 + (1 - a) * data.haploid_f2
+    mask = freq > 0
+    lik += np.log(freq[mask]).sum()
+
+    # homozygous diploid
+    freq = a * data.homozygous_f1 + (1 - a) * data.homozygous_f2
+    mask = freq > 0
+    lik += np.log(freq[mask] ** 2).sum()
+
+    # heterozygous diploid
+    freq_x = a * data.heterozygous_f1_x + (1 - a) * data.heterozygous_f2_x
+    freq_y = a * data.heterozygous_f1_y + (1 - a) * data.heterozygous_f2_y
+    mask = freq_x * freq_y > 0
+    lik += np.log(2 * freq_x[mask] * freq_y[mask]).sum()
+    return float(lik)
+
+
+_ADMIXTURE_CASES = {
+    "haploid": (np.array([0.5, 0.5]), np.array([0.25, 0.75])),
+    "homozygous": (np.array([0.6, 0.4]), np.array([0.3, 0.7])),
+    "heterozygous": (
+        np.array([0.2, 0.8]),
+        np.array([0.7, 0.3]),
+        np.array([0.5, 0.5]),
+        np.array([0.4, 0.6]),
+    ),
+}
+
+
+_BLOCKS = {
+    "haploid": ("haploid_f1", "haploid_f2"),
+    "homozygous": ("homozygous_f1", "homozygous_f2"),
+    "heterozygous": (
+        "heterozygous_f1_x",
+        "heterozygous_f1_y",
+        "heterozygous_f2_x",
+        "heterozygous_f2_y",
+    ),
+}
+
+
+@pytest.mark.parametrize("a", [0.0, 0.001, 0.6, 0.999, 1.0])
+@pytest.mark.parametrize(
+    "empty_blocks", list(itertools.product([False, True], repeat=3))
+)
+def test_log_likelihood_admixture_vs_reference(empty_blocks, a):
+    """Vérifie que _log_likelihood_admixture est équivalent à la version de référence."""
+    data = FocalGenotypeFrequencies(
+        haploid_f1=np.array([0.5, 0.5]),
+        haploid_f2=np.array([0.25, 0.75]),
+        homozygous_f1=np.array([0.6, 0.4]),
+        homozygous_f2=np.array([0.3, 0.7]),
+        heterozygous_f1_x=np.array([0.2, 0.8]),
+        heterozygous_f1_y=np.array([0.7, 0.3]),
+        heterozygous_f2_x=np.array([0.5, 0.5]),
+        heterozygous_f2_y=np.array([0.4, 0.6]),
+    )
+
+    for is_empty, fields in zip(empty_blocks, _BLOCKS.values(), strict=True):
+        if is_empty:
+            data = dataclasses.replace(
+                data, **{field: np.array([]) for field in fields}
+            )
+    assert _log_likelihood_admixture(data, a) == _reference_log_likelihood_admixture(
+        data, a
+    )
+
+    expected = _reference_log_likelihood_admixture(data, a)
+    result = _log_likelihood_admixture(data, a)
+    assert result == expected
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "haploid_f1",
+        "haploid_f2",
+        "homozygous_f1",
+        "homozygous_f2",
+        "heterozygous_f1_x",
+        "heterozygous_f1_y",
+        "heterozygous_f2_x",
+        "heterozygous_f2_y",
+    ],
+)
+def test_log_likelihood_admixture_inconsistent_block_raises(field):
+    data = FocalGenotypeFrequencies(
+        haploid_f1=np.array([0.5, 0.5]),
+        haploid_f2=np.array([0.25, 0.75]),
+        homozygous_f1=np.array([0.6, 0.4]),
+        homozygous_f2=np.array([0.3, 0.7]),
+        heterozygous_f1_x=np.array([0.2, 0.8]),
+        heterozygous_f1_y=np.array([0.7, 0.3]),
+        heterozygous_f2_x=np.array([0.5, 0.5]),
+        heterozygous_f2_y=np.array([0.4, 0.6]),
+    )
+    data = dataclasses.replace(data, **{field: np.array([])})
+    with pytest.raises(ValueError, match="broadcast"):
+        _reference_log_likelihood_admixture(data, 0.6)
+    with pytest.raises(ValueError, match="broadcast"):
+        _log_likelihood_admixture(data, 0.6)
 
 
 def test_compute_num_den_lik_for_one_individual():

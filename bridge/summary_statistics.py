@@ -4292,20 +4292,31 @@ def _log_likelihood_admixture(
     lik = 0.0
 
     # haploïd
-    freq = a * data.haploid_f1 + (1 - a) * data.haploid_f2
-    mask = freq > 0
-    lik += np.log(freq[mask]).sum()
+    if data.haploid_f1.size != 0 or data.haploid_f2.size != 0:
+        freq = a * data.haploid_f1 + (1 - a) * data.haploid_f2
+        mask = freq > 0
+        lik += np.log(freq[mask]).sum()
 
     # homozygous diploid
-    freq = a * data.homozygous_f1 + (1 - a) * data.homozygous_f2
-    mask = freq > 0
-    lik += np.log(freq[mask] ** 2).sum()
+    if data.homozygous_f1.size != 0 or data.homozygous_f2.size != 0:
+        freq = a * data.homozygous_f1 + (1 - a) * data.homozygous_f2
+        mask = freq > 0
+        lik += np.log(freq[mask] ** 2).sum()
 
     # heterozygous diploid
-    freq_x = a * data.heterozygous_f1_x + (1 - a) * data.heterozygous_f2_x
-    freq_y = a * data.heterozygous_f1_y + (1 - a) * data.heterozygous_f2_y
-    mask = freq_x * freq_y > 0
-    lik += np.log(2 * freq_x[mask] * freq_y[mask]).sum()
+    if any(
+        arr.size != 0
+        for arr in [
+            data.heterozygous_f1_x,
+            data.heterozygous_f2_x,
+            data.heterozygous_f1_y,
+            data.heterozygous_f2_y,
+        ]
+    ):
+        freq_x = a * data.heterozygous_f1_x + (1 - a) * data.heterozygous_f2_x
+        freq_y = a * data.heterozygous_f1_y + (1 - a) * data.heterozygous_f2_y
+        mask = freq_x * freq_y > 0
+        lik += np.log(2 * freq_x[mask] * freq_y[mask]).sum()
 
     return float(lik)
 
