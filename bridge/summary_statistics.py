@@ -3710,7 +3710,7 @@ def _allele_counts_by_sample(
     Returns:
         Un tuple (ni_by_samp, nA_AA_by_samp) où :
             - ni_by_sample est {nom_echantillon: nombre d'individus},
-            - nA_AA_by_sample: (nA, AA)}}. Un allèle absent d'un échantillon n'a pas de clé : lire avec .get(al, (0, 0)).
+            - nA_AA_by_sample: {nom_echantillon: {allèle: (nA, AA)}}. Un allèle absent d'un échantillon n'a pas de clé : lire avec .get(al, (0, 0)).
     """
     ni_by_sample = {}
     nA_AA_by_sample = {}
