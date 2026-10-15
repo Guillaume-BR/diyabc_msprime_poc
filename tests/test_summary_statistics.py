@@ -2278,6 +2278,32 @@ def _reference_genotypes_by_sample_and_individuals(ts, layout):
     return genotype_by_sample
 
 
+def test_individuals_by_sample_with_indiv_in_any_sample():
+    """Vérifie que `_individuals_by_sample` fonctionne même si un individu est
+    assigné à plusieurs échantillons (layout non valide)."""
+    ts, counts = _ts_with_samples(_PLOIDY_SCENARIOS["diploid"], 0.5)
+    layout = compute_sample_layout(ts, counts)
+    modified_layout = layout[:1]  # s0 et s1 partagent les mêmes individus
+
+    with pytest.raises(ValueError, match="Certains individus ne sont assignés"):
+        _individuals_by_sample(ts, layout=modified_layout)
+
+
+def test_individuals_by_sample_with_indiv_in_two_samples():
+    """Vérifie que `_individuals_by_sample` fonctionne même si un individu est
+    assigné à deux échantillons."""
+    ts, counts = _ts_with_samples(_PLOIDY_SCENARIOS["diploid"], 0.5)
+    layout = compute_sample_layout(ts, counts)
+    (name_1, nodes_1), (name_2, nodes_2) = layout
+
+    modified_layout = [
+        (name_1, nodes_1),
+        (name_2, np.concatenate([nodes_2, nodes_1[:2]])),
+    ]
+    with pytest.raises(ValueError, match="Certains individus sont déjà assignés"):
+        _individuals_by_sample(ts, layout=modified_layout)
+
+
 def _all_ploidy_cases(test):
     """Applique à un test les trois axes : scénario de ploïdie, polymorphisme, layout."""
     test = pytest.mark.parametrize(

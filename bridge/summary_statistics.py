@@ -3634,17 +3634,23 @@ def _individuals_by_sample(
     """
     if layout is None:
         layout = compute_population_layout(tree_sequence)
-    first_nodes = tree_sequence.individuals_nodes[:, 0]
+    table = np.full(tree_sequence.num_nodes, -1, dtype=int)
+    first_nodes = tree_sequence.individuals_nodes[
+        :, 0
+    ]  # premier nœud de chaque individu
+    for i, (samp, nodes) in enumerate(layout):
+        if np.any(table[nodes] != -1):
+            raise ValueError(
+                f"Certains individus sont déjà assignés à un échantillon: {samp}"
+            )
+        table[nodes] = i
+    if table[first_nodes].min() == -1:
+        raise ValueError("Certains individus ne sont assignés à aucun échantillon.")
+    table_first_nodes = table[first_nodes]
     individuals_by_sample = {
-        name: np.flatnonzero(np.isin(first_nodes, nodes)) for name, nodes in layout
+        name: np.flatnonzero(table_first_nodes == i)
+        for i, (name, _) in enumerate(layout)
     }
-    n_assigned = sum(len(indices) for indices in individuals_by_sample.values())
-    if n_assigned != tree_sequence.num_individuals:
-        raise ValueError(
-            f"{n_assigned} individu(s) attribué(s) sur {tree_sequence.num_individuals} : "
-            "certains n'appartiennent à aucun échantillon du layout, "
-            "ou appartiennent à plusieurs."
-        )
     return individuals_by_sample
 
 
