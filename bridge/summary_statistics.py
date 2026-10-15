@@ -4217,7 +4217,7 @@ def _prepare_triplet_for_admixture(
 
 
 def _vectorize_triplet(prepared_triplet):
-    # listes vides pour chaque groupe (haploÃ¯de : 2 listes, homozygote : 2, hétérozygote : 4)
+    # listes vides pour chaque groupe (haploïde : 2 listes, homozygote : 2, hétérozygote : 4)
     f1_haploid, f2_haploid = [], []
     f1_homozygous, f2_homozygous = [], []
     f1_heterozygous_x, f2_heterozygous_x = [], []
