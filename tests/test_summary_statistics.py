@@ -11,6 +11,7 @@ from bridge.ancestry_simulation import (
 )
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.summary_statistics import (
+    _allele_counts_by_sample,
     _compute_DM2_for_one_locus,
     _compute_FST_constants_for_two_samples_combined,
     _compute_FST_constants_on_all_alleles_for_two_samples,
@@ -20,7 +21,6 @@ from bridge.summary_statistics import (
     _compute_MGW_by_locus,
     _compute_N2P_for_one_locus,
     _compute_N2P_for_one_pair,
-    _compute_ni_nA_AA_for_one_sample,
     _compute_num_den_lik_for_one_individual,
     _compute_V2P_constants,
     _compute_VAR_constants,
@@ -1886,39 +1886,102 @@ def test_length_by_pop_and_individuals_with_different_layout():
         assert rejoined == result_without_layout[sample_name]
 
 
-def test_compute_ni_nA_AA_for_one_sample():
-    """Vérifie que la fonction _compute_ni_nA_AA_for_one_sample fonctionne
-    correctement."""
-    alleles_per_individual = [
-        np.int64([203, 203]),
-        np.int64([203, 203]),
-        np.int64([203, 193]),
-        np.int64([203, 203]),
-    ]
+def reference_compute_ni_nA_AA_for_one_sample(
+    pairs: list[tuple[int, int]], al: int
+) -> tuple[int, int, int]:
+    """Calcule ni, nA et AA pour un échantillon donné à partir des paires
+    d'allèles.
 
-    ni, nA, AA = _compute_ni_nA_AA_for_one_sample(alleles_per_individual, 203)
+    Args:
+        pairs: Liste de tuples (longueur_1, longueur_2) pour chaque individu.
+        al: Longueur de l'allèle considéré.
 
-    assert ni == 4
-    assert nA == 7
-    assert AA == 3
+    Returns:
+        Un tuple (ni, nA, AA) où
+            - ni est le nombre d'individus,
+            - nA est la somme par individus du nombre d'éléments de sa paire égaux
+            - AA est le nb d'individus dont les deux éléments d ela paire valent al
+    """
+    ni = len(pairs)
+    nA = sum(int(p[0] == al) + int(p[1] == al) for p in pairs)
+    AA = sum(1 for p in pairs if p[0] == al and p[1] == al)
+    return ni, nA, AA
+
+
+def test_allele_counts_by_sample():
+    """Vérifie que la fonction _allele_counts_by_sample fonctionne correctement."""
+    # test sur un échantillon avec 4 individus, dont 3 homozygotes pour l'allèle 203 et 1 hétérozygote pour 203 et 193
+    sample_alleles = {
+        "sample1": [
+            np.int64([203, 203]),
+            np.int64([203, 203]),
+            np.int64([203, 193]),
+            np.int64([203, 203]),
+        ]
+    }
+
+    allele_counts = _allele_counts_by_sample(sample_alleles)
+
+    assert allele_counts == ({"sample1": 4}, {"sample1": {203: (7, 3), 193: (1, 0)}})
+
+    # test sur un échantillon sans homozygotes
+    sample_alleles = {
+        "sample2": [
+            np.int64([203, 193]),
+            np.int64([197, 203]),
+            np.int64([203, 193]),
+        ]
+    }
+    allele_counts = _allele_counts_by_sample(sample_alleles)
+    assert allele_counts == (
+        {"sample2": 3},
+        {"sample2": {203: (3, 0), 193: (2, 0), 197: (1, 0)}},
+    )
+
+
+def test_allele_counts_by_sample_vs_oracle():
+    """Compare _allele_counts_by_sample à l'oracle sur des entrées aléatoires.
+
+    Peu d'allèles (beaucoup d'homozygotes), trois échantillons de tailles
+    différentes, et des allèles absents de certains échantillons (dont un
+    absent de tous).
+    """
+    rng = np.random.default_rng(12345)
+    for _ in range(50):
+        alleles = [190 + 2 * k for k in range(int(rng.integers(2, 6)))]
+        length_by_sample = {
+            f"sample{s}": [
+                (int(rng.choice(alleles)), int(rng.choice(alleles)))
+                for _ in range(int(rng.integers(1, 12)))
+            ]
+            for s in range(1, 4)
+        }
+        ni_by_sample, nA_AA_by_sample = _allele_counts_by_sample(length_by_sample)
+
+        all_alleles = {
+            al for pairs in length_by_sample.values() for p in pairs for al in p
+        }
+        all_alleles.add(58)  # allèle présent nulle part
+        for name, pairs in length_by_sample.items():
+            for al in all_alleles:
+                nA, AA = nA_AA_by_sample[name].get(al, (0, 0))
+                assert (ni_by_sample[name], nA, AA) == (
+                    reference_compute_ni_nA_AA_for_one_sample(pairs, al)
+                )
 
 
 def test_compute_FST_constants_for_two_samples_combined():
-    pairs_1 = [(203, 203), (203, 203), (203, 193), (203, 203)]
-    pairs_2 = [(203, 203), (203, 193), (197, 203), (203, 193)]
+    # pairs_1 = [(203, 203), (203, 203), (203, 193), (203, 203)]
+    # pairs_2 = [(203, 203), (203, 193), (197, 203), (203, 193)]
 
-    s2G, s2I, s2p = _compute_FST_constants_for_two_samples_combined(
-        pairs_1, pairs_2, 203
-    )
+    s2G, s2I, s2p = _compute_FST_constants_for_two_samples_combined(4, 7, 3, 4, 5, 1)
 
     assert s2G == 0.25
     assert s2I == -0.0625
     assert s2p == 0.015625
 
     # second test avec une allele non_presente
-    s2G, s2I, s2p = _compute_FST_constants_for_two_samples_combined(
-        pairs_1, pairs_2, 58
-    )
+    s2G, s2I, s2p = _compute_FST_constants_for_two_samples_combined(0, 0, 0, 0, 0, 0)
     assert s2G == 0
     assert s2I == 0
     assert s2p == 0
@@ -1932,9 +1995,10 @@ def test_compute_FST_constants_on_all_alleles_for_two_samples():
         "pop1": [(203, 203), (203, 203), (203, 193), (203, 203)],
         "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
     }
+    ni_by_sample, nA_AA_by_sample = _allele_counts_by_sample(_length_by_sample)
 
     s1l, s2l, s3l = _compute_FST_constants_on_all_alleles_for_two_samples(
-        _length_by_sample, "pop1", "pop2"
+        ni_by_sample, nA_AA_by_sample, "pop1", "pop2"
     )
 
     assert pytest.approx(s1l) == 0.005208333333333332
@@ -1943,7 +2007,7 @@ def test_compute_FST_constants_on_all_alleles_for_two_samples():
 
     # nouveau test avec des pop non présente
     s1l, s2l, s3l = _compute_FST_constants_on_all_alleles_for_two_samples(
-        _length_by_sample, "pop3", "pop4"
+        ni_by_sample, nA_AA_by_sample, "pop3", "pop4"
     )
 
     assert s1l == 0.0

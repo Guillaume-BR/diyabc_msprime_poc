@@ -3698,44 +3698,52 @@ def _length_by_sample_and_individuals(
     return length_by_sample
 
 
-def _compute_ni_nA_AA_for_one_sample(
-    pairs: list[tuple[int, int]], al: int
-) -> tuple[int, int, int]:
-    """Calcule ni, nA et AA pour un échantillon donné à partir des paires
-    d'allèles.
+def _allele_counts_by_sample(
+    length_by_sample: dict[str, list[tuple[int, int]]],
+) -> tuple[dict[str, int], dict[str, dict[int, tuple[int, int]]]]:
+    """Précalcule ni, nA et AA de chaque échantillon, pour chaque allèle présent.
 
     Args:
-        pairs: Liste de tuples (longueur_1, longueur_2) pour chaque individu.
-        al: Longueur de l'allèle considéré.
+        length_by_sample: Dict{nom_echantillon: [(longueur_1, longueur_2), ...]},
+            une paire par individu.
 
     Returns:
-        Un tuple (ni, nA, AA) où
-            - ni est le nombre d'individus,
-            - nA est la somme par individus du nombre d'éléments de sa paire égaux
-            - AA est le nb d'individus dont les deux éléments d ela paire valent al
+        Un tuple (ni_by_samp, nA_AA_by_samp) où :
+            - ni_by_sample est {nom_echantillon: nombre d'individus},
+            - nA_AA_by_sample: (nA, AA)}}. Un allèle absent d'un échantillon n'a pas de clé : lire avec .get(al, (0, 0)).
     """
-    ni = len(pairs)
-    nA = sum(int(p[0] == al) + int(p[1] == al) for p in pairs)
-    AA = sum(1 for p in pairs if p[0] == al and p[1] == al)
-    return ni, nA, AA
+    ni_by_sample = {}
+    nA_AA_by_sample = {}
+    for sample, pairs in length_by_sample.items():
+        nA = {}
+        AA = {}
+        for x, y in pairs:
+            nA[x] = nA.get(x, 0) + 1
+            nA[y] = nA.get(y, 0) + 1
+            if x == y:
+                AA[x] = AA.get(x, 0) + 1
+        ni_by_sample[sample] = len(pairs)
+        nA_AA_by_sample[sample] = {al: (n, AA.get(al, 0)) for al, n in nA.items()}
+    return ni_by_sample, nA_AA_by_sample
 
 
 def _compute_FST_constants_for_two_samples_combined(
-    pairs_1: list[tuple[int, int]], pairs_2: list[tuple[int, int]], al: int
+    ni_1: int, nA_1: int, AA_1: int, ni_2: int, nA_2: int, AA_2: int
 ) -> tuple[int, int, int]:
     """Calcule les constantes nécessaires pour FST pour une paire
     d'échantillons combinés.
 
     Args:
-        pairs_1: Liste de tuples (longueur_1, longueur_2) pour la première échantillon.
-        pairs_2: Liste de tuples (longueur_1, longueur_2) pour la seconde échantillon.
-        al: Longueur de l'allèle considéré.
+        ni_1: Nombre d'individus dans le premier échantillon.
+        nA_1: Nombre de copie de l'allèle considéré dans le premier échantillon.
+        AA_1: Nombre d'individus homozygotes dans le premier échantillon.
+        ni_2: Nombre d'individus dans le second échantillon.
+        nA_2: Nombre de copie de l'allèle considéré dans le second échantillon.
+        AA_2: Nombre d'individus homozygotes dans le second échantillon.
 
     Returns:
         Un tuple (s2G,s2I, s2P)
     """
-    ni_1, nA_1, AA_1 = _compute_ni_nA_AA_for_one_sample(pairs_1, al)
-    ni_2, nA_2, AA_2 = _compute_ni_nA_AA_for_one_sample(pairs_2, al)
 
     sni = ni_1 + ni_2
     sni2 = ni_1**2 + ni_2**2
@@ -3758,31 +3766,43 @@ def _compute_FST_constants_for_two_samples_combined(
 
 
 def _compute_FST_constants_on_all_alleles_for_two_samples(
-    length_by_sample: dict[str, list[tuple[int, int]]], samp_a: str, samp_b: str
+    ni_by_sample: dict[str, int],
+    nA_AA_by_sample: dict[str, dict[int, tuple[int, int]]],
+    samp_a: str,
+    samp_b: str,
 ) -> tuple[float, float, float]:
     """Calcule les constantes nécessaires pour FST pour une paire
     d'échantillons sur tous les allèles.
 
     Args:
-        length_by_sample: Dict {nom_echantillon: [(longueur_1, longueur_2), ...]}.
+        ni_by_sample: Dict {nom_echantillon: nombre d'individus}.
+        nA_AA_by_sample: Dict {nom_echantillon: {allèle: (nA, AA)}}.
         samp_a: Nom du premier échantillon.
         samp_b: Nom du second échantillon.
 
     Returns:
         Un tuple (s2G_total, s2I_total, s2P_total) pour la paire d'échantillons.
     """
-    pairs_1 = length_by_sample.get(samp_a, [])
-    pairs_2 = length_by_sample.get(samp_b, [])
+    dict_a = nA_AA_by_sample.get(samp_a, {}).keys()
+    dict_b = nA_AA_by_sample.get(samp_b, {}).keys()
 
-    unique_alleles = set(length for pair in pairs_1 + pairs_2 for length in pair)
+    # l'ordre d'itération du set fixe l'ordre des sommes flottantes et
+    # cet ordre restera identique à l'ancien car les clés de nA_AA_by_sample sont
+    # dans l'odre de première apparition
+    unique_alleles = set(list(dict_a) + list(dict_b))
 
     s1l = 0.0
     s2l = 0.0
     s3l = 0.0
-
+    ni1 = ni_by_sample.get(samp_a, 0)
+    nA_AA_for_samp_a = nA_AA_by_sample.get(samp_a, {})
+    ni2 = ni_by_sample.get(samp_b, 0)
+    nA_AA_for_samp_b = nA_AA_by_sample.get(samp_b, {})
     for al in unique_alleles:
+        nA1, AA1 = nA_AA_for_samp_a.get(al, (0, 0))
+        nA2, AA2 = nA_AA_for_samp_b.get(al, (0, 0))
         s2G, s2I, s2P = _compute_FST_constants_for_two_samples_combined(
-            pairs_1, pairs_2, al
+            ni1, nA1, AA1, ni2, nA2, AA2
         )
         s1l += s2P
         s2l += s2P + s2I
@@ -3824,18 +3844,19 @@ def compute_FST(
         layouts = [None] * len(tree_sequences)
     for ts, layout in zip(tree_sequences, layouts, strict=True):
         length_by_sample = _length_by_sample_and_individuals(ts, layout=layout)
+        ni_by_sample, nA_AA_by_sample = _allele_counts_by_sample(length_by_sample)
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
             samp_a, samp_b = sample_names[i], sample_names[j]
             # calcul de nc
-            ni_1 = len(length_by_sample.get(samp_a, []))
-            ni_2 = len(length_by_sample.get(samp_b, []))
+            ni_1 = ni_by_sample.get(samp_a, 0)
+            ni_2 = ni_by_sample.get(samp_b, 0)
             sni = ni_1 + ni_2
             sni2 = ni_1**2 + ni_2**2
             nc = sni - sni2 / sni if sni > 0 else 0.0
             # mise à jour des constantes
             s1l, _, s3l = _compute_FST_constants_on_all_alleles_for_two_samples(
-                length_by_sample, samp_a, samp_b
+                ni_by_sample, nA_AA_by_sample, samp_a, samp_b
             )
             s1[key] += s1l * nc
             s3[key] += s3l * nc
