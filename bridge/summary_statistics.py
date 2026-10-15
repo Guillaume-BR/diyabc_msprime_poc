@@ -2640,10 +2640,11 @@ def _length_by_sample(
         tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
         for samp_name, sample_ids in layout:
             length_by_sample[samp_name] = []
+            list_taille_sample_ids = tailles[sample_ids].tolist()
             for taille in variant.alleles:
                 taille_int = int(taille)
                 length_by_sample[samp_name].append(
-                    (taille_int, list(tailles[sample_ids]).count(taille_int))
+                    (taille_int, list_taille_sample_ids.count(taille_int))
                 )
 
         return length_by_sample
