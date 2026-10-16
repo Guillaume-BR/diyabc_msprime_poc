@@ -4280,6 +4280,111 @@ def _prepare_triplet_for_admixture(
     return prepared_triplet
 
 
+def _vectorize_parent_for_focal(
+    parent_frequencies: list[dict[int, float]],
+    focal_genotypes_per_locus: list[list[tuple[int, ...]]],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Prépare les fréquences alléliques d'un parent pour le calcul de la log-vraisemblance d'admixture.
+
+    Args:
+        parent_frequencies: Liste de dictionnaires contenant les fréquences des allèles pour chaque locus.
+        focal_genotypes_per_locus: Liste de listes de génotypes pour chaque locus.
+
+    Returns:
+        Tuple de quatre tableaux NumPy contenant les fréquences des allèles pour chaque type de génotype : (haploïde, homozygote, hétérozygote_x, hétérozygote_y).
+    """
+
+    (
+        haploid_frequencies,
+        homozygous_frequencies,
+        heterozygous_x_frequencies,
+        heterozygous_y_frequencies,
+    ) = [], [], [], []
+    for f, focal_genotypes in zip(
+        parent_frequencies, focal_genotypes_per_locus, strict=True
+    ):
+        for genotype in focal_genotypes:
+            if len(genotype) == 1:  # haploïde
+                haploid_frequencies.append(f.get(genotype[0], 0))
+            elif (
+                len(genotype) == 2 and genotype[0] == genotype[1]
+            ):  # homozygote diploïde
+                homozygous_frequencies.append(f.get(genotype[0], 0))
+            elif (
+                len(genotype) == 2 and genotype[0] != genotype[1]
+            ):  # hétérozygote diploïde
+                heterozygous_x_frequencies.append(f.get(genotype[0], 0))
+                heterozygous_y_frequencies.append(f.get(genotype[1], 0))
+            else:
+                raise ValueError(
+                    f"Problème avec le génotype de l'individu : {genotype}"
+                )
+
+    return (
+        np.array(haploid_frequencies, dtype=float),
+        np.array(homozygous_frequencies, dtype=float),
+        np.array(heterozygous_x_frequencies, dtype=float),
+        np.array(heterozygous_y_frequencies, dtype=float),
+    )
+
+
+def _vectorize_parent_with_cache(
+    mutual_data, focal, parent, frequency_cache, vectorize_parent_cache
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    key = (parent, focal)
+    if vectorize_parent_cache is not None and key in vectorize_parent_cache:
+        return vectorize_parent_cache[key]
+    parent_frequencies = _parental_frequencies_with_cache(
+        mutual_data, parent, frequency_cache
+    )
+    focal_genotypes_per_locus = [
+        genotypes_by_sample.get(focal, []) for _, genotypes_by_sample in mutual_data
+    ]
+    result = _vectorize_parent_for_focal(parent_frequencies, focal_genotypes_per_locus)
+    if vectorize_parent_cache is not None:
+        vectorize_parent_cache[key] = result
+    return result
+
+
+def _focal_genotype_frequencies(
+    mutual_data,
+    focal,
+    parent1,
+    parent2,
+    *,
+    frequency_cache=None,
+    vectorize_parent_cache=None,
+) -> FocalGenotypeFrequencies:
+    """Prépare les fréquences alléliques pour l'échantillon focal, en utilisant les fréquences des parents.
+
+    Args:
+        mutual_data: Liste de tuples contenant les données mutuelles pour chaque locus.
+        focal: Nom de l'échantillon focal.
+        parent1: Nom du premier échantillon parental.
+        parent2: Nom du deuxième échantillon parental.
+        frequency_cache: Cache des fréquences des allèles, ou None si l'appelant n'en fournit pas.
+        vectorize_parent_cache: Cache des résultats de la vectorisation des parents, ou None si l'appelant n'en fournit pas.
+    Returns:
+        Une instance de FocalGenotypeFrequencies contenant les fréquences des allèles pour l'échantillon focal.
+    """
+    result_1 = _vectorize_parent_with_cache(
+        mutual_data, focal, parent1, frequency_cache, vectorize_parent_cache
+    )
+    result_2 = _vectorize_parent_with_cache(
+        mutual_data, focal, parent2, frequency_cache, vectorize_parent_cache
+    )
+    return FocalGenotypeFrequencies(
+        haploid_f1=result_1[0],
+        haploid_f2=result_2[0],
+        homozygous_f1=result_1[1],
+        homozygous_f2=result_2[1],
+        heterozygous_f1_x=result_1[2],
+        heterozygous_f2_x=result_2[2],
+        heterozygous_f1_y=result_1[3],
+        heterozygous_f2_y=result_2[3],
+    )
+
+
 def _vectorize_triplet(prepared_triplet):
     # listes vides pour chaque groupe (haploïde : 2 listes, homozygote : 2, hétérozygote : 4)
     f1_haploid, f2_haploid = [], []
@@ -4408,6 +4513,10 @@ def _compute_AML_one_triplet(
     seed: int,
     *,
     frequency_cache: dict[str, list[dict[int, float]]] | None = None,
+    vectorize_parent_cache: dict[
+        tuple[str, str], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+    ]
+    | None = None,
 ) -> float:
     """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour
     un triplet d'échantillons.
@@ -4420,15 +4529,24 @@ def _compute_AML_one_triplet(
         seed: Seed pour la génération aléatoire (pour les cas où AML ne peut pas être calculé).
         frequency_cache: Cache {parent: fréquences par locus} partagé entre les
             triplets d'un même appel, ou None si l'appelant n'en fournit pas.
+        vectorize_parent_cache: Cache {tuple(focal, parent1): FocalGenotypeFrequencies} partagé entre les
+            triplets d'un même appel, ou None si l'appelant n'en fournit pas.
 
     Returns:
         La statistique AML pour le triplet donné.
     """
-    prepared_triplet = _prepare_triplet_for_admixture(
-        mutual_data, focal, parent1, parent2, frequency_cache=frequency_cache
-    )
+    # prepared_triplet = _prepare_triplet_for_admixture(
+    #    mutual_data, focal, parent1, parent2, frequency_cache=frequency_cache
+    # )
 
-    data = _vectorize_triplet(prepared_triplet)
+    data = _focal_genotype_frequencies(
+        mutual_data,
+        focal,
+        parent1,
+        parent2,
+        frequency_cache=frequency_cache,
+        vectorize_parent_cache=vectorize_parent_cache,
+    )
 
     i1, i2 = 1, 998
     lik1, p1 = _pente_lik(data, i1)
@@ -4491,6 +4609,7 @@ def compute_AML_microsat(
         genotypes_by_sample_per_locus=genotypes_by_sample_per_locus,
     )
     frequency_cache = {}
+    vectorize_parent_cache = {}
     for i, t in enumerate(_half_arrangements(n_sample, 3)):
         h, p1, p2 = t[0], t[1], t[2]
         key = f"{h + 1}.{p1 + 1}.{p2 + 1}"
@@ -4506,6 +4625,7 @@ def compute_AML_microsat(
             parent2,
             _locus_seed(seed, _LIKELIHOOD_SEED_OFFSET, i),
             frequency_cache=frequency_cache,
+            vectorize_parent_cache=vectorize_parent_cache,
         )
     return results
 

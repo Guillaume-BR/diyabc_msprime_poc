@@ -30,6 +30,7 @@ from bridge.summary_statistics import (
     _compute_VAR_constants,
     _compute_VAR_for_one_sample,
     _count_distinct_haplotypes,
+    _focal_genotype_frequencies,
     _genotype_matrix_by_sample,
     _genotypes_by_sample_and_individuals,
     _individuals_by_sample,
@@ -38,10 +39,11 @@ from bridge.summary_statistics import (
     _log_likelihood_admixture,
     _pairwise_distances_per_locus,
     _pairwise_hamming_distances,
+    _parental_frequencies_with_cache,
     _pool_allele_counts_for_two_samples,
     _prepare_matrices_poolseq,
-    _prepare_triplet_for_admixture,
     _prepared_parental_frequencies,
+    _vectorize_parent_for_focal,
     compute_all_statistics_dna,
     compute_all_statistics_microsat,
     compute_all_statistics_poolseq,
@@ -2524,6 +2526,322 @@ def test_prepare_triplet_for_admixture_vs_reference():
     assert result == expected
 
 
+def _vectorize_triplet(prepared_triplet):
+    """Référence conservée en tant qu'oracle"""
+    # listes vides pour chaque groupe (haploïde : 2 listes, homozygote : 2, hétérozygote : 4)
+    f1_haploid, f2_haploid = [], []
+    f1_homozygous, f2_homozygous = [], []
+    f1_heterozygous_x, f2_heterozygous_x = [], []
+    f1_heterozygous_y, f2_heterozygous_y = [], []
+    for f1, f2, focal_genotypes in prepared_triplet:
+        for genotype in focal_genotypes:
+            if len(genotype) == 1:  # haploid
+                f1_haploid.append(f1.get(genotype[0], 0))
+                f2_haploid.append(f2.get(genotype[0], 0))
+            elif (
+                len(genotype) == 2 and genotype[0] == genotype[1]
+            ):  # homozygous diploid
+                f1_homozygous.append(f1.get(genotype[0], 0))
+                f2_homozygous.append(f2.get(genotype[0], 0))
+            elif (
+                len(genotype) == 2 and genotype[0] != genotype[1]
+            ):  # heterozygous diploid
+                f1_heterozygous_x.append(f1.get(genotype[0], 0))
+                f2_heterozygous_x.append(f2.get(genotype[0], 0))
+                f1_heterozygous_y.append(f1.get(genotype[1], 0))
+                f2_heterozygous_y.append(f2.get(genotype[1], 0))
+            else:
+                raise ValueError(
+                    f"Problème avec le génotype de l'individu : {genotype}"
+                )
+    # conversion en np.array(dtype=float) et retour
+    f1_haploid = np.array(f1_haploid, dtype=float)
+    f2_haploid = np.array(f2_haploid, dtype=float)
+    f1_homozygous = np.array(f1_homozygous, dtype=float)
+    f2_homozygous = np.array(f2_homozygous, dtype=float)
+    f1_heterozygous_x = np.array(f1_heterozygous_x, dtype=float)
+    f2_heterozygous_x = np.array(f2_heterozygous_x, dtype=float)
+    f1_heterozygous_y = np.array(f1_heterozygous_y, dtype=float)
+    f2_heterozygous_y = np.array(f2_heterozygous_y, dtype=float)
+
+    focal_genotypes = FocalGenotypeFrequencies(
+        haploid_f1=f1_haploid,
+        haploid_f2=f2_haploid,
+        homozygous_f1=f1_homozygous,
+        homozygous_f2=f2_homozygous,
+        heterozygous_f1_x=f1_heterozygous_x,
+        heterozygous_f2_x=f2_heterozygous_x,
+        heterozygous_f1_y=f1_heterozygous_y,
+        heterozygous_f2_y=f2_heterozygous_y,
+    )
+
+    return focal_genotypes
+
+
+def _prepare_triplet_for_admixture(
+    mutual_data: list[
+        tuple[
+            dict[str, list[tuple[int, int]]],
+            dict[str, list[tuple[int, int] | tuple[int]]],
+        ]
+    ],
+    focal: str,
+    parent1: str,
+    parent2: str,
+    *,
+    frequency_cache: dict[str, list[dict[int, float]]] | None = None,
+) -> list[tuple[dict[int, float], dict[int, float], list[tuple[int, ...]]]]:
+    """Référence gardée comme oracle"""
+    prepared_triplet = []
+    parent1_frequencies = _parental_frequencies_with_cache(
+        mutual_data, parent1, frequency_cache
+    )
+    parent2_frequencies = _parental_frequencies_with_cache(
+        mutual_data, parent2, frequency_cache
+    )
+    for (f1, f2), (_, genotypes_by_sample) in zip(
+        zip(parent1_frequencies, parent2_frequencies, strict=True),
+        mutual_data,
+        strict=True,
+    ):
+        focal_genotypes = genotypes_by_sample.get(focal, [])
+        prepared_triplet.append((f1, f2, focal_genotypes))
+
+    return prepared_triplet
+
+
+def test_vectorize_triplet():
+    """Vérifie que _vectorize_triplet renvoie bien les bonnes fréqeunces génotypiques"""
+
+    mutual_data1 = [
+        (
+            {
+                "pop1": [(203, 3), (193, 1)],
+                "pop2": [(203, 2), (197, 1)],
+                "pop3": [(203, 0), (197, 0)],
+            },
+            {
+                "pop1": [(203, 203), (203, 193), (203, 203), (203, 203)],
+                "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
+                "pop3": [(203,), (203, 203), (197, 203), (203, 193)],
+            },
+        )
+    ]
+    focal = "pop3"
+    parent1 = "pop1"
+    parent2 = "pop2"
+    prepared_triplet1 = _prepare_triplet_for_admixture(
+        mutual_data1, focal, parent1, parent2
+    )
+    vectorized_triplet1 = _vectorize_triplet(prepared_triplet1)
+
+    assert vectorized_triplet1.haploid_f1.tolist() == [0.75]
+    assert vectorized_triplet1.haploid_f2.tolist() == [2 / 3]
+    assert vectorized_triplet1.homozygous_f1.tolist() == [0.75]
+    assert vectorized_triplet1.homozygous_f2.tolist() == [2 / 3]
+    assert vectorized_triplet1.heterozygous_f1_x.tolist() == [0.0, 0.75]
+    assert vectorized_triplet1.heterozygous_f1_y.tolist() == [0.75, 0.25]
+    assert vectorized_triplet1.heterozygous_f2_x.tolist() == [1 / 3, 2 / 3]
+    assert vectorized_triplet1.heterozygous_f2_y.tolist() == [2 / 3, 0]
+
+
+def _assert_same_focal_frequencies(result, expected):
+    for field in dataclasses.fields(result):
+        a, b = getattr(result, field.name), getattr(expected, field.name)
+        assert a.shape == b.shape and a.dtype == b.dtype, field.name
+        assert np.array_equal(a, b), field.name
+
+
+def test_focal_genotype_frequencies_vs_reference():
+    """Vérifie que _focal_genotype_frequencies est équivalent à la version de référence."""
+    mutual_data = [
+        (
+            {
+                "pop1": [(203, 3), (193, 1)],
+                "pop2": [(203, 2), (197, 1)],
+                "pop3": [(203, 0), (197, 0)],
+            },
+            {
+                "pop1": [(203, 203), (203, 193), (203, 203), (203, 203)],
+                "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
+                "pop3": [(203,), (203, 203), (197, 203), (203, 193)],
+            },
+        ),
+        (
+            {
+                "pop1": [(203, 3), (193, 1)],
+                "pop2": [(203, 2), (197, 1)],
+                "pop3": [(203, 0), (197, 0)],
+            },
+            {
+                "pop1": [(203, 203), (203, 193), (203, 203), (203, 203)],
+                "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
+                "pop3": [(203,), (203, 203), (197, 203), (203, 193)],
+            },
+        ),
+    ]
+    focal = "pop3"
+    parent1 = "pop1"
+    parent2 = "pop2"
+    prepared_triplet = _prepare_triplet_for_admixture(
+        mutual_data, focal, parent1, parent2
+    )
+    freq1 = _prepared_parental_frequencies(mutual_data, parent1)
+    freq2 = _prepared_parental_frequencies(mutual_data, parent2)
+    freq1_cache = {parent1: freq1}
+    freq_cache = {parent1: freq1, parent2: freq2}
+
+    result1 = _focal_genotype_frequencies(
+        mutual_data, focal, parent1, parent2, frequency_cache=freq1_cache
+    )
+    result_empty = _focal_genotype_frequencies(mutual_data, focal, parent1, parent2)
+    result_full = _focal_genotype_frequencies(
+        mutual_data, focal, parent1, parent2, frequency_cache=freq_cache
+    )
+    expected = _vectorize_triplet(prepared_triplet)
+
+    _assert_same_focal_frequencies(result1, expected)
+    _assert_same_focal_frequencies(result_empty, expected)
+    _assert_same_focal_frequencies(result_full, expected)
+
+
+def test_vectorize_triplet_with_problematic_genotype():
+    """Vérifie que _vectorize_triplet renvoie une erreur si on a un génotype problématique"""
+    mutual_data = [
+        (
+            {
+                "pop1": [(203, 3), (193, 1)],
+                "pop2": [(203, 2), (197, 1)],
+                "pop3": [(203, 0), (197, 0)],
+            },
+            {
+                "pop1": [(203, 203), (203, 193), (203, 203), (203, 203)],
+                "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
+                "pop3": [(203, 197, 201), (197, 197), (197, 197), (197, 197)],
+            },
+        )
+    ]
+    focal = "pop3"
+    parent1 = "pop1"
+    parent2 = "pop2"
+    prepared_triplet = _prepare_triplet_for_admixture(
+        mutual_data, focal, parent1, parent2
+    )
+    with pytest.raises(ValueError, match="Problème avec le génotype de l'individu"):
+        _vectorize_triplet(prepared_triplet)
+
+
+def test_vectorize_triplet_for_focal():
+    """Vérifie que _vectorize_triplet renvoie bien les bonnes fréquences génotypiques pour le focal"""
+    mutual_data = [
+        (
+            {
+                "pop1": [(203, 3), (193, 1)],
+                "pop2": [(203, 2), (197, 1)],
+                "pop3": [(203, 0), (197, 0)],
+            },
+            {
+                "pop1": [(203, 203), (203, 193), (203, 203), (203, 203)],
+                "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
+                "pop3": [(203,), (203, 203), (197, 203), (203, 193)],
+            },
+        )
+    ]
+    focal = "pop3"
+    parent1 = "pop1"
+    parent2 = "pop2"
+    parent_freq1 = _prepared_parental_frequencies(mutual_data, parent1)
+    prepared_triplet = _prepare_triplet_for_admixture(
+        mutual_data, focal, parent1, parent2
+    )
+    focal_genotypes_per_locus = [
+        focal_genotypes for _, _, focal_genotypes in prepared_triplet
+    ]
+    haploid, homozygous, heterozygous_x, heterozygous_y = _vectorize_parent_for_focal(
+        parent_frequencies=parent_freq1,
+        focal_genotypes_per_locus=focal_genotypes_per_locus,
+    )
+
+    assert haploid.tolist() == [0.75]
+    assert homozygous.tolist() == [0.75]
+    assert heterozygous_x.tolist() == [0, 0.75]
+    assert heterozygous_y.tolist() == [0.75, 0.25]
+
+
+def test_vectorize_triplet_for_focal_with_problematic_genotype():
+    """Vérifie que _vectorize_triplet renvoie une erreur si on a un génotype problématique pour le focal"""
+    mutual_data = [
+        (
+            {
+                "pop1": [(203, 3), (193, 1)],
+                "pop2": [(203, 2), (197, 1)],
+                "pop3": [(203, 0), (197, 0)],
+            },
+            {
+                "pop1": [(203, 203), (203, 193), (203, 203), (203, 203)],
+                "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
+                "pop3": [(203, 203, 203), (203, 203), (197, 203), (203, 193)],
+            },
+        )
+    ]
+    focal = "pop3"
+    parent1 = "pop1"
+    parent2 = "pop2"
+    prepared_triplet = _prepare_triplet_for_admixture(
+        mutual_data, focal, parent1, parent2
+    )
+    with pytest.raises(ValueError, match="Problème avec le génotype de l'individu"):
+        _vectorize_triplet(prepared_triplet)
+
+
+def test_vectorize_triplet_for_focal_vs_reference():
+    mutual_data = [
+        (
+            {
+                "pop1": [(203, 3), (193, 1)],
+                "pop2": [(203, 2), (197, 1)],
+                "pop3": [(203, 0), (197, 0)],
+            },
+            {
+                "pop1": [(203, 203), (203, 193), (203, 203), (203, 203)],
+                "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
+                "pop3": [(203,), (203, 203), (197, 203), (203, 193)],
+            },
+        ),
+        (
+            {
+                "pop1": [(203, 3), (193, 1)],
+                "pop2": [(203, 2), (197, 1)],
+                "pop3": [(203, 0), (197, 0)],
+            },
+            {
+                "pop1": [(203, 203), (203, 193), (203, 203), (203, 203)],
+                "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
+                "pop3": [(203,), (203, 203), (197, 203), (203, 193)],
+            },
+        ),
+    ]
+    focal = "pop3"
+    parent1 = "pop1"
+    parent2 = "pop2"
+    prepared_triplet = _prepare_triplet_for_admixture(
+        mutual_data, focal, parent1, parent2
+    )
+    focal_genotypes_per_locus = [
+        focal_genotypes for _, _, focal_genotypes in prepared_triplet
+    ]
+    parent_freq1 = _prepared_parental_frequencies(mutual_data, parent1)
+    haploid, homozygous, heterozygous_x, heterozygous_y = _vectorize_parent_for_focal(
+        parent_frequencies=parent_freq1,
+        focal_genotypes_per_locus=focal_genotypes_per_locus,
+    )
+    focal_genotypes = _vectorize_triplet(prepared_triplet)
+    assert haploid.tolist() == focal_genotypes.haploid_f1.tolist()
+    assert homozygous.tolist() == focal_genotypes.homozygous_f1.tolist()
+    assert heterozygous_x.tolist() == focal_genotypes.heterozygous_f1_x.tolist()
+    assert heterozygous_y.tolist() == focal_genotypes.heterozygous_f1_y.tolist()
+
+
 def _reference_log_likelihood_admixture(
     data: FocalGenotypeFrequencies,
     a: float,
@@ -2831,3 +3149,32 @@ def test_aml_cache_matches_uncached_and_does_not_leak_between_calls(monkeypatch)
         results[shift] = cached
 
     assert results[0] != results[1]  # sinon le test ne distingue pas une fuite
+
+
+def test_aml_parent_vectorization_computed_once_per_focal_parent_pair(monkeypatch):
+    """Le cache de vectorisation ne vectorise qu'une fois chaque couple (focal, parent).
+
+    4 échantillons : 12 triplets, chacun utilise deux couples (focal, parent),
+    soit 24 utilisations de 12 couples distincts. Sans cache effectif, 24
+    appels ; avec lui, 12.
+    """
+    import bridge.summary_statistics as ss_module
+
+    names, lengths, genotypes = _synthetic_aml_inputs(0)
+    calls = []
+    original = ss_module._vectorize_parent_for_focal
+
+    def spy(parent_frequencies, focal_genotypes_per_locus):
+        calls.append(1)
+        return original(parent_frequencies, focal_genotypes_per_locus)
+
+    monkeypatch.setattr(ss_module, "_vectorize_parent_for_focal", spy)
+    ss_module.compute_AML_microsat(
+        [None, None],
+        names,
+        seed=1,
+        length_by_sample_per_locus=lengths,
+        genotypes_by_sample_per_locus=genotypes,
+    )
+
+    assert len(calls) == 12
