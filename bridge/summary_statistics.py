@@ -2637,16 +2637,15 @@ def _length_by_sample(
         return length_by_sample
     else:
         variant = next(tree_sequence.variants())
-        tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
+        length_list = [int(a) for a in variant.alleles]
         for samp_name, sample_ids in layout:
-            length_by_sample[samp_name] = []
-            list_taille_sample_ids = tailles[sample_ids].tolist()
-            for taille in variant.alleles:
-                taille_int = int(taille)
-                length_by_sample[samp_name].append(
-                    (taille_int, list_taille_sample_ids.count(taille_int))
-                )
-
+            allele_index = np.bincount(
+                variant.genotypes[sample_ids], minlength=len(length_list)
+            ).tolist()
+            length_by_sample[samp_name] = [
+                (length, allele)
+                for length, allele in zip(length_list, allele_index, strict=True)
+            ]
         return length_by_sample
 
 

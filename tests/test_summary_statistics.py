@@ -4,6 +4,7 @@ import itertools
 import msprime
 import numpy as np
 import pytest
+import tskit
 
 from bridge.ancestry_simulation import (
     build_transition_matrix_microsat,
@@ -1168,6 +1169,45 @@ def _mutated_microsat_ts(seed=3):
             kmin=180, kmax=220, motif_size=2, Pgeom=0.2
         ),
     )
+
+
+def _reference_length_by_sample(
+    tree_sequence: tskit.TreeSequence,
+    *,
+    layout: list[tuple[str, np.ndarray]] | None = None,
+) -> dict[str, list[tuple[int, int]]]:
+    """Construit un dict {nom_echantillon: [(longueur, nb_sequence), ...]}.
+
+    Args:
+        tree_sequence: Un TreeSequence muté du groupe (un locus [M]).
+        layout: [(nom_echantillon, np.ndarray[indices_d'individus]), ...] : si fourni, remplace le découpage par échantillon à utilisé par le chemin sériel, où un échantillon n'est plus sa propre échantillon
+
+    Returns:
+        Un dict {nom_echantillon: [(longueur, compte), ...]}.
+    """
+    length_by_sample = {}
+    if layout is None:
+        layout = compute_population_layout(
+            tree_sequence
+        )  # liste(tuple(pop,array(indice)))
+    # si locus est monomorphe
+    if tree_sequence.num_sites == 0:
+        for samp_name, sample_ids in layout:
+            length_by_sample[samp_name] = [(0, len(sample_ids))]
+        return length_by_sample
+    else:
+        variant = next(tree_sequence.variants())
+        tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
+        for samp_name, sample_ids in layout:
+            length_by_sample[samp_name] = []
+            list_taille_sample_ids = tailles[sample_ids].tolist()
+            for taille in variant.alleles:
+                taille_int = int(taille)
+                length_by_sample[samp_name].append(
+                    (taille_int, list_taille_sample_ids.count(taille_int))
+                )
+
+        return length_by_sample
 
 
 def test_length_by_sample(microsat_context_te2_xy):
@@ -2371,6 +2411,19 @@ def _all_ploidy_cases(test):
         "mutation_rate", [0.0, 0.5], ids=["monomorphic", "polymorphic"]
     )(test)
     return pytest.mark.parametrize("scenario", list(_PLOIDY_SCENARIOS))(test)
+
+
+@_all_ploidy_cases
+def test_length_by_sample_matches_reference(scenario, mutation_rate, use_sample_layout):
+    ts, counts = _ts_with_samples(_PLOIDY_SCENARIOS[scenario], mutation_rate)
+    layout = _layout_or_default(ts, counts, use_sample_layout)
+
+    result = _length_by_sample(ts, layout=layout)
+    expected = _reference_length_by_sample(ts, layout=layout)
+
+    assert list(result) == list(expected)  # ordre du layout
+    for name in expected:
+        assert result[name] == expected[name]  # ordre croissant des indices
 
 
 @_all_ploidy_cases
