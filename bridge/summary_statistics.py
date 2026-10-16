@@ -3148,6 +3148,8 @@ def _pool_allele_counts_for_two_samples(
         return [(0, 0.0)]
     else:
         dict_pop_2 = {length: count for length, count in pop_2}
+        # garde la dernière occurence d'une ongueur dupliquée mais ce qui ne peut arriver
+        # du fait de la construction de length_by_sample (un seul tuple par longueur)
         for length, count_1 in pop_1:
             count_2 = dict_pop_2.get(length, 0)
             total = count_1 + count_2
