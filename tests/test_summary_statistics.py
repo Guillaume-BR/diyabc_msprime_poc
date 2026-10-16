@@ -1555,6 +1555,53 @@ def test_compute_N2P(microsat_context_te2_xy):
 # tests relatifs à la stat H2P
 
 
+def _reference_pool_allele_counts_for_two_samples(
+    pop_1: list[tuple[int, int]], pop_2: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    """Fusionne les comptes bruts de deux échantillons, allèle par allèle.
+
+    Ne calcule ni H2P ni une fréquence -- juste n_i·freq_i + n_j·freq_j
+    (= compte_i + compte_j, la division par n_i/n_j s'annulant avec la
+    multiplication), pour que _compute_H2P_for_one_pair puisse
+    réutiliser _compute_HET_for_one_sample dessus (qui fait
+    lui-même la division par le total).
+
+    Args:
+        pop_1: Liste de tuples (longueur, nb_sequence) pour l'échantillon 1.
+        pop_2: Liste de tuples (longueur, nb_sequence) pour l'échantillon 2.
+
+    Returns:
+        Liste de tuples (longueur, compte poolé) pour chaque allèle.
+    """
+    pooled_counts = []
+    n1 = sum(count for _, count in pop_1)
+    n2 = sum(count for _, count in pop_2)
+    n = n1 + n2
+    if n <= 1:
+        return [(0, 0.0)]
+    else:
+        for length, count_1 in pop_1:
+            count_2 = next((count for len, count in pop_2 if len == length), 0)
+            total = count_1 + count_2
+            pooled_counts.append((length, total))
+
+    return pooled_counts
+
+
+def test_pool_allele_counts_vs_reference():
+    """Vérifie que la fonction _pool_allele_counts_for_two_samples
+    correspond à la référence."""
+    alleles_pop1 = [(201, 0), (203, 31), (197, 1), (193, 7), (199, 0), (189, 0)]
+    alleles_pop2 = [(201, 0), (203, 18), (197, 0), (193, 20), (199, 1), (189, 1)]
+
+    pooled_counts = _pool_allele_counts_for_two_samples(alleles_pop1, alleles_pop2)
+    reference_pooled_counts = _reference_pool_allele_counts_for_two_samples(
+        alleles_pop1, alleles_pop2
+    )
+
+    assert pooled_counts == reference_pooled_counts
+
+
 def test_pool_allele_counts_for_two_samples():
     """Vérifie que la fonction _pool_allele_counts_for_two_samples
     fonctionne correctement."""
@@ -3178,3 +3225,33 @@ def test_aml_parent_vectorization_computed_once_per_focal_parent_pair(monkeypatc
     )
 
     assert len(calls) == 12
+
+
+def test_pool_allele_counts_matches_reference_on_random_inputs():
+    """`_pool_allele_counts_for_two_samples` donne la même liste que l'ancienne version.
+
+    Listes tirées au hasard : sous-ensembles d'allèles dans un ordre quelconque
+    (donc des allèles présents dans un seul des deux échantillons, dont certains
+    seulement dans `pop_2`, qui doivent être ignorés), comptes éventuellement
+    nuls, listes vides, et cas `n <= 1` qui renvoie `[(0, 0.0)]`.
+    """
+    rng = np.random.default_rng(2024)
+    alleles = [190 + 2 * k for k in range(8)]
+
+    def draw_sample():
+        chosen = rng.choice(alleles, size=int(rng.integers(0, 8)), replace=False)
+        return [(int(allele), int(rng.integers(0, 6))) for allele in chosen]
+
+    cases = [
+        ([], []),
+        ([(200, 1)], []),
+        ([], [(200, 1)]),
+        ([(200, 0), (202, 1)], [(202, 0)]),
+        ([(200, 3)], [(204, 5)]),  # allèle de pop_2 absent de pop_1 : ignoré
+    ]
+    cases += [(draw_sample(), draw_sample()) for _ in range(300)]
+
+    for pop_1, pop_2 in cases:
+        result = _pool_allele_counts_for_two_samples(pop_1, pop_2)
+        expected = _reference_pool_allele_counts_for_two_samples(pop_1, pop_2)
+        assert result == expected, (pop_1, pop_2)

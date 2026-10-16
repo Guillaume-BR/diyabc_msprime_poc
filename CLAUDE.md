@@ -1235,6 +1235,20 @@ isolated (candidates: `record_provenance=False` on every `sim_ancestry` /
     `_genotypes_by_sample_and_individuals`. Changed: elements are Python `int`, no
     longer `np.int64`. The old loops are the `_reference_*` oracles of
     `tests/test_summary_statistics.py`.
+  - **`FST` allele counts (15/10)**: `_allele_counts_by_sample` computes `ni`, `nA`, `AA`
+    once per locus and sample (`ni_by_sample`, `{sample: {allele: (nA, AA)}}`, read with
+    `.get(al, (0, 0))`); `_compute_FST_constants_for_two_samples_combined` is now pure
+    arithmetic on six numbers. **Output identical** (`compare_particles_microsat`, 30
+    particles x 152 values, 0 differences). `FST` 19.3 → 9.4 ms (minimum) and 26.4 →
+    10.5 ms (median) per particle, `HEAD` and modified measured alternately, 20
+    particles x 2 passes; whole particle -8 %. **Two things it must keep**: the
+    `unique_alleles` set is built from the keys of the per-sample dicts, which are in
+    first-appearance order, so its iteration order, hence the order of the float sums,
+    is the old one **only because of that** (a sorted or rebuilt dict would move the
+    last digits and no unit test would see it); and the `reference_*` oracle in the
+    tests, which the property test compares against on random inputs rich in
+    homozygotes (the first helper counted a homozygote twice, `for al in p` instead of
+    `set(p)`; the fixed test goes red when the bug is put back).
   - Replay path before the numpy matrix reached it (3 particles, `time_stages_microsat`):
     matrices 61 %, `sim_ancestry` 19 %, `sim_mutations` 4 %, all statistics together
     13 %. `ms_seriel` was not re-measured.
@@ -1272,12 +1286,17 @@ isolated (candidates: `record_provenance=False` on every `sim_ancestry` /
     model, not a local defect.
 
 **Open leads, one session each**: (1) MicroSat statistics are now 56-62 % of a
-particle (126 ms in-process on `ms_modified`: 67 ms of statistics). `FST` alone is
-23.7 ms (35 % of them): precomputing the per-sample allele counts once per locus and
-keeping the original `set` iteration order for the float sums gave **bit-identical**
-results on the real captured calls and 28.8 → 10.8 ms per particle (x2.7); a plain
-vectorization over alleles only x1.7. Not applied. Then `AML` 14.5 ms, `LIK` 7.5 ms and
-~15 ms of shared reads and layouts. (2) IndSeq MAF > 0 (6.7x). (3) IndSeq Hudson /
+particle (126 ms in-process on `ms_modified`: 67 ms of statistics; 115-123 ms and 56-61
+ms after the `FST` change of 15/10). `FST` is done in its counting part (see "`FST`
+allele counts"); its remaining ~10 ms are 7 ms of `_length_by_sample_and_individuals`
+(a second read of the tree: `FST` ignores the shared `genotypes_by_sample_per_locus`),
+1 ms of counts and 3 ms of pair x allele loops. Deriving `FST`'s `(x, x)` pairs from
+the shared genotypes is bounded by ~7 ms (~6 % of a particle), realistically 4-6 ms,
+and must first be proven equivalent on a monomorphic locus (`(0, 0)` for every
+individual, haploid ones included) and on haploid `<M>`. **Re-rank before choosing**:
+the figures below for `AML` 14.5 ms, `LIK` 7.5 ms and ~15 ms of shared reads and
+layouts are from 12/10 and were not re-measured; one label per statistic gives the
+ranking in one run. (2) IndSeq MAF > 0 (6.7x). (3) IndSeq Hudson /
 serial: per-locus tskit overhead. (4) PoolSeq: none. (5) DNA: see the verdict above.
 **Every optimization touches code validated against DIYABC**: an output-neutral one
 must stay *identical* at equal seed (`compare_particles_dna` / `_microsat`, then the
@@ -1332,6 +1351,16 @@ sibling rule applies unless the user decides otherwise — ask first.
 - **Single-particle timings carry ±7 % noise** (the same code gave 0.410 and 0.382 s):
   run 10-20 particles and take the minimum or the median; a gain under ~5 % is not
   detectable on one.
+- **A timer wrapper is not free, and nested wrappers under one label double-count.**
+  One label for functions that call each other (`_length_by_sample_and_individuals` →
+  `_individuals_by_sample`, `..._on_all_alleles` → `..._combined`) adds the inner time
+  twice: the tell is a part longer than its whole (`FST hors préparation = -0.010 s`).
+  And ~3 500 wrapped calls per particle, ~1 µs each, add several ms to a 12 ms
+  statistic. To compare two states, wrap only the outer function (2 calls per particle)
+  and measure `HEAD` (clean worktree) and the modified tree **alternately**, twice; a
+  figure from another session is not a baseline. When the `reference/` directory is
+  tracked, `ln -s` into the worktree creates the link *inside* it: remove the checked-out
+  directory first.
 - **Golden tests pin the seeded simulation, not the formula.** They stayed green
   through all the output-neutral refactors (their use) and moved with the first statistical
   change; regenerating them proves nothing about correctness (the replay does). A

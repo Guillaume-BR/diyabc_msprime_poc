@@ -3147,8 +3147,9 @@ def _pool_allele_counts_for_two_samples(
     if n <= 1:
         return [(0, 0.0)]
     else:
+        dict_pop_2 = {length: count for length, count in pop_2}
         for length, count_1 in pop_1:
-            count_2 = next((count for len, count in pop_2 if len == length), 0)
+            count_2 = dict_pop_2.get(length, 0)
             total = count_1 + count_2
             pooled_counts.append((length, total))
 
@@ -4231,55 +4232,6 @@ def _parental_frequencies_with_cache(
     return parental_frequencies
 
 
-def _prepare_triplet_for_admixture(
-    mutual_data: list[
-        tuple[
-            dict[str, list[tuple[int, int]]],
-            dict[str, list[tuple[int, int] | tuple[int]]],
-        ]
-    ],
-    focal: str,
-    parent1: str,
-    parent2: str,
-    *,
-    frequency_cache: dict[str, list[dict[int, float]]] | None = None,
-) -> list[tuple[dict[int, float], dict[int, float], list[tuple[int, ...]]]]:
-    """Prépare les loci pour le calcul de la log-vraisemblance d'admixture.
-    Pour chaque locus, on calcule les fréquences des allèles dans les
-    échantillons parentaux et on récupère les génotypes des individus de
-    l'échantillon focal.
-
-    Args:
-        mutual_data: Liste de tuples contenant les données mutuelles pour chaque locus.
-        focal: Nom de l'échantillon focal.
-        parent1: Nom du premier échantillon parental.
-        parent2: Nom de la deuxième échantillon parental.
-        frequency_cache: Cache des fréquences des allèles, ou None si l'appelant n'en fournit pas.
-
-    Returns:
-        Une liste de tuples pour chaque locus, contenant :
-        - dict des fréquences des allèles dans parent1,
-        - dict des fréquences des allèles dans parent2,
-        - liste des génotypes des individus de l'échantillon focal.
-    """
-    prepared_triplet = []
-    parent1_frequencies = _parental_frequencies_with_cache(
-        mutual_data, parent1, frequency_cache
-    )
-    parent2_frequencies = _parental_frequencies_with_cache(
-        mutual_data, parent2, frequency_cache
-    )
-    for (f1, f2), (_, genotypes_by_sample) in zip(
-        zip(parent1_frequencies, parent2_frequencies, strict=True),
-        mutual_data,
-        strict=True,
-    ):
-        focal_genotypes = genotypes_by_sample.get(focal, [])
-        prepared_triplet.append((f1, f2, focal_genotypes))
-
-    return prepared_triplet
-
-
 def _vectorize_parent_for_focal(
     parent_frequencies: list[dict[int, float]],
     focal_genotypes_per_locus: list[list[tuple[int, ...]]],
@@ -4385,57 +4337,6 @@ def _focal_genotype_frequencies(
     )
 
 
-def _vectorize_triplet(prepared_triplet):
-    # listes vides pour chaque groupe (haploïde : 2 listes, homozygote : 2, hétérozygote : 4)
-    f1_haploid, f2_haploid = [], []
-    f1_homozygous, f2_homozygous = [], []
-    f1_heterozygous_x, f2_heterozygous_x = [], []
-    f1_heterozygous_y, f2_heterozygous_y = [], []
-    for f1, f2, focal_genotypes in prepared_triplet:
-        for genotype in focal_genotypes:
-            if len(genotype) == 1:  # haploid
-                f1_haploid.append(f1.get(genotype[0], 0))
-                f2_haploid.append(f2.get(genotype[0], 0))
-            elif (
-                len(genotype) == 2 and genotype[0] == genotype[1]
-            ):  # homozygous diploid
-                f1_homozygous.append(f1.get(genotype[0], 0))
-                f2_homozygous.append(f2.get(genotype[0], 0))
-            elif (
-                len(genotype) == 2 and genotype[0] != genotype[1]
-            ):  # heterozygous diploid
-                f1_heterozygous_x.append(f1.get(genotype[0], 0))
-                f2_heterozygous_x.append(f2.get(genotype[0], 0))
-                f1_heterozygous_y.append(f1.get(genotype[1], 0))
-                f2_heterozygous_y.append(f2.get(genotype[1], 0))
-            else:
-                raise ValueError(
-                    f"Problème avec le génotype de l'individu : {genotype}"
-                )
-    # conversion en np.array(dtype=float) et retour
-    f1_haploid = np.array(f1_haploid, dtype=float)
-    f2_haploid = np.array(f2_haploid, dtype=float)
-    f1_homozygous = np.array(f1_homozygous, dtype=float)
-    f2_homozygous = np.array(f2_homozygous, dtype=float)
-    f1_heterozygous_x = np.array(f1_heterozygous_x, dtype=float)
-    f2_heterozygous_x = np.array(f2_heterozygous_x, dtype=float)
-    f1_heterozygous_y = np.array(f1_heterozygous_y, dtype=float)
-    f2_heterozygous_y = np.array(f2_heterozygous_y, dtype=float)
-
-    focal_genotypes = FocalGenotypeFrequencies(
-        haploid_f1=f1_haploid,
-        haploid_f2=f2_haploid,
-        homozygous_f1=f1_homozygous,
-        homozygous_f2=f2_homozygous,
-        heterozygous_f1_x=f1_heterozygous_x,
-        heterozygous_f2_x=f2_heterozygous_x,
-        heterozygous_f1_y=f1_heterozygous_y,
-        heterozygous_f2_y=f2_heterozygous_y,
-    )
-
-    return focal_genotypes
-
-
 def _log_likelihood_admixture(
     data: FocalGenotypeFrequencies,
     a: float,
@@ -4529,15 +4430,12 @@ def _compute_AML_one_triplet(
         seed: Seed pour la génération aléatoire (pour les cas où AML ne peut pas être calculé).
         frequency_cache: Cache {parent: fréquences par locus} partagé entre les
             triplets d'un même appel, ou None si l'appelant n'en fournit pas.
-        vectorize_parent_cache: Cache {tuple(focal, parent1): FocalGenotypeFrequencies} partagé entre les
+        vectorize_parent_cache: Cache {tuple(parent,focal): tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]} partagé entre les
             triplets d'un même appel, ou None si l'appelant n'en fournit pas.
 
     Returns:
         La statistique AML pour le triplet donné.
     """
-    # prepared_triplet = _prepare_triplet_for_admixture(
-    #    mutual_data, focal, parent1, parent2, frequency_cache=frequency_cache
-    # )
 
     data = _focal_genotype_frequencies(
         mutual_data,

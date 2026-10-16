@@ -4532,3 +4532,105 @@ modèle « un appel de bibliothèque par locus ».
 - **Références d'identité** : prises sur `HEAD` dans un `git worktree` propre (lien
   symbolique `reference`), jamais avec `git stash`. `ref_stats_dna.json` est périmé depuis
   le lot `<A>`.
+
+## 2026-10-15 — Optimisation MicroSat : `FST`, précalcul des comptes d'allèles
+
+Séance en mode mentor : l'utilisateur a écrit le code, relu pas à pas. Périmètre : les
+statistiques MicroSat (56-62 % d'une particule), en commençant par `FST`, la plus
+grosse (23,7 ms le 12/10).
+
+### 1. Le constat
+
+Dans `compute_FST`, pour chaque paire d'échantillons `(i, j)` et chaque allèle de leur
+union, `_compute_ni_nA_AA_for_one_sample` recomptait `ni`, `nA`, `AA` de chacun des deux
+échantillons, alors que ces trois nombres ne dépendent que de **(échantillon, allèle)**,
+pas de la paire. Un échantillon figure dans k-1 paires : ses comptes étaient refaits k-1
+fois, chacun par deux parcours de ses individus.
+
+### 2. Ce qui a été fait
+
+- `_allele_counts_by_sample(length_by_sample)` → `(ni_by_sample, nA_AA_by_sample)`, un
+  seul passage par échantillon et par locus ; construit **dans `compute_FST`**, pas dans
+  le dispatch : `FST` est le seul appelant de `_length_by_sample_and_individuals`, il n'y
+  avait rien à partager entre statistiques, et le passer par `compute_all_statistics_microsat`
+  aurait ajouté un mot-clé aux 11 statistiques pour rien.
+- Deux structures séparées : `ni` ne dépend pas de l'allèle, et un allèle absent d'un
+  échantillon n'a pas de clé (un `.get(al, (0, 0))` lirait un `ni` faux sinon).
+- `_compute_FST_constants_for_two_samples_combined` prend six nombres (option B) : de
+  l'arithmétique pure, formules inchangées caractère pour caractère. La lecture se fait
+  dans `_compute_FST_constants_on_all_alleles_for_two_samples`, hors de la boucle pour ce
+  qui ne dépend pas de l'allèle (`ni`, tables par échantillon).
+- `_compute_ni_nA_AA_for_one_sample` supprimée ; son corps vit dans les tests comme
+  `reference_compute_ni_nA_AA_for_one_sample`, l'oracle d'un test de propriété sur
+  entrées aléatoires (graine fixe, 2 à 5 allèles, trois échantillons de tailles
+  différentes, un allèle présent nulle part).
+
+### 3. Le piège de l'ordre du `set`
+
+La boucle sur les allèles accumule `s1l`, `s2l`, `s3l` en flottants dans l'ordre
+d'itération de `unique_alleles`. Un `set` d'entiers n'est pas trié : sa disposition dépend
+de l'ordre d'insertion dès qu'il y a collision (`{1, 9}` et `{9, 1}`), et les longueurs
+d'allèles microsat (90-130) collisionnent. La version finale construit le `set` à partir
+des clés des dicts par échantillon, qui sont dans l'ordre de première apparition : la
+suite d'insertions *distinctes* est celle de l'ancien code (une réinsertion ne change pas
+la table), donc l'ordre des sommes aussi. **C'est un couplage implicite**, vérifié par
+`compare_particles_microsat` (30 particules x 152 valeurs, 0 différence) mais invisible
+aux tests unitaires.
+
+### 4. Erreurs de méthode, consignées
+
+- **Double comptage dans le premier helper** : `for al in p` visite deux fois un
+  homozygote `(x, x)`, et le corps comptait déjà les deux éléments en une passe : `nA = 4`,
+  `AA = 2` au lieu de 2 et 1. Trouvé par l'exemple `[(100, 102), (100, 100)]` calculé à la
+  main. Corrigé en `for x, y in pairs` avec un incrément par élément. Le test de propriété
+  devient rouge avec l'ancienne boucle (vérifié en la remettant).
+- **Conversion `defaultdict` → `.get` incomplète** : `AA[al]` laissé en indexation dans la
+  compréhension, `KeyError` pour tout allèle jamais homozygote.
+- **Tests redirigés vers des copies** : les trois tests unitaires d'origine avaient été
+  pointés vers des copies `reference_*` figées, donc verts quoi que fasse `bridge/`.
+  Un oracle compare le nouveau code à l'ancien ; il ne remplace pas le test de l'ancien.
+- **Test de l'oracle mal indexé** : l'oracle renvoie `(ni, nA, AA)`, le helper `(nA, AA)` ;
+  l'assertion comparait `AA` à `nA`. Comparer des tuples entiers plutôt que des champs.
+- **Docstring du helper tronquée** par un copier-coller (accents lus en latin-1, phrases
+  coupées), relevée à trois relectures de suite.
+
+### 5. Mesurer : ce que le premier script faisait croire
+
+`scripts/time_fst_microsat.py` (dérivé de `time_aml_microsat`) donnait `FST hors
+préparation = -0,010 s`. Deux causes : un seul label pour des fonctions imbriquées (double
+comptage) et ~3 551 appels enveloppés par particule (surcoût du wrapper). Après correction
+des labels, séparés en lecture et comptage :
+
+| Poste (médiane, 10 particules) | ms | part de `FST` |
+|---|---|---|
+| lecture de l'arbre (`_length_by_sample_and_individuals`) | 7 | 66 % |
+| comptage (`_allele_counts_by_sample`) | 1 | 7 % |
+| boucles paires x allèles | 3 | 27 % |
+| `FST` | 10 | 100 % |
+
+**Baseline sur `HEAD`** (worktree propre, un script ne chronométrant que `compute_FST`,
+20 particules, `HEAD` et modifié alternés, deux passes, sous `nice`) :
+
+| | `HEAD` | modifié | gain |
+|---|---|---|---|
+| `FST`, minimum | 19,5 / 19,2 ms | 9,5 / 9,3 ms | x2,0 |
+| `FST`, médiane | 26,2 / 26,6 ms | 10,7 / 10,4 ms | x2,5 |
+| statistiques, médiane | 74,3 / 74,5 ms | 61,1 / 59,8 ms | -13 ms |
+| particule, médiane | 133,2 / 133,2 ms | 123,2 / 121,3 ms | -8 % |
+
+Les deux passes concordent à ~1 ms. Le 10,8 ms prédit le 12/10 était juste.
+Piège de worktree : `reference/` y est un dossier suivi par git, donc `ln -s` a créé le
+lien *dans* ce dossier (`FileNotFoundError` sur `headerRF.txt`) ; retirer le dossier extrait
+d'abord, dans le worktree seulement.
+
+### 6. Ce qu'il reste
+
+- `FST` : 7 ms de seconde lecture de l'arbre. Piste : dériver les paires `(x, x)` de
+  `genotypes_by_sample_per_locus` (déjà partagé, ignoré par `FST`). Plafond ~6 % d'une
+  particule, réaliste 4-6 ms ; à prouver équivalent sur un locus monomorphe et sur
+  `<M>` haploïde avant d'y toucher.
+- **Re-classer d'abord** : un label par statistique, une exécution, pour savoir où sont les
+  ~46 ms de statistiques qui ne sont pas `FST` (`AML`, `LIK`, lectures partagées : chiffres
+  du 12/10, non re-mesurés).
+- La séance n'a pas lancé de rejeu : l'optimisation est neutre à graine égale, vérifiée par
+  l'identité exacte, comme les précédentes.
