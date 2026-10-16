@@ -38,6 +38,7 @@ from bridge.summary_statistics import (
     _length_by_sample,
     _length_by_sample_and_individuals,
     _log_likelihood_admixture,
+    _pairs_from_genotypes,
     _pairwise_distances_per_locus,
     _pairwise_hamming_distances,
     _parental_frequencies_with_cache,
@@ -2439,6 +2440,21 @@ def test_individuals_by_sample_matches_reference(
     assert list(result) == list(expected)  # ordre du layout
     for name in expected:
         assert result[name].tolist() == expected[name]  # ordre croissant des indices
+
+
+@_all_ploidy_cases
+def test_pair_from_genotypes_vs_length_by_sample_and_individuals(
+    scenario, mutation_rate, use_sample_layout
+):
+    ts, counts = _ts_with_samples(_PLOIDY_SCENARIOS[scenario], mutation_rate)
+    layout = _layout_or_default(ts, counts, use_sample_layout)
+
+    genotypes = _genotypes_by_sample_and_individuals(ts, layout=layout)
+    pairs_from_genotypes = _pairs_from_genotypes(genotypes)
+
+    lengths = _length_by_sample_and_individuals(ts, layout=layout)
+
+    assert pairs_from_genotypes == lengths  # ordre du layout
 
 
 @_all_ploidy_cases

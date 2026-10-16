@@ -3820,14 +3820,29 @@ def _compute_FST_constants_on_all_alleles_for_two_samples(
     return s1l, s2l, s3l
 
 
+def _pairs_from_genotypes(
+    genotypes_by_samples: dict[str, list[tuple[int, ...]]],
+) -> dict[str, list[tuple[int, int]]]:
+    """Transforme le dictionnaire des génotypes en celui des paires"""
+    pairs_by_sample = {}
+    for sample, genotypes in genotypes_by_samples.items():
+        pairs = []
+        for genotype in genotypes:
+            if len(genotype) == 1:
+                pairs.append((genotype[0], genotype[0]))
+            else:
+                pairs.append((genotype[0], genotype[1]))
+        pairs_by_sample[sample] = pairs
+    return pairs_by_sample
+
+
 def compute_FST(
     tree_sequences: list[tskit.TreeSequence],
     sample_names: list[str],
     *,
     layouts: list[list[tuple[str, np.ndarray]]] | None = None,
     length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
-    genotypes_by_sample_per_locus: list[dict[str, list[tuple[int] | tuple[int, int]]]]
-    | None = None,
+    genotypes_by_sample_per_locus: list[dict[str, list[tuple[int, ...]]]] | None = None,
 ) -> dict[str, float]:
     """Calcule FST_i_j : pour chaque paire d'échantillons, la moyenne de FST sur tous les loci du groupe passé en argument (un groupe = les TreeSequences des loci séquence d'un même `group Gx` du header).
 
@@ -3851,8 +3866,18 @@ def compute_FST(
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
-    for ts, layout in zip(tree_sequences, layouts, strict=True):
-        length_by_sample = _length_by_sample_and_individuals(ts, layout=layout)
+    if genotypes_by_sample_per_locus is not None:
+        # Si les génotypes sont fournis, on les transforme en paires
+        pairs_by_sample_per_locus = [
+            _pairs_from_genotypes(genotypes)
+            for genotypes in genotypes_by_sample_per_locus
+        ]
+    else:
+        pairs_by_sample_per_locus = [
+            _length_by_sample_and_individuals(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    for length_by_sample in pairs_by_sample_per_locus:
         ni_by_sample, nA_AA_by_sample = _allele_counts_by_sample(length_by_sample)
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
