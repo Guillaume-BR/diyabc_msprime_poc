@@ -4634,3 +4634,138 @@ d'abord, dans le worktree seulement.
   du 12/10, non re-mesurés).
 - La séance n'a pas lancé de rejeu : l'optimisation est neutre à graine égale, vérifiée par
   l'identité exacte, comme les précédentes.
+
+## 2026-10-16 — Optimisation MicroSat, suite : lectures, `AML`, `H2P`, `FST` (statistiques 74 → 33 ms)
+
+Suite de la section du 15/10 (elle remplace son §6, « Ce qu'il reste »). Même séance en
+mode mentor : l'utilisateur écrit le code, la relecture et les mesures sont faites en
+alternance avec `HEAD`. Tous les changements sont **identiques à graine égale**
+(`compare_particles_microsat`, 30 particules x 152 valeurs, 0 différence), donc aucun
+rejeu contre DIYABC n'était nécessaire.
+
+### 1. Bilan (médianes, `toy_example1_ms_modified`, une particule en processus unique)
+
+| | début de séance | fin |
+|---|---|---|
+| `FST` | 19-26 ms | **3,3 ms** |
+| `AML` | 16,4 ms | **~9 ms** |
+| `H2P` | 2,7 ms | 1,4 ms |
+| lectures partagées | 17 ms | ~7 ms |
+| toutes les statistiques | 74 ms | **~33 ms** |
+| particule entière | 133 ms | **~93-96 ms** |
+
+Les statistiques ne sont plus qu'un tiers de la particule : la simulation (~60 ms) est
+maintenant la plus grosse moitié.
+
+### 2. Les étapes, avec ce que chacune a donné
+
+- **`_length_by_sample`, `list(tableau_numpy)` dans la boucle des allèles.** Chaque allèle
+  (14 en médiane, 43 au maximum) reconvertissait tout l'échantillon en liste de scalaires
+  numpy, puis comptait en Python. Sortir `tailles[sample_ids]` de la boucle ne rapportait
+  que 2 ms ; `.tolist()` une fois par échantillon : lectures **17,5 → 9,7 ms**, particule
+  -7 à -9 ms. Ma prédiction (2-3 ms) était trois fois trop basse.
+- **Répartition des lectures** (espion sur les arguments réels, `perf_counter`, minimum de
+  30 répétitions) : `_length_by_sample` 2,7 ms, `_genotypes_by_sample_and_individuals`
+  6,4, `_length_by_sample_and_individuals` 6,5, `_individuals_by_sample` 6,3 (100 appels,
+  4 `np.isin` chacun), décodage du variant 1,2 ms par passe x 3.
+- **`_individuals_by_sample`** : table nœud → échantillon remplie une fois, contrôle « aucun
+  ou plusieurs échantillons » **à l'écriture** (`any(table[nodes] != -1)`) puis sur
+  `table[first_nodes]` (`min == -1`). Plus strict que l'ancien décompte, qu'un individu en
+  double compensé par un individu manquant laissait passer. Statistiques -3 à -5 ms,
+  invisible sur la particule. Trois erreurs en chemin : condition inversée (`-1 in` lève sur
+  une entrée valide), puis `-1 not in` (ne lève que si **toutes** les cases sont prises),
+  puis `enumerate(layout)` qui donne `(nom, nœuds)` et non le nom (`unhashable ndarray`).
+  L'utilisateur avait remplacé l'oracle indépendant (boucle individu par individu) par
+  l'ancien code `np.isin` : restauré.
+- **`AML`**, 15,3 ms au départ : préparation 2,0, vectorisation 3,05, **vraisemblance
+  10,3** (574 évaluations de 18 µs, du surcoût d'appel numpy sur ~100 éléments).
+  - Blocs vides sautés dans `_log_likelihood_admixture` (une somme vide vaut `0.0`,
+    `lik += 0.0` ne change aucun bit) : **16,4 → 12,5 ms**. 40 tests contre l'ancienne
+    version (8 combinaisons de blocs vides x 5 valeurs de `a`, `==`) et 8 tests qui fixent
+    qu'un bloc **incohérent** (un tableau vide, son jumeau non) lève la même `ValueError`
+    de broadcast. Règle uniforme `any(taille != 0)` sur les trois blocs, après qu'une
+    version testait `f1_x` seul pour les hétérozygotes.
+  - **Refactor de `_prepare_triplet_for_admixture`** : l'`append` est sorti de la boucle,
+    donc seul le dernier locus est gardé. **709 valeurs différentes sur 30 particules**
+    (`AML_2_1.2.4` 0,941 → 0,0) alors que **359 tests passaient** (le test de la
+    préparation n'avait qu'un locus). C'est le `compare` qui l'a vu.
+  - **Cache par parent** (`frequency_cache`, créé dans `compute_AML_microsat`) : 12,2 →
+    10,4 ms. Trois versions fausses : écriture dans `None` (`TypeError`), fonction sans
+    `return` sur le chemin « pas de cache » (`None` itéré), et **calcul avant lecture du
+    cache** : résultats justes, aucun gain, invisible à tout test de valeur.
+  - **Cache par couple (focal, parent)** de quatre tableaux : le découpage en
+    `_vectorize_parent_for_focal` seul **recule de 0,5 ms** (le classement des génotypes est
+    refait 24 fois au lieu de 12), le cache le rattrape. Micro-banc sur les vraies données :
+    ancienne voie 4,5 ms, nouvelle sans cache 5,1, avec cache 2,6, classement par focal
+    (non fait) 2,0. Gain réel **-1 à -2 ms**. Deux versions fausses : clé `str(données)`
+    (coût d'impression, fragile) puis vectorisation calculée **deux fois** à chaque échec
+    (24 appels au lieu de 12, vu par l'espion). Les deux fonctions de l'ancienne voie ne
+    sont plus dans `bridge/`.
+  - **Non fait, à ne pas tenter sans revalidation** : évaluer `a` et `a + 0,001` ensemble.
+    L'ordre des sommes flottantes changerait, et la dichotomie bascule sur le signe d'une
+    différence de deux grandeurs proches.
+- **`H2P`** : `_pool_allele_counts_for_two_samples` pesait 2,66 ms sur 3,0 (un `next(...)`
+  parcourait `pop_2` pour chaque allèle de `pop_1`, 300 appels). Dictionnaire de `pop_2`
+  construit une fois, boucle sur `pop_1` conservée (l'ordre fixe la somme flottante, et un
+  allèle propre à `pop_2` reste ignoré) : **2,7 → 1,4 ms**. Seule différence : une longueur
+  dupliquée dans `pop_2` (`dict` garde la dernière, `next` la première), jamais produite
+  par `_length_by_sample`. Seul le test de propriété (300 tirages + 5 cas) voit la
+  mutation « parcourir l'union ».
+- **`bincount` dans `_length_by_sample`** : condition d'équivalence (tailles d'un locus
+  distinctes) vérifiée, **0 doublon sur 1 499 loci**, 0 génotype négatif, 0 allèle `None`.
+  `minlength=len(sample_ids)` au lieu du nombre d'allèles : `IndexError` pour un grand
+  échantillon, **allèle de compte 0 perdu sans erreur** pour un petit. Gain **-0,5 ms** sur
+  les lectures (ma prédiction : 1 ms).
+- **`FST` sans seconde lecture de l'arbre** : `_pairs_from_genotypes` dérive les paires de
+  `genotypes_by_sample_per_locus`, déjà calculé et ignoré. Équivalence prouvée d'abord
+  (trois axes : ploïdie, monomorphe/polymorphe, layout) : un haploïde `(x,)` donne `(x, x)`,
+  et le locus monomorphe est `(0, 0)` pour tous dans les deux représentations. **`FST`
+  8,4 → 3,3 ms**, particule -12 ms (-11 %). Le test d'équivalence redéfinissait
+  `_pairs_from_genotypes` dans le fichier de tests : il vérifiait sa propre copie.
+  `pairs.pop(0)` en parallèle d'un `zip` remplacé par une liste construite avant la boucle.
+  **À faire** : la docstring de `compute_FST` dit encore « non utilisé pour l'instant ».
+
+### 3. Erreurs de méthode, consignées
+
+- **Quatre erreurs que seul `compare_particles_microsat` a vues** : l'`append` hors de la
+  boucle (709 valeurs), les caches qui ne cachent rien (résultats justes, donc invisibles
+  aux deux), et une garde `AML` incohérente entre blocs. Un test de valeurs ne prouve pas
+  qu'une optimisation optimise : l'espion de comptage d'appels (`monkeypatch` sur l'attribut
+  du module, qui n'est lu qu'au moment de l'appel) est le test qui manquait chaque fois.
+- **Tests sur un seul locus** (préparation, vectorisation, assemblage) : un bug d'ordre ou
+  de boucle y est invisible. Deux loci **différents** au minimum, avec un génotype haploïde.
+- **`approx` à la place de `==`** dans des tests censés prouver l'égalité exacte, et une
+  valeur attendue (`-inf` pour une fréquence négative) écrite sans la dériver : le masque
+  `freq > 0` l'écarte, le résultat est fini.
+- **L'oracle remplacé ou recopié au lieu d'être conservé** (deux fois), et un test qui
+  vérifie une copie locale au lieu de la fonction de `bridge/`.
+- **Mes prédictions** : trois fois trop basses ou trop hautes (`_length_by_sample` 2-3 ms
+  pour 8 réels, `bincount` 1 ms pour 0,5, vectorisation « la moitié de 5 ms » alors que le
+  classement n'est pas divisé). Les mesures, pas les estimations, ont décidé.
+- **`cProfile`** : `H2P` 13 ms contre 2,8 réels, `LIK` 32 contre 7,7. Il aurait envoyé la
+  séance sur `H2P`, qui ne pesait que 2,7 ms.
+
+### 4. Choses pratiques
+
+- **Mesure** : `scripts/bench_time_stats.py` (un label par statistique, un wrapper par
+  appel, 20 particules). Pour comparer, un worktree `HEAD` propre (`git worktree add
+  --detach`, **retirer le `reference/` extrait avant de le lier**, sinon `ln -s` crée le lien
+  dedans), `HEAD` et modifié **alternés, deux passes** : la machine dérive de ~1 ms d'une
+  passe à l'autre.
+- **Identité** : `ref_stats_ms.json` à la racine (non suivi), pris sur `HEAD` d'avant la
+  séance. Il reste valable : aucun changement n'a touché le flux aléatoire.
+- **Encodage** : le docstring de `scripts/bench_time_stats.py` et deux messages de commit
+  (`8746a6d`, `optimisation de H2P`) contiennent des accents corrompus (`Ã©`) : copier-coller
+  depuis le terminal.
+
+### 5. Ce qu'il reste
+
+- Statistiques ~33 ms : `AML` ~9 (la vraisemblance, 6,7 ms, ne baisse plus sans changer
+  l'arithmétique), `LIK` ~8 (**à mesurer d'abord**, sommes flottantes par individu), lectures
+  ~7 (`variant` décodé 3 fois par locus, ~3,5 ms ; un décodage passé en argument optionnel
+  avec repli `None` serait exact), `FST` ~3, `H2P` ~1,4.
+- **La simulation, ~60 ms, est maintenant la plus grosse moitié** : matrices de substitution
+  (`_place_gsm_row_on_dense_grid`, 3 950 appels par particule), `sim_mutations`, généalogies.
+  Hors du périmètre de cette séance (statistiques) ; à reprofiler d'abord au `perf_counter`.
+- Le rejeu de 1 000 particules n'a pas été relancé : le tableau de performance de
+  `CLAUDE.md` date du 12-14/10.
