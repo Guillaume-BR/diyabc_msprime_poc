@@ -4161,6 +4161,42 @@ def _extract_mutual_data(
     return mutual_data
 
 
+def _prepared_parental_frequencies(
+    mutual_data: list[
+        tuple[
+            dict[str, list[tuple[int, int]]],
+            dict[str, list[tuple[int, ...]]],
+        ]
+    ],
+    parent: str,
+) -> list[dict[int, float]]:
+    """Prépare les fréquences des allèles pour un échantillon parental.
+
+    Args:
+        mutual_data: Liste de tuples contenant les données mutuelles pour chaque locus.
+        parent: Nom de l'échantillon parental.
+
+    Returns:
+        Une liste de dicts pour chaque locus, contenant les fréquences des allèles dans l'échantillon parental.
+    """
+    prepared_frequencies = []
+    for length_by_sample, _ in mutual_data:
+        count_parent = {
+            length: count
+            for length, count in length_by_sample.get(parent, [])
+            if count > 0
+        }
+        total_parent = sum(count_parent.values())
+        f_parent = (
+            {length: nb / total_parent for length, nb in count_parent.items()}
+            if total_parent > 0
+            else {}
+        )
+        prepared_frequencies.append(f_parent)
+
+    return prepared_frequencies
+
+
 def _prepare_triplet_for_admixture(
     mutual_data: list[
         tuple[
@@ -4191,33 +4227,14 @@ def _prepare_triplet_for_admixture(
         - liste des génotypes des individus de l'échantillon focal.
     """
     prepared_triplet = []
-    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
-    for length_by_sample, genotypes_by_sample in mutual_data:
-        count_parent1 = {
-            length: count
-            for length, count in length_by_sample.get(parent1, [])
-            if count > 0
-        }
-        count_parent2 = {
-            length: count
-            for length, count in length_by_sample.get(parent2, [])
-            if count > 0
-        }
-        total_parent1 = sum(count_parent1.values())
-        total_parent2 = sum(count_parent2.values())
-
-        f1 = (
-            {length: nb / total_parent1 for length, nb in count_parent1.items()}
-            if total_parent1 > 0
-            else {}
-        )
-        f2 = (
-            {length: nb / total_parent2 for length, nb in count_parent2.items()}
-            if total_parent2 > 0
-            else {}
-        )
+    parent1_frequencies = _prepared_parental_frequencies(mutual_data, parent1)
+    parent2_frequencies = _prepared_parental_frequencies(mutual_data, parent2)
+    for (f1, f2), (_, genotypes_by_sample) in zip(
+        zip(parent1_frequencies, parent2_frequencies, strict=True),
+        mutual_data,
+        strict=True,
+    ):
         focal_genotypes = genotypes_by_sample.get(focal, [])
-
         prepared_triplet.append((f1, f2, focal_genotypes))
 
     return prepared_triplet

@@ -40,6 +40,8 @@ from bridge.summary_statistics import (
     _pairwise_hamming_distances,
     _pool_allele_counts_for_two_samples,
     _prepare_matrices_poolseq,
+    _prepare_triplet_for_admixture,
+    _prepared_parental_frequencies,
     compute_all_statistics_dna,
     compute_all_statistics_microsat,
     compute_all_statistics_poolseq,
@@ -2426,6 +2428,100 @@ def test_genotypes_monomorphic_locus_gives_pairs_even_for_haploid():
     )
 
     assert result == {"s0": [(0, 0)] * 5, "s1": [(0, 0)] * 4}
+
+
+def _reference_prepare_triplet_for_admixture(
+    mutual_data: list[
+        tuple[
+            dict[str, list[tuple[int, int]]],
+            dict[str, list[tuple[int, int] | tuple[int]]],
+        ]
+    ],
+    focal: str,
+    parent1: str,
+    parent2: str,
+) -> list[tuple[dict[int, float], dict[int, float], list[tuple[int, ...]]]]:
+    """Ancienne version conservée comme oracle."""
+    prepared_triplet = []
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    for length_by_sample, genotypes_by_sample in mutual_data:
+        count_parent1 = {
+            length: count
+            for length, count in length_by_sample.get(parent1, [])
+            if count > 0
+        }
+        count_parent2 = {
+            length: count
+            for length, count in length_by_sample.get(parent2, [])
+            if count > 0
+        }
+        total_parent1 = sum(count_parent1.values())
+        total_parent2 = sum(count_parent2.values())
+
+        f1 = (
+            {length: nb / total_parent1 for length, nb in count_parent1.items()}
+            if total_parent1 > 0
+            else {}
+        )
+        f2 = (
+            {length: nb / total_parent2 for length, nb in count_parent2.items()}
+            if total_parent2 > 0
+            else {}
+        )
+        focal_genotypes = genotypes_by_sample.get(focal, [])
+
+        prepared_triplet.append((f1, f2, focal_genotypes))
+
+    return prepared_triplet
+
+
+def test_prepared_parental_frequencies():
+    """Test the prepared parental frequencies."""
+    mutual_data = [
+        (
+            {"pop1": [(203, 3), (193, 1)], "pop2": [(203, 0), (197, 0)]},
+            {
+                "pop1": [(203, 203), (203, 193), (203, 203), (203, 203)],
+                "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
+            },
+        )
+    ]
+    parent1 = "pop1"
+    result1 = _prepared_parental_frequencies(mutual_data, parent1)
+    assert result1 == [{203: 0.75, 193: 0.25}]
+
+    parent2 = "pop2"
+    result2 = _prepared_parental_frequencies(mutual_data, parent2)
+    assert result2 == [{}]
+
+
+def test_prepare_triplet_for_admixture_vs_reference():
+    """Vérifie que `_prepare_triplet_for_admixture` est équivalent à la version de référence."""
+    mutual_data = [
+        (
+            {
+                "pop1": [(203, 3), (193, 1)],
+                "pop2": [(203, 2), (197, 1)],
+                "pop3": [(203, 0), (197, 0)],
+            },
+            {
+                "pop1": [(203, 203), (203, 193), (203, 203), (203, 203)],
+                "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
+                "pop3": [(203, 203), (203, 193), (197, 203), (203, 193)],
+            },
+        )
+    ]
+    focal = "pop3"
+    parent1 = "pop1"
+    parent2 = "pop2"
+
+    result = _prepare_triplet_for_admixture(mutual_data, focal, parent1, parent2)
+
+    expected = _reference_prepare_triplet_for_admixture(
+        mutual_data, focal, parent1, parent2
+    )
+
+    assert result == expected
 
 
 def _reference_log_likelihood_admixture(
