@@ -4197,6 +4197,40 @@ def _prepared_parental_frequencies(
     return prepared_frequencies
 
 
+def _parental_frequencies_with_cache(
+    mutual_data: list[
+        tuple[dict[str, list[tuple[int, int]]], dict[str, list[tuple[int, ...]]]]
+    ],
+    parent: str,
+    frequency_cache: dict[str, list[dict[int, float]]] | None,
+) -> list[dict[int, float]]:
+    """Retourne les fréquences alléliques d'un échantillon parental, une par locus.
+
+    Lit le cache si le parent y figure, sinon calcule puis, si un cache est
+    fourni, y range le résultat. Le calcul n'est fait qu'une fois par parent
+    et par appel d'`AML` : le cache est créé par `compute_AML_microsat`.
+
+    Les dictionnaires rendus sont partagés entre triplets : `_vectorize_triplet`
+    ne fait que les lire (`f.get(...)`), jamais les modifier, ce qui rend ce
+    partage sûr.
+
+    Args:
+        mutual_data: Liste de tuples contenant les données mutuelles pour chaque locus.
+        parent: Nom de l'échantillon parental.
+        frequency_cache: Cache {parent: fréquences par locus}, ou None si
+            l'appelant n'en fournit pas (rien n'est alors mémorisé).
+
+    Returns:
+        Liste de dicts {taille: fréquence}, un par locus.
+    """
+    if frequency_cache is not None and parent in frequency_cache:
+        return frequency_cache[parent]
+    parental_frequencies = _prepared_parental_frequencies(mutual_data, parent)
+    if frequency_cache is not None:
+        frequency_cache[parent] = parental_frequencies
+    return parental_frequencies
+
+
 def _prepare_triplet_for_admixture(
     mutual_data: list[
         tuple[
@@ -4207,6 +4241,8 @@ def _prepare_triplet_for_admixture(
     focal: str,
     parent1: str,
     parent2: str,
+    *,
+    frequency_cache: dict[str, list[dict[int, float]]] | None = None,
 ) -> list[tuple[dict[int, float], dict[int, float], list[tuple[int, ...]]]]:
     """Prépare les loci pour le calcul de la log-vraisemblance d'admixture.
     Pour chaque locus, on calcule les fréquences des allèles dans les
@@ -4218,7 +4254,7 @@ def _prepare_triplet_for_admixture(
         focal: Nom de l'échantillon focal.
         parent1: Nom du premier échantillon parental.
         parent2: Nom de la deuxième échantillon parental.
-
+        frequency_cache: Cache des fréquences des allèles, ou None si l'appelant n'en fournit pas.
 
     Returns:
         Une liste de tuples pour chaque locus, contenant :
@@ -4227,8 +4263,12 @@ def _prepare_triplet_for_admixture(
         - liste des génotypes des individus de l'échantillon focal.
     """
     prepared_triplet = []
-    parent1_frequencies = _prepared_parental_frequencies(mutual_data, parent1)
-    parent2_frequencies = _prepared_parental_frequencies(mutual_data, parent2)
+    parent1_frequencies = _parental_frequencies_with_cache(
+        mutual_data, parent1, frequency_cache
+    )
+    parent2_frequencies = _parental_frequencies_with_cache(
+        mutual_data, parent2, frequency_cache
+    )
     for (f1, f2), (_, genotypes_by_sample) in zip(
         zip(parent1_frequencies, parent2_frequencies, strict=True),
         mutual_data,
@@ -4366,6 +4406,8 @@ def _compute_AML_one_triplet(
     parent1: str,
     parent2: str,
     seed: int,
+    *,
+    frequency_cache: dict[str, list[dict[int, float]]] | None = None,
 ) -> float:
     """Calcule le coefficient d'admixture maximum de vraisemblance (AML) pour
     un triplet d'échantillons.
@@ -4376,12 +4418,14 @@ def _compute_AML_one_triplet(
         parent1: Nom du premier échantillon parental.
         parent2: Nom de la deuxième échantillon parental.
         seed: Seed pour la génération aléatoire (pour les cas où AML ne peut pas être calculé).
+        frequency_cache: Cache {parent: fréquences par locus} partagé entre les
+            triplets d'un même appel, ou None si l'appelant n'en fournit pas.
 
     Returns:
         La statistique AML pour le triplet donné.
     """
     prepared_triplet = _prepare_triplet_for_admixture(
-        mutual_data, focal, parent1, parent2
+        mutual_data, focal, parent1, parent2, frequency_cache=frequency_cache
     )
 
     data = _vectorize_triplet(prepared_triplet)
@@ -4446,6 +4490,7 @@ def compute_AML_microsat(
         length_by_sample_per_locus=length_by_sample_per_locus,
         genotypes_by_sample_per_locus=genotypes_by_sample_per_locus,
     )
+    frequency_cache = {}
     for i, t in enumerate(_half_arrangements(n_sample, 3)):
         h, p1, p2 = t[0], t[1], t[2]
         key = f"{h + 1}.{p1 + 1}.{p2 + 1}"
@@ -4460,6 +4505,7 @@ def compute_AML_microsat(
             parent1,
             parent2,
             _locus_seed(seed, _LIKELIHOOD_SEED_OFFSET, i),
+            frequency_cache=frequency_cache,
         )
     return results
 

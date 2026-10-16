@@ -2737,3 +2737,97 @@ def test_compute_all_statistics_microsat(microsat_context_te2_xy):
     assert expected_keys.issubset(results.keys())
     assert pytest.approx(results["HET_1_1"]) == 0.8163225371
     assert pytest.approx(results["LIK_1_1.2"]) == 1.7822692958
+
+
+def _synthetic_aml_inputs(shift):
+    """Données synthétiques pour AML : 4 échantillons diploïdes, 2 loci.
+
+    `shift` décale les comptes pour fabriquer deux jeux de données différents.
+
+    Returns:
+        (sample_names, length_by_sample_per_locus, genotypes_by_sample_per_locus).
+    """
+    names = ["pop1", "pop2", "pop3", "pop4"]
+    all_genotypes = [
+        (200, 200),
+        (200, 202),
+        (202, 202),
+        (202, 204),
+        (204, 204),
+        (200, 204),
+    ]
+    length_by_sample_per_locus = []
+    genotypes_by_sample_per_locus = []
+    for locus in range(2):
+        length_by_sample = {}
+        genotypes_by_sample = {}
+        for k, name in enumerate(names):
+            length_by_sample[name] = [
+                (200, 2 + k + shift + locus),
+                (202, 6 - k + locus),
+                (204, 1 + (k * (locus + 1)) % 3 + 2 * shift),
+            ]
+            genotypes_by_sample[name] = all_genotypes[shift + k % 2 : 5 + locus]
+        length_by_sample_per_locus.append(length_by_sample)
+        genotypes_by_sample_per_locus.append(genotypes_by_sample)
+    return names, length_by_sample_per_locus, genotypes_by_sample_per_locus
+
+
+def test_aml_parental_frequencies_computed_once_per_parent(monkeypatch):
+    """Le cache de `compute_AML_microsat` ne calcule les fréquences qu'une fois par parent.
+
+    4 échantillons, 12 triplets, 24 utilisations d'un parent : sans cache
+    effectif, 24 appels ; avec lui, 4 (un par échantillon).
+    """
+    import bridge.summary_statistics as ss_module
+
+    names, lengths, genotypes = _synthetic_aml_inputs(0)
+    calls = []
+    original = ss_module._prepared_parental_frequencies
+
+    def spy(mutual_data, parent):
+        calls.append(parent)
+        return original(mutual_data, parent)
+
+    monkeypatch.setattr(ss_module, "_prepared_parental_frequencies", spy)
+    ss_module.compute_AML_microsat(
+        [None, None],
+        names,
+        seed=1,
+        length_by_sample_per_locus=lengths,
+        genotypes_by_sample_per_locus=genotypes,
+    )
+
+    assert sorted(calls) == names
+
+
+def test_aml_cache_matches_uncached_and_does_not_leak_between_calls(monkeypatch):
+    """Avec cache, `compute_AML_microsat` donne le résultat sans cache, sur deux appels successifs.
+
+    Deux jeux de données différents l'un après l'autre : un cache qui
+    survivrait à l'appel servirait au second les fréquences du premier.
+    """
+    import bridge.summary_statistics as ss_module
+
+    results = {}
+    for shift in (0, 1):
+        names, lengths, genotypes = _synthetic_aml_inputs(shift)
+        kwargs = {
+            "seed": 1,
+            "length_by_sample_per_locus": lengths,
+            "genotypes_by_sample_per_locus": genotypes,
+        }
+        cached = ss_module.compute_AML_microsat([None, None], names, **kwargs)
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                ss_module,
+                "_parental_frequencies_with_cache",
+                lambda mutual_data, parent, cache: (
+                    ss_module._prepared_parental_frequencies(mutual_data, parent)
+                ),
+            )
+            uncached = ss_module.compute_AML_microsat([None, None], names, **kwargs)
+        assert cached == uncached
+        results[shift] = cached
+
+    assert results[0] != results[1]  # sinon le test ne distingue pas une fuite
