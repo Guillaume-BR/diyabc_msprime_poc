@@ -2981,7 +2981,6 @@ def build_transition_matrix_microsat_with_sni_numpy(
     """
     # construction de la matrice de transition GSM+SNI sur la grille dense
     n_alleles = kmax - kmin + 1
-    transition_matrix = np.zeros((n_alleles, n_alleles))
 
     # calcul des matrices GSM pour chaque décalage de motif
     matrices = {}
@@ -2992,19 +2991,22 @@ def build_transition_matrix_microsat_with_sni_numpy(
             m=max(epsilon, min(1 - Pgeom, 1 - epsilon)), hi=hi, epsilon=epsilon, lo=0
         )
 
-    for i in range(n_alleles):
-        position = kmin + i
-        sni_row = _sni_row_on_dense_grid(position, kmin, kmax)
-        r = (position - kmin) % motif_size
-        local_distribution = _distribution_from_position(
-            position, matrices[r], kmin, motif_size
-        )
-        gsm_row = _place_gsm_row_on_dense_grid(
-            local_distribution, position, kmin, kmax, motif_size
-        )
-        transition_matrix[i] = _mix_sni_gsm_rows(sni_row, gsm_row, sni_rate, mut_rate)
+    # construction de la grille dense à partir des matrices GSM locales : les blocs sont à pas
+    # réguliers car chaque résidu forme une sous-grille, une mutation GSM ne change pas de résidu
+    dense = np.zeros((n_alleles, n_alleles))
+    for i in range(motif_size):
+        dense[i::motif_size, i::motif_size] = matrices[i]
 
-    # construction des noms d'allèles pour la grille dense
+    # matrice SNI (±1 pb, indépendante de motif_size) sur la grille dense
+    sni_matrix = np.zeros((n_alleles, n_alleles))
+    i = np.arange(n_alleles - 1)
+    sni_matrix[i, i + 1] = 0.5
+    sni_matrix[i + 1, i] = 0.5
+    sni_matrix[0, 0] = 0.5
+    sni_matrix[-1, -1] = 0.5
+
+    p_sni = sni_rate / (sni_rate + mut_rate)
+    transition_matrix = dense * (1 - p_sni) + sni_matrix * p_sni
     alleles = [str(kmin + i) for i in range(n_alleles)]
 
     # construction de la route distribution

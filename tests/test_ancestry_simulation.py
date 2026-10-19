@@ -20,6 +20,7 @@ from bridge.ancestry_simulation import (
     _group_prior_values_dna_from_columns,
     _grouping_loci_by_group_and_heritage,
     _gsm_matrix_numpy,
+    _mix_sni_gsm_rows,
     _place_gsm_row_on_dense_grid,
     _reindex_reads_by_msprime_name,
     _simulate_ancestries_for_loci,
@@ -40,6 +41,7 @@ from bridge.ancestry_simulation import (
     build_transition_matrix_dna,
     build_transition_matrix_microsat,
     build_transition_matrix_microsat_with_sni,
+    build_transition_matrix_microsat_with_sni_numpy,
     compute_population_layout,
     compute_sample_layout,
     count_loci_per_group,
@@ -1696,6 +1698,112 @@ def test_sni_row_on_dense_grid():
     position3 = kmax
     result3 = _sni_row_on_dense_grid(position3, kmin, kmax)
     assert np.allclose(result3, np.array([0, 0, 0, 0, 0.5, 0.5]))
+
+
+def _reference_build_transition_matrix_microsat_with_sni_numpy(
+    kmin: int,
+    kmax: int,
+    motif_size: int,
+    Pgeom: float,
+    sni_rate: float,
+    mut_rate: float,
+    epsilon: float = 1e-16,
+) -> msprime.MatrixMutationModel:
+    """Construit la matrice de transition d'un locus microsatellite avec SNI.
+
+    Args:
+        kmin: Nombre minimum d'allèles du locus.
+        kmax: Nombre maximum d'allèles du locus.
+        motif_size: Taille du motif répétitif du microsatellite.
+        Pgeom: Paramètre de mutation du modèle GSM.
+        sni_rate: Taux de mutation SNI.
+        mut_rate: Taux de mutation global.
+        epsilon: Paramètre de précision pour éviter les valeurs nulles.
+
+    Returns:
+        Matrice de transition combinée GSM+SNI (np.ndarray).
+    """
+    # construction de la matrice de transition GSM+SNI sur la grille dense
+    n_alleles = kmax - kmin + 1
+    transition_matrix = np.zeros((n_alleles, n_alleles))
+
+    # calcul des matrices GSM pour chaque décalage de motif
+    matrices = {}
+    for i in range(motif_size):
+        n_plus_i = (kmax - (kmin + i)) // motif_size
+        hi = n_plus_i
+        matrices[i] = _gsm_matrix_numpy(
+            m=max(epsilon, min(1 - Pgeom, 1 - epsilon)), hi=hi, epsilon=epsilon, lo=0
+        )
+
+    for i in range(n_alleles):
+        position = kmin + i
+        sni_row = _sni_row_on_dense_grid(position, kmin, kmax)
+        r = (position - kmin) % motif_size
+        local_distribution = _distribution_from_position(
+            position, matrices[r], kmin, motif_size
+        )
+        gsm_row = _place_gsm_row_on_dense_grid(
+            local_distribution, position, kmin, kmax, motif_size
+        )
+        transition_matrix[i] = _mix_sni_gsm_rows(sni_row, gsm_row, sni_rate, mut_rate)
+
+    # construction des noms d'allèles pour la grille dense
+    alleles = [str(kmin + i) for i in range(n_alleles)]
+
+    # construction de la route distribution
+    root = kmin + (kmax - kmin) // 2
+    root_distribution = np.zeros(n_alleles)
+    root_distribution[root - kmin] = 1.0  # pour coller avec la position de root
+
+    return msprime.MatrixMutationModel(
+        alleles=alleles,
+        root_distribution=root_distribution,
+        transition_matrix=transition_matrix,
+    )
+
+
+@pytest.mark.parametrize("motif_size", [1, 2, 3, 4, 5])
+@pytest.mark.parametrize(
+    "Pgeom_sni_mut",
+    [[0, 0, 1e-3], [0.3, 1e-5, 1e-4], [0.9, 1e-3, 1e-3], [1, 1e-3, 1e-4]],
+)
+@pytest.mark.parametrize("kmin", [0, 90])
+def test_build_transtion_matrix_microsat_with_sni_numpy_vs_reference(
+    motif_size, Pgeom_sni_mut, kmin
+):
+    n_alleles = [2 * motif_size, 2 * motif_size + 1, 11, 24, 79]
+    for alleles in n_alleles:
+        Pgeom = Pgeom_sni_mut[0]
+        sni_rate = Pgeom_sni_mut[1]
+        mut_rate = Pgeom_sni_mut[2]
+        model = build_transition_matrix_microsat_with_sni_numpy(
+            kmin=kmin,
+            kmax=kmin + alleles - 1,
+            motif_size=motif_size,
+            Pgeom=Pgeom,
+            sni_rate=sni_rate,
+            mut_rate=mut_rate,
+            epsilon=1e-16,
+        )
+
+        reference_model = _reference_build_transition_matrix_microsat_with_sni_numpy(
+            kmin=kmin,
+            kmax=kmin + alleles - 1,
+            motif_size=motif_size,
+            Pgeom=Pgeom,
+            sni_rate=sni_rate,
+            mut_rate=mut_rate,
+            epsilon=1e-16,
+        )
+
+        assert np.array_equal(
+            model.transition_matrix, reference_model.transition_matrix
+        ), (motif_size, n_alleles, kmin)
+        assert model.alleles == reference_model.alleles, (motif_size, n_alleles, kmin)
+        assert np.array_equal(
+            model.root_distribution, reference_model.root_distribution
+        ), (motif_size, n_alleles, kmin)
 
 
 def test_build_transition_matrix_microsat_with_sni():
