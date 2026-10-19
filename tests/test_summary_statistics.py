@@ -17,6 +17,7 @@ from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.summary_statistics import (
     FocalGenotypeFrequencies,
     _allele_counts_by_sample,
+    _compute_counts_for_one_sample,
     _compute_DM2_for_one_locus,
     _compute_FST_constants_for_two_samples_combined,
     _compute_FST_constants_on_all_alleles_for_two_samples,
@@ -30,6 +31,7 @@ from bridge.summary_statistics import (
     _compute_V2P_constants,
     _compute_VAR_constants,
     _compute_VAR_for_one_sample,
+    _count_alleles,
     _count_distinct_haplotypes,
     _focal_genotype_frequencies,
     _genotype_matrix_by_sample,
@@ -3099,6 +3101,86 @@ def test_compute_num_den_lik_for_one_individual():
     )
     assert num == 8
     assert den == 20
+
+
+def test_count_alleles():
+    length_by_sample = {
+        "pop1": [(203, 2), (200, 1), (193, 1)],
+        "pop2": [(203, 1), (200, 2), (197, 0)],
+    }
+    assert _count_alleles(length_by_sample) == 3  # car 197 non compté
+
+
+def test_compute_counts_for_one_sample():
+    length_by_sample = {
+        "pop1": [(203, 2), (200, 1), (197, 1)],
+        "pop2": [(203, 1), (200, 2), (197, 1)],
+    }
+    count_j, total_count_j = _compute_counts_for_one_sample(length_by_sample, "pop1")
+    assert count_j == {203: 2, 200: 1, 197: 1}
+    assert total_count_j == 4
+
+
+def _reference_compute_LIK_for_one_locus(
+    length_by_sample: dict[str, list[tuple[int, int]]],
+    genotypes_by_sample: dict[str, list[tuple[int, ...]]],
+    samp_i: str,
+    samp_j: str,
+) -> tuple[float, bool]:
+    """Ancienne version gardée comme oracle"""
+    if samp_i not in length_by_sample or samp_j not in length_by_sample:
+        return 0.0, False
+
+    count_j = {length: count for length, count in length_by_sample[samp_j]}
+    total_count_j = sum(count_j.values())
+
+    # nal du C++ (cal_lik2p) : un allèle n'est compté que si sa fréquence
+    # SOMMÉE SUR TOUS LES ÉCHANTILLONS est non nulle. `length_by_sample` porte
+    # déjà toutes les échantillons, et ses clés viennent de variant.alleles --
+    # donc elles incluent des états créés par une mutation puis écrasés, que
+    # plus aucun échantillon ne porte. Les compter gonfle nal et écrase b.
+    total_counts = {}
+    for rows in length_by_sample.values():
+        for length, count in rows:
+            total_counts[length] = total_counts.get(length, 0) + count
+    nb_allele = sum(1 for count in total_counts.values() if count > 0)
+    b = 1 / nb_allele if nb_allele > 0 else 0.0
+
+    a = (
+        1 / len(genotypes_by_sample[samp_i])
+        if len(genotypes_by_sample[samp_i]) > 0
+        else 0.0
+    )
+
+    likelihood = 0
+
+    for genotype in genotypes_by_sample[samp_i]:
+        num_lik, den_lik = _compute_num_den_lik_for_one_individual(
+            genotype, count_j, total_count_j, b
+        )
+        likelihood -= np.log10(num_lik / den_lik)
+
+    return likelihood * a, True
+
+
+def test_compute_LIK_for_one_locus_vs_reference():
+    _length_by_sample = {
+        "pop1": [(203, 3), (193, 1)],
+        "pop2": [(203, 2), (197, 1)],
+    }
+    genotypes_by_pop = {
+        "pop1": [(203, 203), (203, 193), (203, 203), (203, 203)],
+        "pop2": [(203, 203), (203, 193), (197, 203), (203, 193)],
+    }
+
+    lik, present = _compute_LIK_for_one_locus(
+        _length_by_sample, genotypes_by_pop, "pop1", "pop2"
+    )
+    expected_lik, expected_present = _reference_compute_LIK_for_one_locus(
+        _length_by_sample, genotypes_by_pop, "pop1", "pop2"
+    )
+    assert pytest.approx(lik) == expected_lik
+    assert present == expected_present
 
 
 def test_compute_LIK_for_one_locus():

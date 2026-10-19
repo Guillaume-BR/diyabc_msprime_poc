@@ -4004,11 +4004,59 @@ def _compute_num_den_lik_for_one_individual(
     return num_lik, den_lik
 
 
+def _count_alleles(length_by_sample: dict[str, list[tuple[int, int]]]) -> int:
+    """Compte le nombre d'allèles distincts présents dans l'ensemble des échantillons.
+
+    Args:
+        length_by_sample: Dict {nom_echantillon: [(longueur, nb_sequence), ...]}
+            pour CE locus.
+
+    Returns:
+        Le nombre d'allèles distincts (nal) présents dans l'ensemble des échantillons.
+    """
+
+    # nal du C++ (cal_lik2p) : un allèle n'est compté que si sa fréquence
+    # SOMMÉE SUR TOUS LES ÉCHANTILLONS est non nulle. `length_by_sample` porte
+    # déjà toutes les échantillons, et ses clés viennent de variant.alleles --
+    # donc elles incluent des états créés par une mutation puis écrasés, que
+    # plus aucun échantillon ne porte. Les compter gonfle nal et écrase b.
+    total_counts = {}
+    for rows in length_by_sample.values():
+        for length, count in rows:
+            total_counts[length] = total_counts.get(length, 0) + count
+    n_alleles = sum(1 for count in total_counts.values() if count > 0)
+    return n_alleles
+
+
+def _compute_counts_for_one_sample(
+    length_by_sample: dict[str, list[tuple[int, int]]], samp: str
+) -> tuple[dict[int, int], int]:
+    """Calcule count_j et total_count_j pour un échantillon donné.
+
+    Args:
+        length_by_sample: Dict {nom_echantillon: [(longueur, nb_sequence), ...]}
+            pour CE locus.
+        samp: Nom de l'échantillon.
+
+    Returns:
+        Tuple (count_j, total_count_j) où :
+            - count_j est un dict {taille: compte} pour l'échantillon de référence,
+            - total_count_j est le nombre total de copies de gène dans samp_j.
+    """
+    count = {length: count for length, count in length_by_sample.get(samp, [])}
+    total_count = sum(count.values())
+    return count, total_count
+
+
 def _compute_LIK_for_one_locus(
     length_by_sample: dict[str, list[tuple[int, int]]],
     genotypes_by_sample: dict[str, list[tuple[int, ...]]],
     samp_i: str,
     samp_j: str,
+    *,
+    count_j: dict[int, int] | None = None,
+    total_count_j: int | None = None,
+    n_alleles: int | None = None,
 ) -> tuple[float, bool]:
     """Calcule la contribution de LIK_i_j à UN locus (sens i -> j uniquement).
 
@@ -4039,20 +4087,14 @@ def _compute_LIK_for_one_locus(
     if samp_i not in length_by_sample or samp_j not in length_by_sample:
         return 0.0, False
 
-    count_j = {length: count for length, count in length_by_sample[samp_j]}
-    total_count_j = sum(count_j.values())
+    if n_alleles is None:
+        n_alleles = _count_alleles(length_by_sample)
+    if count_j is None or total_count_j is None:
+        count_j, total_count_j = _compute_counts_for_one_sample(
+            length_by_sample, samp=samp_j
+        )
 
-    # nal du C++ (cal_lik2p) : un allèle n'est compté que si sa fréquence
-    # SOMMÉE SUR TOUS LES ÉCHANTILLONS est non nulle. `length_by_sample` porte
-    # déjà toutes les échantillons, et ses clés viennent de variant.alleles --
-    # donc elles incluent des états créés par une mutation puis écrasés, que
-    # plus aucun échantillon ne porte. Les compter gonfle nal et écrase b.
-    total_counts = {}
-    for rows in length_by_sample.values():
-        for length, count in rows:
-            total_counts[length] = total_counts.get(length, 0) + count
-    nb_allele = sum(1 for count in total_counts.values() if count > 0)
-    b = 1 / nb_allele if nb_allele > 0 else 0.0
+    b = 1 / n_alleles if n_alleles > 0 else 0.0
 
     a = (
         1 / len(genotypes_by_sample[samp_i])
@@ -4107,6 +4149,7 @@ def compute_LIK(
     ]
     likelihood_sum = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
     valid_loci_count = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
+
     # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
     if layouts is None:
         layouts = [None] * len(tree_sequences)
@@ -4126,11 +4169,25 @@ def compute_LIK(
         genotypes_by_sample_per_locus,
         strict=True,
     ):
+        n_alleles = _count_alleles(length_by_sample)
+        counts_for_all_j = {
+            f"{j + 1}": _compute_counts_for_one_sample(
+                length_by_sample, samp=sample_names[j]
+            )
+            for j in range(len(sample_names))
+        }
         for i, j in pairs:
             key = f"{i + 1}.{j + 1}"
             samp_i, samp_j = sample_names[i], sample_names[j]
+            count_j, total_count_j = counts_for_all_j[f"{j + 1}"]
             likelihood, both_present = _compute_LIK_for_one_locus(
-                length_by_sample, genotypes_by_sample, samp_i, samp_j
+                length_by_sample,
+                genotypes_by_sample,
+                samp_i,
+                samp_j,
+                n_alleles=n_alleles,
+                total_count_j=total_count_j,
+                count_j=count_j,
             )
             likelihood_sum[key] += likelihood
             if both_present:
