@@ -1700,6 +1700,45 @@ def test_sni_row_on_dense_grid():
     assert np.allclose(result3, np.array([0, 0, 0, 0, 0.5, 0.5]))
 
 
+def _reference_gsm_matrix_numpy(m, hi, epsilon=1e-16, lo=0):
+    """Référence gardée comme oracle"""
+    i = np.arange(hi + 1)[:, None]
+    j = np.arange(hi + 1)[None, :]
+    d = np.abs(i - j)
+    num = m * (1 - m) ** (d - 1)
+    denom_up = 1 - (1 - m) ** (hi - i)
+    denom_down = 1 - (1 - m) ** (i - lo)
+    denom = np.where(i < j, denom_up, denom_down)
+    # pour éviter les warnings de division par zéro, on met à 0 les éléments de la diagonale
+    with np.errstate(divide="ignore", invalid="ignore"):
+        gamma = np.where(i == j, 0, num / denom)
+    rate = 0.5 * ((1 - epsilon) * gamma + epsilon * (d == 1))
+    np.fill_diagonal(rate, 0)  # pas de mutation vers soi-même
+
+    # division par le max des sommes des lignes pour normaliser la matrice
+    row_sums = rate.sum(axis=1)
+    max_row_sum = np.max(row_sums)
+    q = rate / max_row_sum
+
+    np.fill_diagonal(q, np.fmax(0.0, 1.0 - q.sum(axis=1)))
+    return q
+
+
+@pytest.mark.parametrize("hi", [i for i in range(1, 30, 2)])
+@pytest.mark.parametrize("m", [1e-16, 0.01, 0.1, 0.38, 0.5, 0.62, 0.9, 0.99, 1 - 1e-16])
+def test_gsm_matrix_numpy_vs_oracle(hi, m):
+    """Vérifie que la fonction gsm_matrix_numpy retourne la bonne matrice de
+    transition pour un locus microsatellite donné."""
+
+    epsilon = 1e-16
+    lo = 0
+
+    result = _gsm_matrix_numpy(m, hi, epsilon, lo)
+    expected_result = _reference_gsm_matrix_numpy(m, hi, epsilon, lo)
+
+    assert np.array_equal(result, expected_result)
+
+
 def _reference_build_transition_matrix_microsat_with_sni_numpy(
     kmin: int,
     kmax: int,
@@ -1709,7 +1748,8 @@ def _reference_build_transition_matrix_microsat_with_sni_numpy(
     mut_rate: float,
     epsilon: float = 1e-16,
 ) -> msprime.MatrixMutationModel:
-    """Construit la matrice de transition d'un locus microsatellite avec SNI.
+    """Référence gardée comme oracle,
+    Construit la matrice de transition d'un locus microsatellite avec SNI.
 
     Args:
         kmin: Nombre minimum d'allèles du locus.

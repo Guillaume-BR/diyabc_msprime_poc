@@ -2937,7 +2937,9 @@ def _gsm_matrix_numpy(m, hi, epsilon=1e-16, lo=0):
     i = np.arange(hi + 1)[:, None]
     j = np.arange(hi + 1)[None, :]
     d = np.abs(i - j)
-    num = m * (1 - m) ** (d - 1)
+    power = np.arange(0, hi + 1) - 1
+    vector = (1 - m) ** power
+    num = m * vector[d]
     denom_up = 1 - (1 - m) ** (hi - i)
     denom_down = 1 - (1 - m) ** (i - lo)
     denom = np.where(i < j, denom_up, denom_down)
