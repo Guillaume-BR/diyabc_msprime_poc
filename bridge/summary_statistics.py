@@ -2611,10 +2611,31 @@ def compute_HST(
 # Helper nécessaire pour le reste des stattistiques
 
 
+def _decode_locus(
+    tree_sequence: tskit.TreeSequence,
+) -> tuple[list[int], np.ndarray] | None:
+    """Decode les longueurs des microsatellites à partir des alleles.
+    Tableau en lecture seule, valable après la fin du décodage
+
+    Args:
+        tree_sequence: Un TreeSequence muté du groupe (un locus [M]).
+
+    Returns:
+        Un tuple (liste_des_longueurs, tableaux_des_génotypes).
+    """
+    if tree_sequence.num_sites == 0:
+        return None  # locus monomorphe, pas de sites
+
+    variant = next(tree_sequence.variants())
+    length_list = [int(a) for a in variant.alleles]
+    return length_list, variant.genotypes
+
+
 def _length_by_sample(
     tree_sequence: tskit.TreeSequence,
     *,
     layout: list[tuple[str, np.ndarray]] | None = None,
+    decoded: tuple[list[int], np.ndarray] | None = None,
 ) -> dict[str, list[tuple[int, int]]]:
     """Construit un dict {nom_echantillon: [(longueur, nb_sequence), ...]}.
 
@@ -2630,17 +2651,18 @@ def _length_by_sample(
         layout = compute_population_layout(
             tree_sequence
         )  # liste(tuple(pop,array(indice)))
+    if decoded is None:
+        decoded = _decode_locus(tree_sequence)
     # si locus est monomorphe
     if tree_sequence.num_sites == 0:
         for samp_name, sample_ids in layout:
             length_by_sample[samp_name] = [(0, len(sample_ids))]
         return length_by_sample
     else:
-        variant = next(tree_sequence.variants())
-        length_list = [int(a) for a in variant.alleles]
+        length_list = decoded[0]
         for samp_name, sample_ids in layout:
             allele_index = np.bincount(
-                variant.genotypes[sample_ids], minlength=len(length_list)
+                decoded[1][sample_ids], minlength=len(length_list)
             ).tolist()
             length_by_sample[samp_name] = [
                 (length, allele)
@@ -3904,6 +3926,7 @@ def _genotypes_by_sample_and_individuals(
     tree_sequence: tskit.TreeSequence,
     *,
     layout: list[tuple[str, np.ndarray]] | None = None,
+    decoded: tuple[list[int], np.ndarray] | None = None,
 ) -> dict[str, list[tuple[int, int] | tuple[int]]]:
     """Calcule les tailles d'allèles de chaque individu, par échantillon.
 
@@ -3919,6 +3942,8 @@ def _genotypes_by_sample_and_individuals(
         layout: [(nom_echantillon, np.ndarray[indices_de_noeuds]), ...] : si fourni,
             remplace le découpage par population, utilisé par le chemin sériel où
             un échantillon n'est plus sa propre population.
+        decoded: (alleles, genotypes) : si fourni, remplace la lecture des
+            tailles d'allèles depuis le variant.alleles et variant.genotypes.
 
     Returns:
         Dict {nom_echantillon: [(longueur_1, longueur_2) ou (longueur_1,), ...]}.
@@ -3927,6 +3952,8 @@ def _genotypes_by_sample_and_individuals(
         layout = compute_population_layout(tree_sequence)
     individuals_by_sample = _individuals_by_sample(tree_sequence, layout=layout)
 
+    if decoded is None:
+        decoded = _decode_locus(tree_sequence)
     # Locus monomorphe : un (0, 0) par individu, MÊME haploïde -- comportement
     # historique conservé tel quel (sur un locus polymorphe, un haploïde donne
     # un tuple à 1 élément).
@@ -3936,8 +3963,7 @@ def _genotypes_by_sample_and_individuals(
             for name, indices in individuals_by_sample.items()
         }
 
-    variant = next(tree_sequence.variants())
-    tailles = np.array([int(a) for a in variant.alleles])[variant.genotypes]
+    tailles = np.array(decoded[0])[decoded[1]]
     individuals_nodes = tree_sequence.individuals_nodes
     genotype_by_sample = {}
     for name, indices in individuals_by_sample.items():
@@ -4906,15 +4932,24 @@ def compute_all_statistics_microsat(
         layouts_for_lengths = (
             layouts if layouts is not None else [None] * len(tree_sequences)
         )
+        decoded_loci = [_decode_locus(ts) for ts in tree_sequences]
+
         length_by_sample_per_locus = [
-            _length_by_sample(ts, layout=layout)
-            for ts, layout in zip(tree_sequences, layouts_for_lengths, strict=True)
+            _length_by_sample(ts, layout=layout, decoded=decoded_locus)
+            for ts, layout, decoded_locus in zip(
+                tree_sequences, layouts_for_lengths, decoded_loci, strict=True
+            )
         ]
 
         genotypes_by_sample_per_locus = [
-            _genotypes_by_sample_and_individuals(ts, layout=layout)
-            for ts, layout in zip(tree_sequences, layouts_for_lengths, strict=True)
+            _genotypes_by_sample_and_individuals(
+                ts, layout=layout, decoded=decoded_locus
+            )
+            for ts, layout, decoded_locus in zip(
+                tree_sequences, layouts_for_lengths, decoded_loci, strict=True
+            )
         ]
+
         for stat_name, stat_fn in _MICROSAT_PER_SAMPLE_WITHOUT_MOTIF_SIZE.items():
             for samp_name, value in stat_fn(
                 tree_sequences,

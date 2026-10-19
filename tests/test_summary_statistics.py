@@ -33,6 +33,7 @@ from bridge.summary_statistics import (
     _compute_VAR_for_one_sample,
     _count_alleles,
     _count_distinct_haplotypes,
+    _decode_locus,
     _focal_genotype_frequencies,
     _genotype_matrix_by_sample,
     _genotypes_by_sample_and_individuals,
@@ -2425,8 +2426,12 @@ def test_length_by_sample_matches_reference(scenario, mutation_rate, use_sample_
     expected = _reference_length_by_sample(ts, layout=layout)
 
     assert list(result) == list(expected)  # ordre du layout
+
     for name in expected:
         assert result[name] == expected[name]  # ordre croissant des indices
+
+    result_decoded = _length_by_sample(ts, layout=layout, decoded=_decode_locus(ts))
+    assert result == result_decoded  # decode ne change rien
 
 
 @_all_ploidy_cases
@@ -2458,6 +2463,11 @@ def test_pair_from_genotypes_vs_length_by_sample_and_individuals(
 
     assert pairs_from_genotypes == lengths  # ordre du layout
 
+    result_decoded = _genotypes_by_sample_and_individuals(
+        ts, layout=layout, decoded=_decode_locus(ts)
+    )
+    assert genotypes == result_decoded  # decode ne change rien
+
 
 @_all_ploidy_cases
 def test_length_by_sample_and_individuals_matches_reference(
@@ -2487,6 +2497,11 @@ def test_genotypes_by_sample_and_individuals_matches_reference(
     assert list(result) == list(expected)
     assert result == expected
     assert all(type(x) is int for lst in result.values() for t in lst for x in t)
+
+    result_decoded = _genotypes_by_sample_and_individuals(
+        ts, layout=layout, decoded=_decode_locus(ts)
+    )
+    assert result == result_decoded  # decode ne change rien
 
 
 def test_individuals_by_sample_returns_one_sorted_array_per_sample():
