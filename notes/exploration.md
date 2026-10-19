@@ -4769,3 +4769,153 @@ maintenant la plus grosse moitié.
   Hors du périmètre de cette séance (statistiques) ; à reprofiler d'abord au `perf_counter`.
 - Le rejeu de 1 000 particules n'a pas été relancé : le tableau de performance de
   `CLAUDE.md` date du 12-14/10.
+
+## 2026-10-19 — Optimisation MicroSat, suite : matrices par blocs, `LIK`, décodage unique, et le bilan des surcoûts
+
+Suite des sections du 15/10 et du 16/10 (elle remplace leurs « Ce qu'il reste »). Même
+séance en mode mentor : l'utilisateur écrit le code, je mesure et je relis. Toutes les
+étapes sont **identiques à graine égale** (`compare_particles_microsat`, 30 particules x
+152 valeurs, 0 différence), donc pas de rejeu contre DIYABC. **Le travail de timing est mis
+en pause** à la fin de cette section.
+
+### 1. Bilan (médianes, `toy_example1_ms_modified`, une particule en processus unique)
+
+| | 16/10 | fin |
+|---|---|---|
+| particule entière | ~93-96 ms | **~66 ms** (133 ms au début de la série) |
+| statistiques | ~33 ms | ~30 ms |
+| simulation | ~60 ms | ~36 ms |
+| matrices | 33,5 ms | 7,5 ms |
+| `LIK` | 8,2 ms | 5,9 ms |
+| lectures partagées (+ décodage) | 6,5 ms | 3,8 + 1,7 ms |
+
+### 2. Les étapes
+
+- **Les matrices étaient le plus gros poste** (31,8 ms, autant que toutes les statistiques) et
+  personne ne les regardait : `cProfile` les montrait mais gonflées, et la séance portait sur
+  les statistiques. Répartition au `perf_counter` de `build_transition_matrix_microsat_with_sni_numpy`
+  (50 matrices de 79 x 79, motif 2) : boucle sur les 79 lignes **24,3 ms**, `_gsm_matrix_numpy`
+  5,0, `MatrixMutationModel` 0,5. La boucle ne calculait rien d'irréductible :
+  `_distribution_from_position` ne fait que `transition_matrix[n_minus]` ; la partie GSM est
+  donc un **bloc à pas régulier par résidu** (`dense[r::motif, r::motif] = matrices[r]`), la partie
+  SNI une matrice tridiagonale (0,5 de part et d'autre de la diagonale, plus les deux coins
+  `[0, 0]` et `[-1, -1]` pour la masse repliée aux bords), et le mélange `gsm*(1-p) + sni*p`
+  est élément par élément, donc identique sur la matrice entière. **33,5 → 8,1 ms, particule
+  96 → 71 ms (-26 %)**. L'ancienne fonction a un domaine de validité étroit que j'ai vérifié
+  avant d'écrire la grille de test : elle **lève** pour `n_alleles < 2 x motif` (un résidu à
+  un seul état donne une matrice 1x1 et une division par zéro), donc le test couvre
+  `n_alleles >= 2 x motif`. Trois tentatives de grille fausses : la mauvaise fonction appelée
+  (la version `TPM` au lieu de `_numpy`), deux paramètres déclarés mais jamais lus (4 950
+  tests, 2 min 29 s), puis deux appels qui ne recevaient pas les mêmes `kmin`/`kmax`
+  (`kmax=5` en dur d'un côté). Une matrice SNI écrite sans maîtriser l'indexation numpy :
+  exercice dans un terminal avec `sni[i, i+1] = 0.5` et la vérification contre
+  `_sni_row_on_dense_grid` ligne à ligne.
+- **`LIK`** : 8,9 ms, dont 3,0 de préparations par appel (`count_j`, `total_counts`, `b`, `a`)
+  refaites pour chacune des 12 paires ordonnées. `nal` (`_count_alleles`) calculé une fois par
+  locus, `count_j`/`total_count_j` (`_compute_counts_for_one_sample`) une fois par échantillon
+  et par locus, passés en arguments optionnels. **8,2 → 5,9 ms**. Trois défauts : le repli à
+  `None` manquant (la fonction seule levait `TypeError`, invisible au `compare` car
+  `compute_LIK` fournit tout), l'oracle des tests nommé **comme la fonction testée** (il
+  masquait la vraie fonction pour tout le fichier), et une valeur attendue fausse
+  (`test_count_alleles` attendait 4 : l'allèle 197, de compte total nul, ne doit pas être
+  compté — c'est exactement le bug du 24/09).
+- **La vectorisation de `LIK` n'a pas été faite, mais mesurée** (36 000 valeurs réelles de
+  `num/den`) : `np.log10` d'un scalaire et d'un tableau sont **identiques bit pour bit** ;
+  `math.log10` ne l'est pas ; `np.sum` du tableau des logs diffère de la soustraction
+  séquentielle du code dans **51 %** de 1 800 segments de 20 ; `np.cumsum(...)[-1]` dans 0 %.
+  Le danger est donc la somme, pas le logarithme, et `np.cumsum` le contourne. Mais le plancher
+  d'une version par couple (4 appels numpy sur 20 éléments x 600) est 1,9 ms contre ~4,5 ms
+  de boucle actuelle avec la formule complète : sur 20 éléments, c'est le coût d'appel qui
+  domine. Mémoïser par génotype ne rapporte rien (17 génotypes distincts sur 20). Un schéma
+  par locus et pour les 12 paires à la fois pourrait gagner ~3 ms (prototype d'abord, arrêt
+  si < 2 ms).
+- **`_gsm_matrix_numpy`** (45,8 µs, 100 appels) : la puissance `(1-m)**(d-1)` était évaluée sur
+  les N² cases pour 40 exposants distincts. Un vecteur de puissances lu avec la matrice des
+  distances (`vecteur[d]`) coûte 3,6 µs au lieu de 10,4. **Piège** : le vecteur construit par une
+  compréhension de liste Python (`(1-m)**(a-1)`) **n'arrondit pas comme numpy** — 15 des 45
+  couples `(hi, m)` essayés diffèrent (écart relatif ~2,7e-16) ; il faut le construire par numpy
+  (`(1-m) ** np.arange(...)`). Le test de propriété avec `m = 0,1` seul aurait laissé passer la
+  mauvaise version. Gain **0,5 ms** (j'avais prédit 1).
+- **Décodage unique du variant** : `_length_by_sample` et `_genotypes_by_sample_and_individuals`
+  faisaient chacune `next(ts.variants())` et reconstruisaient la liste des tailles.
+  `_decode_locus` renvoie `(tailles par allèle, indice d'allèle par nœud)` une fois par locus ;
+  les deux lectures ont un argument optionnel `decoded=None`. **Statistiques -2,1 ms** (la
+  ligne « lectures partagées » affiche -3 ms mais le décodage sort de son chronomètre : lire la
+  ligne totale). Trois erreurs : `decoded[1]` contenait les **tailles par nœud** au lieu des
+  indices (double indexation), une liste Python indexée par un tableau (`TypeError`), et une
+  fonction qu'on n'avait pas à toucher (`_length_by_sample_and_individuals`) dont le
+  `next(...)` avait été retiré (`'generator' object has no attribute 'alleles'`). Les autres
+  statistiques n'ont **pas** besoin de l'argument : elles reçoivent les deux listes déjà
+  calculées ; la règle « un intrant partagé est un mot-clé sur toutes les statistiques »
+  ne vaut que quand elles le lisent. `variant.genotypes` est un tableau en lecture seule qui ne
+  possède pas ses données : vérifié stable après d'autres décodages et un `gc.collect()`.
+
+### 3. Où est passé le temps restant : les surcoûts
+
+Planchers mesurés en micro-banc :
+
+| Opération | Coût |
+|---|---|
+| `msprime.sim_mutations`, modèle à 2 allèles | 129 µs |
+| idem, modèle à 79 allèles | 130 µs (la taille du modèle ne coûte rien) |
+| `msprime.sim_ancestry`, création du générateur | 1 450 µs |
+| idem, coût marginal par arbre (20 haploïdes, 1 population) | 65 µs |
+| appel numpy sur 20 éléments | 0,4 à 0,9 µs |
+| pré-valider la démographie avant `sim_ancestry` | aucun effet (1,84 contre 1,83 ms) |
+
+Les 66 ms se répartissent ainsi :
+
+| Catégorie | Temps | Part |
+|---|---|---|
+| coût fixe des appels `msprime` (50 x 130 µs + 2 x 1 450 µs) | ≈ 9,4 ms | 14 % |
+| calcul réel de `msprime` (déduit par soustraction, pas chronométré) | ≈ 17 ms | 26 % |
+| matrices | 7,5 ms | 11 % |
+| statistiques | 30,2 ms | 46 % |
+| démographie, tirages, divers | 0,3 ms | < 1 % |
+
+**Environ 38 ms (57 %) sont du surcoût de notre propre code** (petites opérations numpy et
+boucles Python), pas du calcul : par exemple les 574 évaluations de la vraisemblance d'`AML`
+valent ~6,9 ms de coût d'appel. Les 17 ms de calcul réel de `msprime` sont une soustraction, et
+mon micro-banc de `sim_ancestry` (20 haploïdes, une population) sous-estime le pipeline (4
+populations, changements de taille). Seul le **regroupement** des petites opérations
+peut les supprimer, pour 10 à 15 ms au mieux, chacun avec un risque d'ordre des flottants :
+les 24 triplets d'`AML` avancés ensemble dans la dichotomie, `LIK` par locus avec `np.cumsum`,
+les matrices de plusieurs loci dans un tableau 3-D, les boucles des petites statistiques.
+
+### 4. Erreurs de méthode, consignées
+
+- **Une grille de test à 4 950 cas dont deux axes ne servaient à rien**, appelant la mauvaise
+  fonction : avant de paramétrer, vérifier que chaque paramètre est *lu*, et que le test appelle
+  bien la fonction qu'il prétend tester.
+- **Le test à une seule valeur d'un paramètre qui compte** (`m = 0,1`) : il aurait laissé passer
+  la version fausse. Une grille doit croiser les paramètres dont dépend l'arrondi.
+- **L'oracle nommé comme la fonction testée** (deux fois dans la séance) masque la fonction
+  réelle pour tout le fichier de tests ; toujours `_reference_...`.
+- **Une valeur attendue écrite sans la dériver** (`4` pour `nal`, `-inf` pour une fréquence
+  négative) : c'est le test qui avait tort, la fonction avait raison.
+- **Mes prédictions** : matrices 18-22 ms attendus pour 25 réels (trop bas), `LIK` 2-2,5 pour
+  2-3, `_gsm_matrix_numpy` 1 ms pour 0,5 (trop haut), décodage 1,2 ms pour 2,1 (trop bas).
+- **Un chronomètre qui déplace le coût** : le décodage unique fait baisser la ligne « lectures
+  partagées » de 3 ms alors que le total des statistiques ne baisse que de 2,1 ms.
+
+### 5. Choses pratiques
+
+- `scripts/bench_time_stats.py` (un label par statistique). Le chronomètre de la **simulation**
+  (patch des fonctions extérieures `build_matrix_microsat_per_locus`,
+  `_simulate_ancestries_for_loci`, `msprime.sim_mutations`, `microsat_mutation_simulation_per_locus`,
+  `build_random_demography_for_scenario_index`) n'a **pas** été conservé : à refaire en 20 lignes.
+  Attention : `sim_ancestry` renvoie un générateur paresseux, son chronomètre ne compte que la
+  création.
+- 582 tests, `ref_stats_ms.json` toujours valable (aucun changement n'a touché le flux
+  aléatoire).
+- Charge machine : une passe de mesure à 158 ms (tous les postes doublés) était une perturbation
+  extérieure (charge 5,4) ; la refaire plutôt que de la commenter.
+
+### 6. Ce qu'il reste
+
+- **Le rejeu de 1 000 particules n'a pas été relancé.** Le tableau de performance de `CLAUDE.md`
+  (MicroSat 20,4 s, 8,9x) date du 12-14/10. Estimation non mesurée : 1 000 x 66 ms / 8 cœurs
+  ≈ 8 à 10 s, environ 4x DIYABC. `scripts/benchmark_1000.py`, seul sur la machine.
+- Les pistes de regroupement de la section 3 (10 à 15 ms au mieux, risque d'ordre des
+  flottants), et ~1 ms chacune pour les 8 petites statistiques et les tuples par individu des
+  lectures partagées.

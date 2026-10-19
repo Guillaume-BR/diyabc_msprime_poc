@@ -1176,7 +1176,7 @@ case: the variance is not measured.**
 | PoolSeq serial | `toy_example4_seriel` | 1000 | 571.7 s | 228.8 s (255.4 s) | 0.40x | 99.8 / 0.2 % |
 | DNA | `toy_example2_ms_dna_50loci_TN` | 110 | 1.7 s | **13.4 s** (104.1 s on 07/10; 16.4 s at the 14/10 morning benchmark) | **7.9x** | ~63 / 34 % (one particle, 14/10) |
 | DNA serial | `..._50loci_TN_seriel` | 110 | 1.6 s | 104.1 s (07/10, not re-run) | 64x | 74 / 26 % |
-| MicroSat | `toy_example1_ms_modified` | 50 | 2.3 s | **20.4 s** (41.0 s on 12/10, 228.7 s before; **not re-run after 15-16/10**, particle 133 → ~95 ms in-process) | **8.9x** | 44 / 56 % |
+| MicroSat | `toy_example1_ms_modified` | 50 | 2.3 s | **20.4 s** (41.0 s on 12/10, 228.7 s before; **not re-run after 15-16/10**, particle 133 → ~66 ms in-process) | **8.9x** | 44 / 56 % |
 | MicroSat serial | `toy_example1_ms_seriel` | 50 | 2.4 s | **23.6 s** (256.7 s on 07/10) | **9.8x** | 38 / 62 % |
 
 The 14/10 morning benchmark (`benchmark_results.csv` on `bench/timings`) ran the code
@@ -1235,11 +1235,11 @@ isolated (candidates: `record_provenance=False` on every `sim_ancestry` /
     `_genotypes_by_sample_and_individuals`. Changed: elements are Python `int`, no
     longer `np.int64`. The old loops are the `_reference_*` oracles of
     `tests/test_summary_statistics.py`.
-  - **Statistics series, 15-16/10: particle 133 → ~95 ms, statistics 74 → ~33 ms**
-    (median in-process on `ms_modified`, `HEAD` vs modified measured alternately).
-    Every step is **output-identical** (`compare_particles_microsat`, 30 particles x
-    152 values). Narrative, tables and the bugs caught: `notes/exploration.md`,
-    sections 15/10 and 16/10.
+  - **Series 15-19/10: particle 133 → ~66 ms (x2.0), statistics 74 → ~30 ms,
+    simulation ~60 → ~36 ms** (median in-process on `ms_modified`, `HEAD` vs modified
+    measured alternately). Every step is **output-identical**
+    (`compare_particles_microsat`, 30 particles x 152 values). Narrative, tables and the
+    bugs caught: `notes/exploration.md`, sections 15/10, 16/10 and 19/10.
 
     | Change | Gain |
     |---|---|
@@ -1249,6 +1249,10 @@ isolated (candidates: `record_provenance=False` on every `sim_ancestry` /
     | `_individuals_by_sample`: node → sample table instead of one `np.isin` per sample | 3-5 ms |
     | `AML`: empty genotype blocks skipped; frequency cache per parent; vectorization cache per (focal, parent), both created in `compute_AML_microsat` | 16.4 → ~9 ms |
     | `H2P`: dict of `pop_2` instead of a `next(...)` scan per allele | 2.7 → 1.4 ms |
+    | `build_transition_matrix_microsat_with_sni_numpy`: dense matrix built **by blocks** (`dense[r::motif, r::motif] = local matrix of residue r`, tridiagonal SNI, mixing on the whole matrix) instead of 79 rows in Python | 33.5 → 8.1 ms (**particle -25 ms**) |
+    | `_gsm_matrix_numpy`: one power per distinct distance instead of one per cell | -0.5 ms |
+    | `LIK`: `nal` (`_count_alleles`) once per locus, `count_j`/`total_count_j` once per sample and locus | 8.2 → 5.9 ms |
+    | `_decode_locus`: the variant of a locus decoded once, shared by `_length_by_sample` and `_genotypes_by_sample_and_individuals` | statistics -2.1 ms |
 
     **What each one must keep** (none is visible to a unit test on one locus):
     the order of `unique_alleles` in `FST` (built from dict keys in first-appearance
@@ -1264,6 +1268,25 @@ isolated (candidates: `record_provenance=False` on every `sim_ancestry` /
     **Not done on purpose**: evaluating `a` and `a + 0.001` together in
     `_log_likelihood_admixture` (changes the float summation order, and the bisection
     branches on the sign of a difference of close values).
+
+    **Matrices, `LIK`, decode (19/10) — what they must keep.** The block construction
+    is valid for `n_alleles >= 2 * motif_size` (below it the *old* function already
+    raises: a residue with one state gives a 1x1 matrix and a division by zero); the
+    SNI matrix is `0.5` on both off-diagonals plus the two corners `[0, 0]` and
+    `[-1, -1]` (the folded border mass), and the mixing `gsm*(1-p) + sni*p` is
+    elementwise, hence bit-identical. In `_gsm_matrix_numpy` the vector of powers must
+    be built **by numpy** (`(1 - m) ** np.arange(...)`): a Python list comprehension
+    rounds differently, 15 of 45 `(hi, m)` pairs. `LIK`: the `nal` rule is unchanged (an
+    allele whose total over all samples is 0 is **not** counted: `test_count_alleles`
+    pins it); each optional argument of `_compute_LIK_for_one_locus` has a `None`
+    fallback. `_decode_locus` returns `(sizes per allele, allele index per node)` — the
+    **indices** (`variant.genotypes`, read-only, stable after the decode loop: checked),
+    not sizes per node; `_genotypes_by_sample_and_individuals` rebuilds
+    `np.array(sizes)[indices]` itself; `None` for a monomorphic locus.
+    **Float order facts measured on this machine** (for any future vectorization of
+    `LIK`): `np.log10` of a scalar and of an array are bit-identical (36 000 real
+    values), `math.log10` is not; `np.sum` differs from the sequential subtraction of
+    the code in 51 % of 20-term segments, `np.cumsum(...)[-1]` in 0 %.
   - Replay path before the numpy matrix reached it (3 particles, `time_stages_microsat`):
     matrices 61 %, `sim_ancestry` 19 %, `sim_mutations` 4 %, all statistics together
     13 %. `ms_seriel` was not re-measured.
@@ -1300,16 +1323,27 @@ isolated (candidates: `record_provenance=False` on every `sim_ancestry` /
     done.** The remaining ratio to DIYABC (~7-8x) is the one-library-call-per-locus
     model, not a local defect.
 
-**Open leads, one session each**: (1) MicroSat: after the 15-16/10 series the
-statistics are ~33 ms of a ~95 ms particle, the **simulation ~60 ms** (the larger half:
-transition matrices, `sim_mutations`, ancestries; not re-profiled since 12/10 and
-`cProfile` inflates it). Left in the statistics: `AML` ~9 ms (of which ~6.7 is the
-likelihood, 574 evaluations: no exact gain left), `LIK` ~8 ms (**measure its split
-first**; per-individual float sums, same order risk as `AML`), shared reads ~7 ms
-(`variant` decoded 3 times per locus, ~3.5 ms: one decode passed as an optional argument
-with a `None` fallback would be exact), `FST` ~3 ms, `H2P` ~1.4 ms. Per-statistic timer:
-`scripts/bench_time_stats.py`. **The figures of the table above are the 12-14/10 replay,
-not re-run after this series.** (2) IndSeq MAF > 0 (6.7x). (3) IndSeq Hudson /
+**Open leads, one session each**: (1) MicroSat, **timing work paused on 19/10**. A
+particle is ~66 ms: statistics ~30 ms (`AML` 9.5, `LIK` 5.9, shared reads 3.8, `FST` 3.5,
+`H2P` 1.5, eight small ones ~4.3, decode and rest 1.7), simulation ~36 ms
+(`_simulate_ancestries_for_loci` 13.5, `sim_mutations` 12.7, matrices 7.5). **Remaining
+overhead, by nature**: ~9 ms is fixed `msprime` cost per call (`sim_mutations` 130 us per
+call whether the model has 2 or 79 alleles, x 50; `sim_ancestry` 1.45 ms per call to
+build, x 2) — not reducible while loci are simulated one by one; ~17 ms is `msprime`'s
+real work (by subtraction, not timed directly; the 65 us per tree measured is for 20
+haploid samples in one population, the pipeline has 4 populations); **~38 ms (57 %) is
+our own small-array numpy calls and Python loops** (0.4-0.9 us per numpy call on 20
+elements; `AML`'s likelihood is 574 evaluations x ~12 us, i.e. call overhead, not
+arithmetic). The only way left is **batching**, ~10-15 ms at best, each with an
+arithmetic-order risk: the 24 `AML` triplets bisected in lock-step, `LIK` per locus
+(prototype first, stop if < 2 ms with exact identity), the matrices of several loci in
+one 3-D array. Small exact ones: ~1 ms each (the 8 small statistics, the per-individual
+tuples of the shared reads). **Not re-run: the 1 000-particle replay** (table above is
+the 12-14/10 one; estimate, not measurement: 1 000 x 66 ms / 8 cores ~ 8-10 s, ~4x
+DIYABC; `scripts/benchmark_1000.py`, alone on the machine). Per-statistic timer:
+`scripts/bench_time_stats.py`; the simulation split (patching the outer functions
+`build_matrix_microsat_per_locus`, `_simulate_ancestries_for_loci`,
+`msprime.sim_mutations`) was not kept as a script. (2) IndSeq MAF > 0 (6.7x). (3) IndSeq Hudson /
 serial: per-locus tskit overhead. (4) PoolSeq: none. (5) DNA: see the verdict above.
 **Every optimization touches code validated against DIYABC**: an output-neutral one
 must stay *identical* at equal seed (`compare_particles_dna` / `_microsat`, then the
