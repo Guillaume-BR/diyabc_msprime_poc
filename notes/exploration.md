@@ -4919,3 +4919,32 @@ les matrices de plusieurs loci dans un tableau 3-D, les boucles des petites stat
 - Les pistes de regroupement de la section 3 (10 à 15 ms au mieux, risque d'ordre des
   flottants), et ~1 ms chacune pour les 8 petites statistiques et les tuples par individu des
   lectures partagées.
+
+### 2026-10-20 — Piste abandonnée : `LIK` par tableaux
+
+Prototype puis implémentation de `_compute_LIK_all_pairs_for_one_locus` : tous les couples
+(testé i, référence j) d'un locus en une quinzaine d'opérations numpy sur des tableaux
+`(j, i, n)`, au lieu de 12 boucles Python sur les individus. **Exact** (0 différence sur
+300 loci aléatoires comparés couple par couple, et sur les 30 particules), grâce à trois
+précautions mesurées : le même ordre d'évaluation de `1 + b + c` (une parenthèse décalée fait
+échouer un test), `np.cumsum` au lieu de `np.sum` (qui diffère de la soustraction séquentielle
+dans 51 % des segments de 20), des cases de remplissage à `1.0` (`log10(1.0) = 0.0`).
+Gardes avec repli sur la boucle : échantillon absent, allèles différents d'un échantillon à
+l'autre, tailles dupliquées, allèle de génotype inconnu.
+
+**Gain en situation : `LIK` 5,8 → 5,0 ms (−0,8 ms), soit ~1,2 % d'une particule**, contre
+−2,0 ms mesuré sur le prototype, qui ne payait ni les gardes ni l'encodage : l'encodage des
+génotypes en indices coûte 1,2 ms de passes Python (dont 0,27 pour la garde « allèle inconnu »)
+et la partie numpy 2,5 ms (≈ 50 µs par locus de petits appels). **Abandonnée** : trois fonctions,
+une branche de repli et une douzaine de tests pour ce gain ne valent pas la maintenance. Critère
+retenu pour la suite : sous ~1 ms par particule, ne pas ajouter de fonction. Le travail
+a été conservé hors dépôt (`git diff` de 619 lignes) et n'est pas versionné ; ce paragraphe
+suffit à refaire l'essai.
+
+À retenir de cette piste, au-delà de `LIK` : un prototype mesuré hors dépôt sous-estime le coût
+des gardes et de la conversion des structures Python (listes de tuples) en tableaux ; pour
+regrouper des calculs en numpy il faut que les données arrivent déjà sous forme de tableaux.
+Ce qui est resté : `_reference_compute_LIK` et `test_compute_LIK_vs_reference`, qui vérifient
+que la `compute_LIK` commitée (avec `nal` et `count_j` hissés) égale l'algorithme d'origine sur
+des données réelles, et la réutilisation du `MatrixMutationModel` (−0,55 ms).
+

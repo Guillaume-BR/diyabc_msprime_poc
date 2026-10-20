@@ -1336,7 +1336,9 @@ our own small-array numpy calls and Python loops** (0.4-0.9 us per numpy call on
 elements; `AML`'s likelihood is 574 evaluations x ~12 us, i.e. call overhead, not
 arithmetic). The only way left is **batching**, ~10-15 ms at best, each with an
 arithmetic-order risk: the 24 `AML` triplets bisected in lock-step, `LIK` per locus
-(prototype first, stop if < 2 ms with exact identity), the matrices of several loci in
+(**tried 20/10 and dropped**: an exact array version of `compute_LIK` (0 differences on 300 random
+loci and 30 particles) saved only 0.8 ms in situ, 1.2 % of a particle, for three more functions, a
+fallback branch and a dozen tests; rule kept: below ~1 ms per particle a new function is not worth it), the matrices of several loci in
 one 3-D array. Small exact ones: ~1 ms each (the 8 small statistics, the per-individual
 tuples of the shared reads). **Not re-run: the 1 000-particle replay** (table above is
 the 12-14/10 one; estimate, not measurement: 1 000 x 66 ms / 8 cores ~ 8-10 s, ~4x
