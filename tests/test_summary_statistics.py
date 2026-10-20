@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import tskit
 
+import bridge.summary_statistics as ss_module
 from bridge.ancestry_simulation import (
     build_transition_matrix_microsat,
     compute_population_layout,
@@ -3371,7 +3372,6 @@ def test_aml_parent_vectorization_computed_once_per_focal_parent_pair(monkeypatc
     soit 24 utilisations de 12 couples distincts. Sans cache effectif, 24
     appels ; avec lui, 12.
     """
-    import bridge.summary_statistics as ss_module
 
     names, lengths, genotypes = _synthetic_aml_inputs(0)
     calls = []

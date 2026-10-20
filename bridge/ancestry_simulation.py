@@ -735,6 +735,68 @@ def simulate_snp_genotypes(
         yield genotypes_by_population
 
 
+def draw_mutation_and_derived_count(
+    ts: tskit.TreeSequence, seed: int, *, tree: tskit.Tree | None = None
+) -> tuple[tskit.Tree, int, int]:
+    """Tire la mutation de Hudson d'un locus SANS construire ses génotypes.
+
+    Sibling de `simulate_snp_genotypes` pour la boucle de rejet de
+    `with_maf_filter` : la MAF ne dépend que du NOMBRE de copies dérivées,
+    que tskit tient à jour par noeud (`tree.num_samples`, sans parcours).
+    Le tirage est le même que celui de `simulate_snp_genotypes` -- même
+    `random.Random(seed)`, même appel à `_draw_single_mutation_edge_child`,
+    un seul `rng.uniform` -- donc le noeud muté est identique à graine
+    égale. Les génotypes d'un locus accepté se construisent ensuite avec
+    `genotypes_from_mutated_node`.
+
+    Args:
+        ts: La TreeSequence d'un locus (un seul arbre).
+        seed: La graine du tirage de mutation de ce locus.
+        tree: L'arbre de `ts`, s'il a déjà été calculé (`ts.first()`). Sert
+            aux boucles de rejet qui tirent plusieurs mutations sur la MÊME
+            `ts` (généalogie partagée `<M>`/`<Y>`) : l'arbre se calcule une
+            fois et se réutilise. Valable parce que `ts` n'a qu'un seul arbre
+            (`sequence_length=1`, voir `simulate_independent_loci`) : un
+            `Tree` est un curseur, sur une `ts` de plusieurs arbres il ne
+            désignerait que celui où il se trouve. Si `None`, calculé ici.
+
+    Returns:
+        Le triplet (arbre, noeud muté, nombre de copies dérivées).
+    """
+    rng = random.Random(seed)
+    tree = tree if tree is not None else ts.first()
+    mutated_node = _draw_single_mutation_edge_child(ts, rng)
+    return tree, mutated_node, tree.num_samples(mutated_node)
+
+
+def genotypes_from_mutated_node(
+    ts: tskit.TreeSequence,
+    tree: tskit.Tree,
+    mutated_node: int,
+    population_layout: list[tuple[str | None, np.ndarray]],
+) -> dict[str, list[int]]:
+    """Construit les génotypes d'un locus dont le noeud muté est déjà tiré.
+
+    Même corps que la fin de `simulate_snp_genotypes` (garde de layout
+    comprise).
+
+    Args:
+        ts: La TreeSequence du locus.
+        tree: Son arbre, tel que rendu par `draw_mutation_and_derived_count`.
+        mutated_node: Le noeud enfant portant la mutation.
+        population_layout: Voir `compute_population_layout`.
+
+    Returns:
+        Le dict {nom_population: [génotype, ...]} du locus.
+    """
+    derived_samples = set(tree.samples(mutated_node))
+    _check_layout_matches(population_layout, ts)
+    return {
+        pop_name: [1 if s in derived_samples else 0 for s in sample_ids]
+        for pop_name, sample_ids in population_layout
+    }
+
+
 # Passage des différents filtres pour les SNP
 
 
@@ -859,22 +921,25 @@ def with_maf_filter(
                     if counts_per_sample is not None
                     else compute_population_layout(ts)
                 )
-            genotypes_by_population = next(
-                simulate_snp_genotypes(
-                    [ts],
-                    seed=_locus_seed(
-                        seed,
-                        _MAF_REJECTION_SEED_OFFSET,
-                        batch_index * batch_size + attempt_in_batch,
-                    ),
-                    population_layout=population_layout,
-                )
+            tree, mutated_node, n_derived = draw_mutation_and_derived_count(
+                ts,
+                _locus_seed(
+                    seed,
+                    _MAF_REJECTION_SEED_OFFSET,
+                    batch_index * batch_size + attempt_in_batch,
+                ),
             )
 
-            maf_observed = observed_maf(genotypes_by_population)
+            # Même quantité que `observed_maf` (min(n0, n1) / n), lue sur le
+            # compteur de l'arbre : les génotypes d'un locus rejeté ne sont
+            # jamais construits.
+            n_total = ts.num_samples
+            maf_observed = min(n_derived, n_total - n_derived) / n_total
 
             if maf_observed >= maf:
-                yield genotypes_by_population
+                yield genotypes_from_mutated_node(
+                    ts, tree, mutated_node, population_layout
+                )
                 accepted_loci += 1
                 if accepted_loci >= num_loci:
                     return
@@ -948,7 +1013,7 @@ def with_maf_filter_shared_ancestry(
     # Calculée une seule fois : même généalogie PARTAGÉE à chaque
     # tentative, donc même structure population/noeuds -- voir
     # population_layout.
-    population_layout = population_layout = (
+    population_layout = (
         compute_sample_layout(shared_tree, counts_per_sample)
         if counts_per_sample is not None
         else compute_population_layout(shared_tree)
@@ -956,19 +1021,21 @@ def with_maf_filter_shared_ancestry(
 
     attempt = 0
     accepted_loci = 0
+    n_total = shared_tree.num_samples
+    first_tree = shared_tree.first()
     while accepted_loci < num_loci:
-        genotypes_by_population = next(
-            simulate_snp_genotypes(
-                [shared_tree],
-                seed=_locus_seed(seed, _MAF_REJECTION_SEED_OFFSET, attempt),
-                population_layout=population_layout,
-            )
+        tree, mutated_node, n_derived = draw_mutation_and_derived_count(
+            shared_tree,
+            seed=_locus_seed(seed, _MAF_REJECTION_SEED_OFFSET, attempt),
+            tree=first_tree,
         )
 
-        maf_observed = observed_maf(genotypes_by_population)
+        maf_observed = min(n_derived, n_total - n_derived) / n_total
 
         if maf_observed >= maf:
-            yield genotypes_by_population
+            yield genotypes_from_mutated_node(
+                shared_tree, tree, mutated_node, population_layout
+            )
             accepted_loci += 1
 
         attempt += 1
@@ -3221,11 +3288,7 @@ def microsat_mutation_simulation_per_locus(
             tree_sequence=tree_sequences[locus.name],
             rate=params_per_locus[locus.name][0],
             random_seed=_locus_seed(seed, _MUTATION_SEED_OFFSET, i),
-            model=msprime.MatrixMutationModel(
-                alleles=matrix_per_locus[locus.name].alleles,
-                root_distribution=matrix_per_locus[locus.name].root_distribution,
-                transition_matrix=matrix_per_locus[locus.name].transition_matrix,
-            ),
+            model=matrix_per_locus[locus.name],
             record_provenance=False,
         )
         mutated_tree_sequences[locus.name] = mutated_ts
@@ -3469,11 +3532,7 @@ def microsat_mutation_simulation_per_locus_from_values(
             tree_sequence=tree_sequences[locus.name],
             rate=params_per_locus[locus.name][0],
             random_seed=_locus_seed(seed, _MUTATION_SEED_OFFSET, i),
-            model=msprime.MatrixMutationModel(
-                alleles=matrix_per_locus[locus.name].alleles,
-                root_distribution=matrix_per_locus[locus.name].root_distribution,
-                transition_matrix=matrix_per_locus[locus.name].transition_matrix,
-            ),
+            model=matrix_per_locus[locus.name],
             record_provenance=False,
         )
         mutated_tree_sequences[locus.name] = mutated_ts

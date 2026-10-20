@@ -78,6 +78,12 @@ OBSERVED_SNP_FILE_TE5 = (
     REFERENCE_DIR / "toy_example5" / "simu_dataset_test_divergence_admixture_001.snp"
 )
 
+OBSERVED_SNP_FILE_TE5_WITH_MAF = (
+    REFERENCE_DIR
+    / "toy_example5_with_maf"
+    / "simu_dataset_test_divergence_admixture_001.snp"
+)
+
 
 @pytest.fixture
 def header_text() -> str:
@@ -87,6 +93,11 @@ def header_text() -> str:
 @pytest.fixture
 def header_text_te5() -> str:
     return (OBSERVED_SNP_FILE_TE5.parent / "headerRF.txt").read_text()
+
+
+@pytest.fixture
+def header_text_te5_with_maf() -> str:
+    return (OBSERVED_SNP_FILE_TE5_WITH_MAF.parent / "headerRF.txt").read_text()
 
 
 @pytest.fixture

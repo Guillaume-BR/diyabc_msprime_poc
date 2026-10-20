@@ -3,6 +3,7 @@ msprime.sim_ancestry, simulation de généalogies indépendantes par locus, et
 mutation Hudson (exactement une mutation par locus, toujours polymorphe)."""
 
 import itertools
+from collections.abc import Iterator
 
 import msprime
 import numpy as np
@@ -13,8 +14,10 @@ from conftest import (
     OBSERVED_SNP_FILE_HUMAN,
     OBSERVED_SNP_FILE_TE4,
     OBSERVED_SNP_FILE_TE5,
+    OBSERVED_SNP_FILE_TE5_WITH_MAF,
 )
 
+import bridge.ancestry_simulation as as_module
 from bridge.ancestry_simulation import (
     _distribution_from_position,
     _group_prior_values_dna_from_columns,
@@ -58,6 +61,12 @@ from bridge.ancestry_simulation import (
     with_maf_filter,
     with_maf_filter_shared_ancestry,
     with_mrc_filter,
+)
+from bridge.configuration import (
+    _MAF_BATCH_SEED_OFFSET,
+    _MAF_BATCH_SIZE,
+    _MAF_REJECTION_SEED_OFFSET,
+    _locus_seed,
 )
 from bridge.demography_builder import rescale_demography
 from bridge.header_dataclasses import LociDescriptionDetailed, SampleEvent, Scenario
@@ -473,6 +482,215 @@ def test_compute_sample_layout_matches_population_layout_on_non_serial_data(
 
 
 # tests relatifs aux filtres MAF
+def _reference_with_maf_filter(
+    demography: msprime.Demography,
+    samples: dict[str, int] | list[msprime.SampleSet],
+    num_loci: int,
+    maf: float,
+    seed: int,
+    ploidy: int = 2,
+    *,
+    counts_per_sample: dict[str, int] | None = None,
+) -> Iterator[dict[str, list[int]]]:
+    """Oracle gardé pour vérification"""
+    if maf == 0.0:
+        tree_sequences = simulate_independent_loci(
+            demography, samples, num_loci=num_loci, seed=seed, ploidy=ploidy
+        )
+        yield from simulate_snp_genotypes(
+            tree_sequences,
+            seed=seed,
+            population_layout=None,
+            counts_per_sample=counts_per_sample,
+        )
+        return
+
+    # batch_size dérive num_loci -- voir _MAF_BATCH_SIZE pour la
+    # justification empirique. La graine de lot (batch_seed = seed +
+    # batch_index * batch_size) utilise directement batch_size comme
+    # marge entre lots : contrairement à un stride fixe, elle ne peut
+    # jamais collisionner avec les graines de mutation du lot précédent
+    # (attempt_in_batch va de 0 à batch_size-1), quelle que soit la
+    # taille du lot.
+    batch_size = max(_MAF_BATCH_SIZE, num_loci // 4)
+    accepted_loci = 0
+    # Calculé à la première ts et mis en cache : la structure
+    # échantillons/noeuds ne dépend que de demography/samples, jamais de
+    # la topologie -- voir compute_population_layout.
+    population_layout = None
+    batch_index = 0
+    while accepted_loci < num_loci:
+        batch_seed = _locus_seed(seed, _MAF_BATCH_SEED_OFFSET, batch_index)
+        tree_sequences = simulate_independent_loci(
+            demography,
+            samples,
+            num_loci=batch_size,
+            seed=batch_seed,
+            ploidy=ploidy,
+        )
+        for attempt_in_batch, ts in enumerate(tree_sequences):
+            if population_layout is None:
+                population_layout = (
+                    compute_sample_layout(ts, counts_per_sample)
+                    if counts_per_sample is not None
+                    else compute_population_layout(ts)
+                )
+            genotypes_by_population = next(
+                simulate_snp_genotypes(
+                    [ts],
+                    seed=_locus_seed(
+                        seed,
+                        _MAF_REJECTION_SEED_OFFSET,
+                        batch_index * batch_size + attempt_in_batch,
+                    ),
+                    population_layout=population_layout,
+                )
+            )
+
+            maf_observed = observed_maf(genotypes_by_population)
+
+            if maf_observed >= maf:
+                yield genotypes_by_population
+                accepted_loci += 1
+                if accepted_loci >= num_loci:
+                    return
+
+        batch_index += 1
+
+
+def _reference_with_maf_filter_shared_ancestry(
+    demography: msprime.Demography,
+    samples: dict[str, int] | list[msprime.SampleSet],
+    num_loci: int,
+    maf: float,
+    seed: int,
+    ploidy: int = 1,
+    *,
+    counts_per_sample: dict[str, int] | None = None,
+) -> Iterator[dict[str, list[int]]]:
+    """Oracle gardé pour vérification"""
+    if maf == 0.0:
+        tree_sequences = simulate_shared_ancestry_loci(
+            demography, samples, num_loci, seed, ploidy=ploidy
+        )
+        yield from simulate_snp_genotypes(
+            tree_sequences,
+            seed=seed,
+            population_layout=None,
+            counts_per_sample=counts_per_sample,
+        )
+        return
+
+    shared_tree = next(
+        simulate_independent_loci(
+            demography, samples, num_loci=1, seed=seed, ploidy=ploidy
+        )
+    )
+    # Calculée une seule fois : même généalogie PARTAGÉE à chaque
+    # tentative, donc même structure population/noeuds -- voir
+    # population_layout.
+    population_layout = population_layout = (
+        compute_sample_layout(shared_tree, counts_per_sample)
+        if counts_per_sample is not None
+        else compute_population_layout(shared_tree)
+    )
+
+    attempt = 0
+    accepted_loci = 0
+    while accepted_loci < num_loci:
+        genotypes_by_population = next(
+            simulate_snp_genotypes(
+                [shared_tree],
+                seed=_locus_seed(seed, _MAF_REJECTION_SEED_OFFSET, attempt),
+                population_layout=population_layout,
+            )
+        )
+
+        maf_observed = observed_maf(genotypes_by_population)
+
+        if maf_observed >= maf:
+            yield genotypes_by_population
+            accepted_loci += 1
+
+        attempt += 1
+
+
+@pytest.mark.parametrize("seed", [123, 456, 789])
+def test_with_maf_filter_matches_reference(header_text_te5_with_maf, monkeypatch, seed):
+    """Vérifie que with_maf_filter renvoie exactement le même résultat que la
+    version de référence, qui implémente le filtre MAF par rejet explicite
+    (simulate_independent_loci + simulate_snp_genotypes + observed_maf)."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te5_with_maf, scenario_index=1, seed=42
+    )
+    samples = build_samples_argument(OBSERVED_SNP_FILE_TE5_WITH_MAF)
+    num_loci = 10
+    maf = 0.1
+    reference_result = list(
+        _reference_with_maf_filter(demography, samples, num_loci, maf, seed, ploidy=1)
+    )
+    via_filter_result = list(
+        with_maf_filter(demography, samples, num_loci, maf, seed, ploidy=1)
+    )
+    assert via_filter_result == reference_result
+    import bridge.ancestry_simulation as as_module
+
+    original = as_module.draw_mutation_and_derived_count
+    trees = []
+
+    def spy(ts, rng_seed, tree=None):
+        trees.append(tree)
+        return original(ts, rng_seed, tree=tree)
+
+    monkeypatch.setattr(as_module, "draw_mutation_and_derived_count", spy)
+    list(as_module.with_maf_filter(demography, samples, num_loci, maf, seed, ploidy=1))
+    assert len(trees) > num_loci
+    assert all(tree is None for tree in trees)
+
+
+@pytest.mark.parametrize("seed", [123, 456, 789])
+def test_with_maf_filter_shared_ancestry_matches_reference(
+    header_text_te5_with_maf, monkeypatch, seed
+):
+    """Vérifie que with_maf_filter_shared_ancestry renvoie exactement le même résultat que la
+    version de référence, qui implémente le filtre MAF par rejet explicite
+    (simulate_independent_loci + simulate_snp_genotypes + observed_maf)."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te5_with_maf, scenario_index=1, seed=42
+    )
+    samples = build_samples_argument(OBSERVED_SNP_FILE_TE5_WITH_MAF)
+    num_loci = 10
+    maf = 0.1
+    reference_result = list(
+        _reference_with_maf_filter_shared_ancestry(
+            demography, samples, num_loci, maf, seed, ploidy=1
+        )
+    )
+    via_filter_result = list(
+        with_maf_filter_shared_ancestry(
+            demography, samples, num_loci, maf, seed, ploidy=1
+        )
+    )
+    assert via_filter_result == reference_result
+
+    original = as_module.draw_mutation_and_derived_count
+    trees = []
+
+    def spy(ts, seed, tree=None):
+        trees.append(tree)
+        return original(ts, seed, tree=tree)
+
+    monkeypatch.setattr(as_module, "draw_mutation_and_derived_count", spy)
+    list(
+        as_module.with_maf_filter_shared_ancestry(
+            demography, samples, num_loci, maf, seed, ploidy=1
+        )
+    )
+    assert len(trees) > num_loci
+    assert trees[0] is not None
+    assert all(t is trees[0] for t in trees)
+
+
 def test_with_maf_filter_no_filter_matches_direct_call(header_text):
     """maf=0.0 doit produire EXACTEMENT le même résultat qu'un appel
     direct à simulate_independent_loci + simulate_snp_genotypes (même
