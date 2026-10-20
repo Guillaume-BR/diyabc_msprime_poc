@@ -17,6 +17,7 @@ générations diploïdes -- cohérent avec les bornes des priors de temps
 import itertools
 import random
 from collections.abc import Iterator
+from typing import NamedTuple
 
 import msprime
 import numpy as np
@@ -43,6 +44,7 @@ from bridge.configuration import (
     _SHARED_M_ANCESTRY_SEED_OFFSET,
     _SHARED_Y_ANCESTRY_SEED_OFFSET,
     _SITE_RATE_SEED_OFFSET,
+    _VERSION_MS_PRIME_LIGHT_REPLICATES,
     _locus_seed,
 )
 from bridge.demography_builder import evaluate_expression, rescale_demography
@@ -497,6 +499,135 @@ def simulate_independent_loci(
     )
 
 
+class LightReplicate(NamedTuple):
+    """Les tableaux d'un réplicat."""
+
+    parent: np.ndarray
+    child: np.ndarray
+    nodes_time: np.ndarray
+    is_sample: np.ndarray
+
+
+def simulate_light_replicates(
+    demography: msprime.Demography,
+    samples: dict[str, int] | list[msprime.SampleSet],
+    num_loci: int,
+    seed: int,
+    ploidy: int = 2,
+) -> Iterator[LightReplicate]:
+    """Simule num_loci généalogies indépendantes sous la démographie donnée.
+    Nécessite msprime>=1.4.2
+    Ce générateur ne produit pas de TreeSequence, mais un tuple de 4 éléments : parents, enfants, temps et flags.
+
+    Args:
+        demography: La démographie msprime.
+        samples: dict[str, int] (un compte par population, ploidy
+            uniforme -- <A>/<M>, voir build_samples_argument) ou
+            list[msprime.SampleSet] (ploidy hétérogène par sous-groupe
+            au sein d'une population -- <X>, voir
+            build_sex_stratified_samples_argument_snp). Les deux formes
+            sont transmises telles quelles à msprime.sim_ancestry, qui
+            les accepte indifféremment.
+        num_loci: Le nombre de généalogies indépendantes à simuler.
+        seed: La graine de la simulation.
+        ploidy: 2 (défaut) pour <A>, cohérent avec une transmission
+            diploïde classique -- chaque "sample individual" de
+            `samples` compte pour 2 lignées génomiques. Pour <Y>/<M>,
+            passer ploidy=1 avec une `demography` déjà rescalée par
+            rescale_demography (voir demography_builder.py) : ces
+            loci sont haploïdes (une seule copie de gène transmise),
+            et le facteur de rescaling de Ne (coalescence_coefficient,
+            observed_data.py) suppose cette combinaison ploidy=1 + Ne
+            rescalé, pas ploidy=2 + Ne d'origine. Pour <X>, passer
+            aussi ploidy=1 (voir
+            build_sex_stratified_samples_argument_snp : c'est le ploidy
+            PAR SampleSet, pas ce paramètre global, qui donne 2
+            copies aux femelles et 1 aux mâles -- ce paramètre-ci ne
+            fixe que le taux de coalescence, via la Demography déjà
+            rescalée).
+
+    Yields:
+        un LightReplicate contenant les 4 tableaux numpy suivants :
+        - parent : contenant les noeuds parents,
+        - child : contenant les noeuds enfants,
+        - time : contenant les temps des noeuds,
+        - flags : contenant les drapeaux des noeuds,
+    """
+    sim = msprime.ancestry._parse_sim_ancestry(
+        samples=samples,
+        demography=demography,
+        sequence_length=1,
+        random_seed=seed,
+        ploidy=ploidy,
+    )
+
+    for _ in range(num_loci):
+        sim.run()
+        d = sim.tables.asdict()
+        yield LightReplicate(
+            parent=d["edges"]["parent"],
+            child=d["edges"]["child"],
+            nodes_time=d["nodes"]["time"],
+            is_sample=(d["nodes"]["flags"] & 1).astype(bool),
+        )
+        sim.reset()
+
+
+def _derived_count(replicate: LightReplicate, node: int) -> int:
+    """Compte les échantillons situés sous un noeud (lui-même compris).
+
+    Équivalent de `tree.num_samples(node)` de tskit, sans `TreeSequence`.
+    Suppose les arêtes triées par temps de parent croissant (garanti par
+    msprime : un enfant est strictement plus récent que son parent) : quand
+    on traite l'arête (parent, enfant), toutes les arêtes dont l'enfant est
+    lui-même le parent ont déjà été traitées, son compte est donc final.
+
+    Args:
+        replicate: Le réplicat light.
+        node: L'ID du noeud dont on compte les échantillons.
+
+    Returns:
+        Le nombre d'échantillons sous le noeud.
+    """
+    # Listes Python : indexer un ndarray par un scalaire numpy est ~3x plus
+    # lent dans cette boucle de ~160 itérations.
+    count = replicate.is_sample.astype(int).tolist()
+    for parent, child in zip(
+        replicate.parent.tolist(), replicate.child.tolist(), strict=True
+    ):
+        count[parent] += count[child]
+    return count[node]
+
+
+def _derived_mask(replicate: LightReplicate, node: int) -> np.ndarray:
+    """Marque les échantillons situés sous un noeud (lui-même compris).
+
+    Équivalent de `set(tree.samples(node))` de tskit, sans `TreeSequence`.
+    Descend de `node` vers les feuilles en parcourant les arêtes en ordre
+    INVERSE (parents les plus anciens d'abord) : quand on traite l'arête
+    (parent, enfant), la marque du parent est déjà décidée.
+
+    Args:
+        replicate: Le réplicat light.
+        node: L'ID du noeud portant la mutation.
+
+    Returns:
+        Un tableau booléen de taille `len(replicate.nodes_time)` (un par noeud),
+        vrai pour les échantillons descendants de `node`, faux pour tous
+        les autres noeuds, échantillons ou non.
+    """
+    below = np.zeros(len(replicate.nodes_time), dtype=bool).tolist()
+    below[node] = True
+    for parent, child in zip(
+        reversed(replicate.parent.tolist()),
+        reversed(replicate.child.tolist()),
+        strict=True,
+    ):
+        if below[parent]:
+            below[child] = True
+    return np.array(below, dtype=bool) & replicate.is_sample
+
+
 def simulate_shared_ancestry_loci(
     demography: msprime.Demography,
     samples: dict[str, int] | list[msprime.SampleSet],
@@ -554,7 +685,9 @@ def simulate_shared_ancestry_loci(
 # ── Mutation (algorithme de Hudson) ────────────────────────────────────────
 
 
-def _draw_single_mutation_edge_child(ts: tskit.TreeSequence, rng: random.Random) -> int:
+def _draw_single_mutation_edge_child(
+    parent, children, nodes_time, rng: random.Random
+) -> int:
     """Tire le noeud portant la mutation unique de l'algorithme de Hudson.
 
     Probabilité proportionnelle à la longueur de sa branche --
@@ -570,27 +703,25 @@ def _draw_single_mutation_edge_child(ts: tskit.TreeSequence, rng: random.Random)
     notes/exploration.md).
 
     Args:
-        ts: La TreeSequence (un seul arbre, sequence_length=1).
+        parent: L'ID du noeud parent.
+        children: Un tableau des IDs des noeuds enfants.
+        nodes_time: Un tableau des temps des noeuds.
         rng: Le générateur aléatoire à utiliser.
 
     Returns:
         L'ID du noeud enfant portant la mutation.
     """
-    edges = ts.tables.edges
-    node_times = ts.tables.nodes.time
 
-    children = edges.child  # array des noeuds enfants
-    parents = edges.parent  # array des parents
-    lengths = node_times[parents] - node_times[children]  # longueurs, vectorisé
+    lengths = nodes_time[parent] - nodes_time[children]  # longueurs, vectorisé
 
     total = lengths.sum()
     target = rng.uniform(0, total)
     idx = np.searchsorted(
         np.cumsum(lengths), target
     )  # premier index où la somme cumulée dépasse target
-    if idx >= len(edges.child):
-        idx = len(edges.child) - 1
-    return int(edges.child[idx])
+    if idx >= len(children):
+        idx = len(children) - 1
+    return int(children[idx])
 
 
 def compute_population_layout(
@@ -715,7 +846,9 @@ def simulate_snp_genotypes(
 
     for ts in tree_sequences:
         tree = ts.first()
-        mutated_node = _draw_single_mutation_edge_child(ts, rng)
+        mutated_node = _draw_single_mutation_edge_child(
+            ts.edges_parent, ts.edges_child, ts.nodes_time, rng
+        )
         derived_samples = set(tree.samples(mutated_node))
 
         if population_layout is None:
@@ -765,7 +898,10 @@ def draw_mutation_and_derived_count(
     """
     rng = random.Random(seed)
     tree = tree if tree is not None else ts.first()
-    mutated_node = _draw_single_mutation_edge_child(ts, rng)
+    parent = ts.edges_parent
+    children = ts.edges_child
+    nodes_time = ts.nodes_time
+    mutated_node = _draw_single_mutation_edge_child(parent, children, nodes_time, rng)
     return tree, mutated_node, tree.num_samples(mutated_node)
 
 
@@ -905,46 +1041,98 @@ def with_maf_filter(
     # la topologie -- voir compute_population_layout.
     population_layout = None
     batch_index = 0
+
     while accepted_loci < num_loci:
         batch_seed = _locus_seed(seed, _MAF_BATCH_SEED_OFFSET, batch_index)
-        tree_sequences = simulate_independent_loci(
-            demography,
-            samples,
-            num_loci=batch_size,
-            seed=batch_seed,
-            ploidy=ploidy,
-        )
-        for attempt_in_batch, ts in enumerate(tree_sequences):
-            if population_layout is None:
-                population_layout = (
-                    compute_sample_layout(ts, counts_per_sample)
-                    if counts_per_sample is not None
-                    else compute_population_layout(ts)
-                )
-            tree, mutated_node, n_derived = draw_mutation_and_derived_count(
-                ts,
-                _locus_seed(
-                    seed,
-                    _MAF_REJECTION_SEED_OFFSET,
-                    batch_index * batch_size + attempt_in_batch,
-                ),
+        if msprime.__version__ != _VERSION_MS_PRIME_LIGHT_REPLICATES:
+            tree_sequences = simulate_independent_loci(
+                demography,
+                samples,
+                num_loci=batch_size,
+                seed=batch_seed,
+                ploidy=ploidy,
             )
-
-            # Même quantité que `observed_maf` (min(n0, n1) / n), lue sur le
-            # compteur de l'arbre : les génotypes d'un locus rejeté ne sont
-            # jamais construits.
-            n_total = ts.num_samples
-            maf_observed = min(n_derived, n_total - n_derived) / n_total
-
-            if maf_observed >= maf:
-                yield genotypes_from_mutated_node(
-                    ts, tree, mutated_node, population_layout
+            for attempt_in_batch, ts in enumerate(tree_sequences):
+                if population_layout is None:
+                    population_layout = (
+                        compute_sample_layout(ts, counts_per_sample)
+                        if counts_per_sample is not None
+                        else compute_population_layout(ts)
+                    )
+                tree, mutated_node, n_derived = draw_mutation_and_derived_count(
+                    ts,
+                    _locus_seed(
+                        seed,
+                        _MAF_REJECTION_SEED_OFFSET,
+                        batch_index * batch_size + attempt_in_batch,
+                    ),
                 )
-                accepted_loci += 1
-                if accepted_loci >= num_loci:
-                    return
+                # Même quantité que `observed_maf` (min(n0, n1) / n), lue sur le
+                # compteur de l'arbre : les génotypes d'un locus rejeté ne sont
+                # jamais construits.
+                n_total = ts.num_samples
+                maf_observed = min(n_derived, n_total - n_derived) / n_total
+                if maf_observed >= maf:
+                    yield genotypes_from_mutated_node(
+                        ts, tree, mutated_node, population_layout
+                    )
+                    accepted_loci += 1
+                    if accepted_loci >= num_loci:
+                        return
+            batch_index += 1
+        else:
+            replicates = simulate_light_replicates(
+                demography,
+                samples,
+                num_loci=batch_size,
+                seed=batch_seed,
+                ploidy=ploidy,
+            )
+            for attempt_in_batch, replicate in enumerate(replicates):
+                if population_layout is None:
+                    # nécessaire pour pouvoir construire le layout des populations
+                    tree_sequence = simulate_independent_loci(
+                        demography,
+                        samples,
+                        num_loci=1,
+                        seed=batch_seed,
+                        ploidy=ploidy,
+                    )
+                    ts = next(tree_sequence)
+                    population_layout = (
+                        compute_sample_layout(ts, counts_per_sample)
+                        if counts_per_sample is not None
+                        else compute_population_layout(ts)
+                    )
+                    # Une seule fois : le layout doit décrire les noeuds échantillons.
+                    _check_layout_matches(population_layout, ts)
+                    n_total = int(replicate.is_sample.sum())
 
-        batch_index += 1
+                rng = random.Random(
+                    _locus_seed(
+                        seed,
+                        _MAF_REJECTION_SEED_OFFSET,
+                        batch_index * batch_size + attempt_in_batch,
+                    )
+                )
+                mutated_node = _draw_single_mutation_edge_child(
+                    replicate.parent,
+                    replicate.child,
+                    replicate.nodes_time,
+                    rng,
+                )
+                n_derived = _derived_count(replicate, mutated_node)
+                maf_observed = min(n_derived, n_total - n_derived) / n_total
+                if maf_observed >= maf:
+                    mask = _derived_mask(replicate, mutated_node)
+                    yield {
+                        pop_name: mask[sample_ids].astype(int).tolist()
+                        for pop_name, sample_ids in population_layout
+                    }
+                    accepted_loci += 1
+                    if accepted_loci >= num_loci:
+                        return
+            batch_index += 1
 
 
 def with_maf_filter_shared_ancestry(
@@ -1259,7 +1447,9 @@ def simulate_poolseq_reads(
         tree_sequences, observed_reads_per_locus, strict=False
     ):
         tree = ts.first()
-        mutated_node = _draw_single_mutation_edge_child(ts, rng)
+        mutated_node = _draw_single_mutation_edge_child(
+            ts.edges_parent, ts.edges_child, ts.nodes_time, rng
+        )
         # set(...) impératif ICI (pas dans la boucle plus bas) : tree.samples()
         # renvoie un générateur, épuisé après la 1ère population -- sans ce
         # set() immédiat, pop_derived_count tombait silencieusement à 0 pour

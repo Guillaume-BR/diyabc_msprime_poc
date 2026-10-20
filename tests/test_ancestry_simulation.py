@@ -19,6 +19,9 @@ from conftest import (
 
 import bridge.ancestry_simulation as as_module
 from bridge.ancestry_simulation import (
+    LightReplicate,
+    _derived_count,
+    _derived_mask,
     _distribution_from_position,
     _group_prior_values_dna_from_columns,
     _grouping_loci_by_group_and_heritage,
@@ -54,6 +57,7 @@ from bridge.ancestry_simulation import (
     observed_maf,
     simulate_genotypes_for_locus_type,
     simulate_independent_loci,
+    simulate_light_replicates,
     simulate_poolseq_reads,
     simulate_poolseq_reads_with_mrc_filter,
     simulate_shared_ancestry_loci,
@@ -481,6 +485,101 @@ def test_compute_sample_layout_matches_population_layout_on_non_serial_data(
     )
 
 
+def test_simulate_light_replicates_yields(header_text_te5_with_maf):
+    """Vérifie que simulate_light_replicates renvoie exactement le même nombre
+    de LightReplicate que num_loci, et que chaque LightReplicate contient les
+    bons attributs."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te5_with_maf, scenario_index=1, seed=42
+    )
+    samples = build_samples_argument(OBSERVED_SNP_FILE_TE5_WITH_MAF)
+    num_loci = 3
+    ploidy = 2
+
+    replicates = list(
+        simulate_light_replicates(
+            demography=demography,
+            samples=samples,
+            num_loci=num_loci,
+            seed=123,
+            ploidy=ploidy,
+        )
+    )
+
+    assert len(replicates) == num_loci
+    for replicate in replicates:
+        assert isinstance(replicate, LightReplicate)
+        assert hasattr(replicate, "parent")
+        assert hasattr(replicate, "child")
+        assert hasattr(replicate, "nodes_time")
+        assert hasattr(replicate, "is_sample")
+
+
+@pytest.mark.parametrize("ploidy", [1, 2])
+def test_compare_light_replicates_with_reference(header_text_te5_with_maf, ploidy):
+    """Vérifie que simulate_light_replicates renvoie exactement le même résultat
+    que la version de référence simulate_independent_loci,."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te5_with_maf, scenario_index=1, seed=42
+    )
+    samples = build_samples_argument(OBSERVED_SNP_FILE_TE5_WITH_MAF)
+    num_loci = 3
+
+    replicates = list(
+        simulate_light_replicates(
+            demography=demography,
+            samples=samples,
+            num_loci=num_loci,
+            seed=123,
+            ploidy=ploidy,
+        )
+    )
+
+    tree_sequences = list(
+        simulate_independent_loci(
+            demography=demography,
+            samples=samples,
+            num_loci=num_loci,
+            seed=123,
+            ploidy=ploidy,
+        )
+    )
+
+    assert len(replicates) == len(tree_sequences)
+    for ts, rep in zip(tree_sequences, replicates, strict=True):
+        assert np.array_equal(rep.parent, ts.edges_parent)
+        assert np.array_equal(rep.child, ts.edges_child)
+        assert np.array_equal(rep.nodes_time, ts.nodes_time)
+        assert np.array_equal(rep.is_sample, (ts.nodes_flags & 1).astype(bool))
+
+
+@pytest.mark.parametrize("ploidy", [1, 2])
+def test_derived_count_and_mask_match_tskit_on_every_node(
+    header_text_te5_with_maf, ploidy
+):
+    """Pour CHAQUE noeud de plusieurs arbres (pas seulement le noeud tiré),
+    `_derived_count` égale `tree.num_samples(u)` et `_derived_mask` désigne
+    exactement `set(tree.samples(u))`. L'oracle est tskit lui-même, sur les
+    mêmes arbres (même graine, `simulate_independent_loci`)."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te5_with_maf, scenario_index=1, seed=42
+    )
+    samples = build_samples_argument(OBSERVED_SNP_FILE_TE5_WITH_MAF)
+    kwargs = dict(
+        demography=demography, samples=samples, num_loci=5, seed=321, ploidy=ploidy
+    )
+    light = list(simulate_light_replicates(**kwargs))
+    trees = list(simulate_independent_loci(**kwargs))
+
+    for replicate, ts in zip(light, trees, strict=True):
+        tree = ts.first()
+        for node in range(ts.num_nodes):
+            assert _derived_count(replicate, node) == tree.num_samples(node)
+            expected = np.zeros(ts.num_nodes, dtype=bool)
+            expected[list(tree.samples(node))] = True
+            assert np.array_equal(_derived_mask(replicate, node), expected)
+
+
 # tests relatifs aux filtres MAF
 def _reference_with_maf_filter(
     demography: msprime.Demography,
@@ -635,17 +734,17 @@ def test_with_maf_filter_matches_reference(header_text_te5_with_maf, monkeypatch
     assert via_filter_result == reference_result
     import bridge.ancestry_simulation as as_module
 
-    original = as_module.draw_mutation_and_derived_count
-    trees = []
+    original = as_module._derived_count
+    replicates = []
 
-    def spy(ts, rng_seed, tree=None):
-        trees.append(tree)
-        return original(ts, rng_seed, tree=tree)
+    def spy(replicate, node):
+        replicates.append(replicate)
+        return original(replicate, node)
 
-    monkeypatch.setattr(as_module, "draw_mutation_and_derived_count", spy)
+    monkeypatch.setattr(as_module, "_derived_count", spy)
     list(as_module.with_maf_filter(demography, samples, num_loci, maf, seed, ploidy=1))
-    assert len(trees) > num_loci
-    assert all(tree is None for tree in trees)
+    assert len(replicates) > num_loci
+    # assert all(tree is None for tree in trees)
 
 
 @pytest.mark.parametrize("seed", [123, 456, 789])

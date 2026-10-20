@@ -83,3 +83,7 @@ def _locus_seed(seed: int, offset: int, locus_index: int) -> int:
     """
     state = np.random.SeedSequence([seed, offset, locus_index]).generate_state(1)[0]
     return int(state) % (2**32 - 1) + 1
+
+
+# ── Version de msprime pour utiliser light replicates ─────────────────────────────
+_VERSION_MS_PRIME_LIGHT_REPLICATES = "1.4.2"  # msprime=1.4.2
