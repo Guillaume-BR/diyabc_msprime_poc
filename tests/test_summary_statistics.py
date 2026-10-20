@@ -3421,3 +3421,78 @@ def test_pool_allele_counts_matches_reference_on_random_inputs():
         result = _pool_allele_counts_for_two_samples(pop_1, pop_2)
         expected = _reference_pool_allele_counts_for_two_samples(pop_1, pop_2)
         assert result == expected, (pop_1, pop_2)
+
+
+def _reference_compute_LIK(
+    tree_sequences: list[tskit.TreeSequence],
+    sample_names: list[str],
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
+    genotypes_by_sample_per_locus: list[dict[str, list[tuple[int, ...]]]] | None = None,
+) -> dict[str, float]:
+    """Référence gardée comme oracle"""
+    pairs = [
+        (i, j)
+        for i in range(len(sample_names))
+        for j in range(len(sample_names))
+        if i != j
+    ]
+    likelihood_sum = {f"{i + 1}.{j + 1}": 0.0 for i, j in pairs}
+    valid_loci_count = {f"{i + 1}.{j + 1}": 0 for i, j in pairs}
+
+    # Un layout par locus, ou None partout si l'appelant n'en fournit pas.
+    if layouts is None:
+        layouts = [None] * len(tree_sequences)
+    if length_by_sample_per_locus is None:
+        length_by_sample_per_locus = [
+            _length_by_sample(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    if genotypes_by_sample_per_locus is None:
+        genotypes_by_sample_per_locus = [
+            _genotypes_by_sample_and_individuals(ts, layout=layout)
+            for ts, layout in zip(tree_sequences, layouts, strict=True)
+        ]
+    for _, length_by_sample, genotypes_by_sample in zip(
+        tree_sequences,
+        length_by_sample_per_locus,
+        genotypes_by_sample_per_locus,
+        strict=True,
+    ):
+        for i, j in pairs:
+            key = f"{i + 1}.{j + 1}"
+            samp_i, samp_j = sample_names[i], sample_names[j]
+            likelihood, both_present = _reference_compute_LIK_for_one_locus(
+                length_by_sample, genotypes_by_sample, samp_i, samp_j
+            )
+            likelihood_sum[key] += likelihood
+            if both_present:
+                valid_loci_count[key] += 1
+    return {
+        key: likelihood_sum[key] / valid_loci_count[key]
+        if valid_loci_count[key] > 0
+        else 0.0
+        for key in likelihood_sum
+    }
+
+
+def test_compute_LIK_vs_reference(microsat_context_te2_xy):
+    """Vérifie que compute_LIK est équivalent à la version de référence."""
+    demography, _ = build_random_demography_for_scenario_index(
+        microsat_context_te2_xy.header_text, scenario_index=1, seed=42
+    )
+    mutated, _ = microsat_mutation_simulation_per_locus(
+        demography=demography,
+        context=microsat_context_te2_xy,
+        seed=42,
+    )
+
+    sample_names = ["pop1", "pop2"]
+
+    results = compute_LIK(mutated.values(), sample_names)
+    expected_results = _reference_compute_LIK(mutated.values(), sample_names)
+
+    assert results.keys() == expected_results.keys()
+    for key in results:
+        assert pytest.approx(results[key]) == expected_results[key]
