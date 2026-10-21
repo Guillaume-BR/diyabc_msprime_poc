@@ -87,3 +87,6 @@ def _locus_seed(seed: int, offset: int, locus_index: int) -> int:
 
 # ── Version de msprime pour utiliser light replicates ─────────────────────────────
 _VERSION_MS_PRIME_LIGHT_REPLICATES = "1.4.2"  # msprime=1.4.2
+_LIGHT_EVENT_CHUNK = (
+    10**4
+)  # nombre d'événements (edges) à traiter par chunk dans ancestry_simulation.py
