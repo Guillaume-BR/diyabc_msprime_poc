@@ -545,12 +545,17 @@ locus/particle.
   MicroSat chain has the parameter; the other replay entry points still use
   `particle_index + 1` (add it the same way when needed).
 
-- **DIYABC reads the MAF from `maf.txt` as soon as a `.snp.bin` exists, and silently runs without
-  the filter when that file is missing.** `DataC::libin` (`data.cpp:1137`) reads it; `ecribin`
-  (`data.cpp:1083`) wrote it when the `.snp` was converted. The `<MAF=0.05>` on the first line of the
-  `.snp` and of the `.snpbin.txt` is **not** read in that case. Before trusting any DIYABC reference
-  for a dataset with `maf > 0`: `maf.txt` exists and holds the value, the run prints
-  `THIS->MAF=<value>`, `reftable.log` ends in `END|n|` (see Closed investigations, 21/10).
+- **A leftover `.snp.bin` / `.snpbin.txt` stops DIYABC from converting the `.snp`, so it writes no
+  `maf.txt`, and it then runs WITHOUT the MAF filter and without any message.** The MAF is not in the
+  binary: `DataC::ecribin` (`data.cpp:1083`) writes it to `maf.txt` only when it converts the `.snp`,
+  and `DataC::libin` (`data.cpp:1137`) reads `maf.txt` when a `.snp.bin` already exists, setting
+  `maf = 0.0` if the file is absent. The `<MAF=0.05>` on the first line of the `.snp` and of the
+  `.snpbin.txt` is not read in that case. The kept `.snp.bin` was byte-identical to the one DIYABC
+  regenerates (checked 21/10): it is its presence that blocks, not its content. **Before a DIYABC run on
+  a dataset with `maf > 0`, and after any edit of the first line of the `.snp`: delete the `*.snp.bin`
+  and `*.snpbin.txt` of the folder** (or write `maf.txt` by hand), then check that `maf.txt` exists and
+  holds the value, that the run prints `THIS->MAF=<value>` and that `reftable.log` ends in `END|n|`
+  (see Closed investigations, 21/10).
 - **An independent replay needs a NEW DIYABC reftable, initialised in its own step.**
   `./diyabc -p ./ -n "t:16;s:<seed>;f:"` only writes `RNG_state_0000.bin` and exits; the `-R ALL ...`
   run is a second command. Three msprime seed sets against ONE DIYABC reftable are one replica: that
@@ -894,8 +899,8 @@ under the date given.
   drawn); `sim_ancestry` options (`discrete_genome`, `model`) change nothing; the batch size
   (125 vs optimum ~240) is worth ~2 % and moves the stream.
 - **"50 of 57 columns KS-flagged" on `toy_example5_with_maf` (21/10) — the DIYABC reference had no
-  MAF filter.** Its folder had a `.snp.bin` but no `maf.txt`, so DIYABC ran Hudson (statistics of a
-  filter-less run: `HWm_1` 0.088 against 0.142-0.149 with the filter, DIYABC 3 s instead of 7 s).
+  MAF filter.** Its folder still held the `.snp.bin` and `.snpbin.txt` of an earlier run, so DIYABC did
+  not convert the `.snp`, wrote no `maf.txt` and ran Hudson (statistics of a filter-less run: `HWm_1` 0.088 against 0.142-0.149 with the filter, DIYABC 3 s instead of 7 s).
   Same inputs, regenerated with `maf.txt`: our replay agrees. The "7.2x" timing was the same
   artefact (filter-on msprime against filter-off DIYABC); the real ratio is 3.3x.
 - **"Persistent −3.5 % on `toy_example5_with_maf`" (21/10) — not established.** One DIYABC reftable

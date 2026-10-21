@@ -5067,14 +5067,19 @@ particules à `-t 4`), nous ~166-182 ms (~3,5x).
 actuel) donnaient le même écart : pas un effet de nos optimisations. Désactiver le filtre chez nous
 ramenait `HWm_1` à 0,0886 : c'est **DIYABC qui n'avait pas appliqué le filtre**.
 
-Cause trouvée dans le C++ : le MAF n'est **pas** dans le `.snp.bin`. `DataC::ecribin` (`data.cpp:1083`)
+Cause amont (donnée par l'utilisateur) : le `.snp.bin` et le `.snpbin.txt` d'une exécution précédente
+étaient restés dans le dossier ; DIYABC ne reconvertit pas le `.snp` quand le binaire existe, donc n'écrit
+pas `maf.txt`. Le `.snp.bin` conservé était d'ailleurs identique octet pour octet à celui que DIYABC
+régénère : c'est sa présence qui bloquait, pas son contenu.
+
+Mécanisme dans le C++ : le MAF n'est **pas** dans le `.snp.bin`. `DataC::ecribin` (`data.cpp:1083`)
 l'écrit dans `maf.txt` au moment de la conversion, `DataC::libin` (`data.cpp:1137`) le relit quand un
 `.snp.bin` existe, et fixe `maf = 0.0` s'il est absent, sans message. Le `.snpbin.txt` portait bien
 `<MAF=0.05>`, trompeur : DIYABC ne le lit pas. Vérifié sur trois exécutions de 1000 particules :
 
 | Entrées | `THIS->MAF` | Durée (`-t 16`) | `HWm_1` / `FST1v_1` |
 |---|---|---|---|
-| `.snp.bin` présent, `maf.txt` absent | 0 | 3 s | 0,088 / 0,763 |
+| `.snp.bin` et `.snpbin.txt` restés, `maf.txt` absent (le dossier d'origine) | 0 | 3 s | 0,088 / 0,763 |
 | `.snp.bin` présent, `maf.txt` créé (`0.05`) | 0,05 | 7 s | 0,149 / 0,327 |
 | pas de `.snp.bin` (régénéré) | 0,05 | 7 s | 0,142 / 0,306 |
 
