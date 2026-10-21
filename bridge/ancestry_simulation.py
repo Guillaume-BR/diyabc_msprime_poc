@@ -22,6 +22,8 @@ from typing import NamedTuple
 import msprime
 import numpy as np
 import tskit
+from msprime import _msprime
+from msprime.ancestry import ExitReason
 
 from bridge.configuration import (
     _ANCESTRY_SEED_OFFSET,
@@ -29,6 +31,7 @@ from bridge.configuration import (
     _FAMILY_SEED_OFFSET,
     _KAPPA1_SEED_OFFSET,
     _KAPPA2_SEED_OFFSET,
+    _LIGHT_EVENT_CHUNK,
     _MAF_BATCH_SEED_OFFSET,
     _MAF_BATCH_SIZE,
     _MAF_REJECTION_SEED_OFFSET,
@@ -561,8 +564,22 @@ def simulate_light_replicates(
         ploidy=ploidy,
     )
 
+    nb_models = len(sim.models)
     for _ in range(num_loci):
-        sim.run()
+        if nb_models == 1:
+            while True:
+                code = _msprime.Simulator.run(
+                    sim, np.inf, max_events=_LIGHT_EVENT_CHUNK
+                )
+                if code != ExitReason.MAX_EVENTS:
+                    break
+            if code != ExitReason.COALESCENCE:
+                raise RuntimeError(
+                    f"Simulation interrompue : code de sortie inattendu {code} (attendu : ExitReason.COALESCENCE)"
+                )
+            sim.finalise_tables()
+        else:
+            sim.run()
         d = sim.tables.asdict()
         yield LightReplicate(
             parent=d["edges"]["parent"],

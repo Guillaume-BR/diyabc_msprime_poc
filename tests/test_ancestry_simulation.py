@@ -3,6 +3,7 @@ msprime.sim_ancestry, simulation de généalogies indépendantes par locus, et
 mutation Hudson (exactement une mutation par locus, toujours polymorphe)."""
 
 import itertools
+import types
 from collections.abc import Iterator
 
 import msprime
@@ -16,6 +17,7 @@ from conftest import (
     OBSERVED_SNP_FILE_TE5,
     OBSERVED_SNP_FILE_TE5_WITH_MAF,
 )
+from msprime.ancestry import ExitReason
 
 import bridge.ancestry_simulation as as_module
 from bridge.ancestry_simulation import (
@@ -547,6 +549,59 @@ def test_compare_light_replicates_with_reference(header_text_te5_with_maf, ploid
 
     assert len(replicates) == len(tree_sequences)
     for ts, rep in zip(tree_sequences, replicates, strict=True):
+        assert np.array_equal(rep.parent, ts.edges_parent)
+        assert np.array_equal(rep.child, ts.edges_child)
+        assert np.array_equal(rep.nodes_time, ts.nodes_time)
+        assert np.array_equal(rep.is_sample, (ts.nodes_flags & 1).astype(bool))
+
+
+@pytest.mark.parametrize("chunk", [20, 1])
+def test_light_replicates_resume_after_interrupted_runs(
+    header_text_te5_with_maf, monkeypatch, chunk
+):
+    """Avec un `_LIGHT_EVENT_CHUNK` minuscule, `run` est interrompu (code
+    `MAX_EVENTS`) avant la fin de chaque arbre : `simulate_light_replicates`
+    doit le rappeler jusqu'à la coalescence, et les arbres doivent rester
+    identiques à ceux de `simulate_independent_loci`.
+
+    Avec la valeur par défaut (10**4 événements) la reprise ne se déclenche
+    jamais sur ces jeux : sans ce test, la boucle `while` n'est exercée par
+    aucun autre."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te5_with_maf, scenario_index=1, seed=42
+    )
+    samples = build_samples_argument(OBSERVED_SNP_FILE_TE5_WITH_MAF)
+    num_loci = 20
+    kwargs = dict(
+        demography=demography, samples=samples, num_loci=num_loci, seed=123, ploidy=2
+    )
+    expected = list(simulate_independent_loci(**kwargs))
+
+    # Espion : compte les appels à `_msprime.Simulator.run` du module testé et
+    # délègue à l'original. On remplace le NOM `_msprime` du module (la fonction
+    # le cherche dans ses globales à chaque appel), pas la méthode d'une classe C.
+    original_run = as_module._msprime.Simulator.run
+    run_calls = []
+
+    def spy_run(sim, end_time, max_events):
+        code = original_run(sim, end_time, max_events=max_events)
+        run_calls.append(code)
+        return code
+
+    fake_msprime = types.SimpleNamespace(Simulator=types.SimpleNamespace(run=spy_run))
+    monkeypatch.setattr(as_module, "_msprime", fake_msprime)
+    monkeypatch.setattr(as_module, "_LIGHT_EVENT_CHUNK", chunk)
+
+    replicates = list(simulate_light_replicates(**kwargs))
+
+    # La reprise a bien eu lieu : plusieurs appels par arbre, dont des
+    # interruptions, et exactement un code final "fini" par arbre.
+    assert len(run_calls) > num_loci
+    assert ExitReason.MAX_EVENTS in run_calls
+    assert run_calls.count(ExitReason.COALESCENCE) == num_loci
+
+    assert len(replicates) == len(expected)
+    for ts, rep in zip(expected, replicates, strict=True):
         assert np.array_equal(rep.parent, ts.edges_parent)
         assert np.array_equal(rep.child, ts.edges_child)
         assert np.array_equal(rep.nodes_time, ts.nodes_time)
