@@ -639,11 +639,20 @@ def _derived_mask(replicate: LightReplicate, node: int) -> np.ndarray:
         vrai pour les échantillons descendants de `node`, faux pour tous
         les autres noeuds, échantillons ou non.
     """
+    if replicate.is_sample[node]:
+        below = np.zeros(len(replicate.nodes_time), dtype=bool)
+        below[node] = True
+        return below
+
     below = np.zeros(len(replicate.nodes_time), dtype=bool).tolist()
     below[node] = True
+    # length_prefix est le nombre d'arêtes dont le parent est plus récent ou égal au neoud muté
+    length_prefix = np.searchsorted(
+        replicate.nodes_time[replicate.parent], replicate.nodes_time[node], side="right"
+    )
     for parent, child in zip(
-        reversed(replicate.parent.tolist()),
-        reversed(replicate.child.tolist()),
+        reversed(replicate.parent[:length_prefix].tolist()),
+        reversed(replicate.child[:length_prefix].tolist()),
         strict=True,
     ):
         if below[parent]:
