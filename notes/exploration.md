@@ -4948,3 +4948,207 @@ Ce qui est resté : `_reference_compute_LIK` et `test_compute_LIK_vs_reference`,
 que la `compute_LIK` commitée (avec `nal` et `count_j` hissés) égale l'algorithme d'origine sur
 des données réelles, et la réutilisation du `MatrixMutationModel` (−0,55 ms).
 
+
+## 2026-10-21 — Optimisation IndSeq (MAF > 0 et sans filtre) : réplicats légers, flux unique, et une référence DIYABC sans filtre
+
+Session menée en mode mentor (l'utilisateur écrit le code, Claude guide, mesure et relit). Partie de
+`toy_example3_500loci` à 6,7x DIYABC (benchmark du 19/10), elle a fini par deux chantiers qui ne sont pas
+de la vitesse : une référence DIYABC fausse (le filtre MAF n'avait pas été appliqué) et un défaut de
+fond sur les loci `<M>` et `<Y>`, resté ouvert.
+
+### 1. Bilan (une particule en processus unique, médianes, 30 particules)
+
+| `toy_example3_500loci` (500 `<A>`, MAF 0,05) | Particule | Par tentative |
+|---|---|---|
+| Départ de session (`78b33ea`) | ~265-280 ms | ~233 µs |
+| + tirage de l'arête sans `ts.tables` | ~220 ms (−16 %) | |
+| + réplicats légers (pas de `TreeSequence`) | ~156 ms | |
+| + `_derived_count` pour les feuilles | ~152 ms | |
+| + appel direct de `Simulator.run` | ~140 ms | ~140 µs |
+| + flux unique (un seul `Simulator`) | ~136 ms (profil) | |
+
+Boucle `with_maf_filter` seule, 8 particules réelles : 144 → 141 → 130 ms (raccourci feuille, puis `run`
+direct), sortie identique (même hachage).
+
+| `human` (5000 `<A>`, sans filtre) | Avant | Après |
+|---|---|---|
+| Par locus | 292 µs | 230 µs |
+| Une particule (processus unique) | 1,52 s | 1,27 s |
+| Benchmark 1000 particules (16 workers, une exécution) | 238,4 s contre 129,7 s (1,8x) | **171 s contre 127 s (1,35x)** |
+
+`toy_example5_with_maf` (500 loci avec `<X>/<M>/<Y>`, filtre actif des deux côtés) : DIYABC 7,0 s, nous
+23,0 et 23,7 s, soit 3,3x. Par cœur : DIYABC ~48 ms de CPU par particule (48 s de CPU utilisateur pour 1000
+particules à `-t 4`), nous ~166-182 ms (~3,5x).
+
+### 2. Les étapes, avec ce que chacune a donné
+
+1. **Le tirage de l'arête relisait `ts.tables`** (`_draw_single_mutation_edge_child`). Premier accès sur
+   un `TreeSequence` neuf : un `TableCollection` complet est construit (le profil montrait
+   `tables.py:__init__` 8 fois par tentative). Lecture directe de `ts.edges_child`, `ts.edges_parent`,
+   `ts.nodes_time` : 35 → 13 µs, même nœud tiré sur 300 arbres. −16 % d'une particule. Mon premier
+   chronométrage par étape donnait 11,8 µs : il mesurait des arbres déjà « chauffés », voir section 3.
+2. **Ne construire les génotypes que des loci acceptés** (helper `draw_mutation_and_derived_count`,
+   `tree.num_samples`) : −3 % seulement, car la part rejetée de `simulate_snp_genotypes` était moins grande
+   que ce que le bloc de 29 % laissait croire.
+3. **Réplicats légers** : le cycle d'un réplicat dans msprime est `run` (C) → `finalise_tables` → `asdict` →
+   `fromdict` → `tree_sequence()` → `reset`. Seul `run` est du coalescent (~40 µs sur 114). En pilotant le
+   `Simulator` à la main (`ancestry._parse_sim_ancestry`, puis lecture de `sim.tables.asdict()`), les
+   arbres sont **identiques bit à bit** (arêtes, temps, drapeaux, 500 réplicats) pour ~70 µs au lieu de
+   ~125. Gain net par tentative, avec un comptage des copies dérivées en Python pur : 182 → ~112 µs.
+   Le nombre de copies sous un nœud se calcule en une boucle sur les arêtes triées par temps de parent
+   croissant (`count[parent] += count[enfant]`) ; le masque des descendants, en ordre inverse. Validé contre
+   tskit sur **tous les nœuds** de 5 arbres.
+4. **`_derived_count` pour une feuille** : 45 % des tirages tombent sur un nœud échantillon (branche
+   externe), son compte vaut 1. 6,7 → 3,7 µs en moyenne. Le test doit venir **avant** la conversion
+   `is_sample.astype(int).tolist()`, sinon on paie la conversion pour rien.
+5. **Appel direct de `_msprime.Simulator.run`** : le `run()` de msprime refait à chaque réplicat
+   `model._as_lowlevel()` (`dataclasses.asdict` + `deepcopy`), de la journalisation et une boucle sur les
+   modèles. 64 → 57 µs par arbre, arbres identiques. **Piège** : un appel renvoie 1 (`MAX_EVENTS`) quand
+   la simulation dépasse `max_events` ; il faut rappeler tant que le code vaut `ExitReason.MAX_EVENTS`,
+   puis seulement `finalise_tables`. Mesuré : avec `max_events=20`, un seul appel renvoie 1 et
+   `finalise_tables` écrit un arbre de 99 arêtes sur 158, sans erreur. Avec `max_events=20`, la suite des codes
+   renvoyés est 1, 1, 1, 1, 0 (cinq appels) ; le test force `_LIGHT_EVENT_CHUNK` à 20 et à 1.
+6. **Flux unique d'arbres au lieu de lots** (`simulate_light_replicates(num_loci=None)` avec
+   `itertools.count()`). Un `Simulator` coûte ~1,8 ms à créer, dont ~1,4 ms d'initialisation en C (blocs
+   de 64 k). Avec ~1400 tentatives et des lots de 125, c'est 12 créations : 104 → 83,5 ms pour 1400 arbres.
+   La graine de mutation de la tentative `k` (`batch_index * batch_size + attempt_in_batch`) n'est autre
+   que le numéro global `k` : seule la graine du flux change. **Le flux obtenu est identique à celui d'un
+   seul gros `sim_ancestry` de l'API publique** (300 arbres comparés), ce qui permet un oracle exact dans
+   les tests. Les particules qui tiennent dans le premier lot restent identiques à l'ancien code ; les
+   autres changent de flux, statistiquement neutre (section 4).
+7. **Branche sans filtre** (`maf == 0.0`) : même générateur, une fonction sœur
+   (`simulate_snp_genotypes_from_light_replicates`) avec un seul `random.Random(seed)` pour tout le flux,
+   comme l'ancienne. Sortie **identique** (contrôle exact) : `human` 30 particules / 3900 valeurs,
+   `human_seriel` 10 / 1300, `toy_example5` 30 / 1530. Écriture des génotypes : la compréhension
+   `[1 if masque[s] else 0 for s in ids]` coûtait 18,5 µs par locus, `masque[ids].astype(int).tolist()`
+   5,6 µs, mêmes entiers Python.
+8. **Layout** : un `LightReplicate` ne porte pas les individus, donc pas de layout. Un `TreeSequence` d'un
+   réplicat par l'API publique (`next(simulate_independent_loci(num_loci=1, ...))`), construit une fois par
+   particule (1,4 ms), suffit : le layout ne dépend ni de la graine ni de l'arbre (identique pour trois
+   graines sur `human`, 4 × 60 nœuds), et son total égale `rep.is_sample.sum()` (240).
+
+### 3. Erreurs de méthode, consignées
+
+- **Micro-benchmark sur des objets déjà touchés.** `ts.tables` est mis en cache par `TreeSequence` : mes
+  répétitions prenaient le minimum sur des arbres déjà accédés (0,1 µs), la boucle réelle voit des arbres
+  neufs (18 µs). Le profil de la vraie boucle (8 constructions de tables par tentative) a contredit mon
+  chronométrage par étape.
+- **Lecture générique d'un reftable DIYABC (déjà une règle, retombée dedans).** `pandas.read_csv(sep=r"\s+")`
+  sur `first_records_of_the_reference_table_0.txt` : 57 ou 58 champs par ligne, colonnes décalées, d'où des
+  KS à `p ~ 1e-200` et un `HWv_3` de 0,28 (une variance d'une quantité bornée à [0,1] ne dépasse pas
+  0,25 : le signe qu'il fallait chercher une erreur de lecture). Corrigé par `rewrite_real_reftable_txt`.
+- **Trois jeux de graines msprime contre UN reftable DIYABC pris pour trois répliques.** J'avais conclu à un
+  « −3,5 % persistant » (39/50 négatifs, 9 colonnes flaggées dans les 3 jeux). Un second reftable DIYABC
+  du jeu complet (fait par l'utilisateur) ne montre aucune colonne divergente. Retiré.
+- **Notebook de comparaison à `scenario = 1`** : 314 lignes sur 1000, `FST3m_1.2.3` avec `ks_stat = 0,1188`
+  affichait `p = 0,022` (cohérent avec ~320 par côté) au lieu de ~1e-6. Le compte « 3 colonnes » de
+  l'utilisateur venait de là, le même rejeu en donne 15 sur les trois scénarios.
+- **Références périmées.** `ref_p3_avant_te5.json` (enregistrée avec 100 loci) comparée au dossier régénéré
+  à 500 loci : 1496 différences sur 1530. `ref_p3_avant_te3.json` réécrite par une relance par erreur :
+  ce n'était plus un « avant ». Le critère a joué : la référence de `human` datait de 14:59, avant le
+  commit de la piste 3 (15:01) et la modification suivante (15:21).
+- **Réensemencer un `Simulator`** (`random_generator.seed = s; reset()`) : l'attribut est modifiable et
+  coûte 5 µs au lieu de 1,8 ms, mais les arbres ne sont pas ceux d'un `Simulator` neuf (~10 % des
+  réplicats diffèrent, même sur un simulateur jamais utilisé ; avec deux `reset()` le premier lot est
+  identique, avec un seul non). L'état d'allocation interne décide quels lignages sont tirés. Le flux
+  unique (étape 6) obtient le même gain sans cela.
+- **Erreurs de signature à répétition dans le code relu** (utile pour la revue) : `batch_index += 1` absent
+  d'une branche (le lot 0 se rejoue, graine 456 : 31 tentatives pour un lot de 20) ; un `next(...)` oublié
+  autour de `simulate_independent_loci(num_loci=1)` (renvoie toujours un générateur) ; `attempt_in_batch`
+  resté dans une branche qui n'a plus de lots ; test qui passe à vide parce qu'un `islice` est épuisé par
+  un `len(list(...))` avant le `zip` ; `all(t is trees[0] ...)` vrai si tous les `tree` valent `None`
+  (il faut `trees[0] is not None`) ; une signature de fonction partagée changée sans mettre à jour deux
+  appelants (39 tests rouges).
+
+### 4. La référence DIYABC sans filtre, et ce qu'elle a coûté
+
+`reference/toy_example5_with_maf` donnait 50 colonnes sur 57 avec `p < 0,05`, une médiane de +1145 % et
+`HWm_1` à 0,088 (DIYABC) contre 0,154 (nous). Les trois époques du code (début de session, `HEAD`, arbre
+actuel) donnaient le même écart : pas un effet de nos optimisations. Désactiver le filtre chez nous
+ramenait `HWm_1` à 0,0886 : c'est **DIYABC qui n'avait pas appliqué le filtre**.
+
+Cause trouvée dans le C++ : le MAF n'est **pas** dans le `.snp.bin`. `DataC::ecribin` (`data.cpp:1083`)
+l'écrit dans `maf.txt` au moment de la conversion, `DataC::libin` (`data.cpp:1137`) le relit quand un
+`.snp.bin` existe, et fixe `maf = 0.0` s'il est absent, sans message. Le `.snpbin.txt` portait bien
+`<MAF=0.05>`, trompeur : DIYABC ne le lit pas. Vérifié sur trois exécutions de 1000 particules :
+
+| Entrées | `THIS->MAF` | Durée (`-t 16`) | `HWm_1` / `FST1v_1` |
+|---|---|---|---|
+| `.snp.bin` présent, `maf.txt` absent | 0 | 3 s | 0,088 / 0,763 |
+| `.snp.bin` présent, `maf.txt` créé (`0.05`) | 0,05 | 7 s | 0,149 / 0,327 |
+| pas de `.snp.bin` (régénéré) | 0,05 | 7 s | 0,142 / 0,306 |
+
+Même `.snp.bin` octet pour octet dans les deux dernières lignes, même header : seul `maf.txt` changeait.
+
+**Validation de la piste 3 contre le reftable propre** (1000 particules, 50 statistiques, lecture
+rectangulaire, arrondi à 6 décimales avant le KS) : arbre actuel 11 colonnes à `p < 0,05` (aucune à
+`p < 0,001`, tête de liste `FST1m_2`, `FST2m_1.2`, `FST3m_1.2.3`), signes 41/50 négatifs, médiane −3,6 % ; code d'avant la piste 3 12 colonnes (même famille `FST`), 39/50,
+−3,5 %. Indiscernables. Le décalage de −3,5 % est le même sans filtre (DIYABC sans filtre contre nous
+sans filtre : −3,3 %), puis disparaît sur un second reftable : il n'était pas établi (section 3).
+
+**Dissociation par type de locus** (une variante de header par type, DIYABC relancé à chaque fois, filtre
+actif, même rejeu) :
+
+| Loci | Colonnes `p < 0,05` | Signes négatifs | Médiane de l'écart | `FST*m` |
+|---|---|---|---|---|
+| `<A>` (350) | 0/50 | 28/50 | −0,02 % | −0,03 % |
+| `<X>` (50) | 1/50 | 11/50 | +1,3 % | +1,8 % |
+| `<M>` (50) | 45/50 | 38/50 | −7,7 % | −8,9 % |
+| `<Y>` (50) | 42/50 | 13/50 | +8,5 % | +10,6 % |
+| `<X>+<M>+<Y>` | 11/50 | 10/50 | +1,5 % | +0,9 % |
+
+Le jeu observé n'a que 100 loci de chaque type haploïde : DIYABC refuse `150 <X>` (« Not enough loci of
+type <X> found in the datafile »).
+
+**Réplication indépendante** (trois reftables DIYABC de plus par type, initialisation du générateur
+`./diyabc -p ./ -n "t:16;s:11;f:"` puis run séparé, car `-n` s'arrête après avoir écrit
+`RNG_state_0000.bin` ; `N1` moyen 14 682 / 15 260 / 14 586, donc des priors réellement différents) :
+`<M>` −7,2 / −7,8 / −7,0 %, `<Y>` +10,3 / +10,0 / +9,6 % (39 à 43 colonnes sur 50 flaggées). Le signe
+et l'ordre de grandeur ne bougent pas : **réel**.
+Avec le code de début de session (`78b33ea`), mêmes chiffres au centième près : pas une régression.
+Sans filtre : `<M>` −10,2 %, `<Y>` +14,4 % : pas le MAF. `coalescence_coefficient` reproduit
+`DataC::cal_coeffcoal` (`A`: `16 s (1−s)`, `X`: `18 s (1−s)/(1+s)`, `Y`: `2 s`, `M`: `2 (1−s)`) et notre
+`parse_sex_ratio` donne 0,299999 contre `sexratio=0.3` dans le journal de DIYABC : écartés. Dans le jeu
+mixte les deux écarts se compensent presque, d'où l'absence de colonne divergente sur le second reftable.
+
+**Chronométrage et passage à l'échelle.** Le « 7,2x » de l'utilisateur comparait 22 s (filtre actif) à
+3,04 s (DIYABC sans filtre, sans `maf.txt`). À conditions égales : 23 s contre 7 s, 3,3x. DIYABC à
+`-t 4 / 8 / 16` : 12,6 / 7,6 / 7,0 s ; nous à 8 et 16 workers : 26,8 et 23 s. Les deux gagnent 8 à 17 %
+au-delà des 8 cœurs physiques (hypothèse d'un passage à l'échelle parfait de DIYABC, que j'avais avancée
+sur la foi du 3,04 s, falsifiée par cette mesure).
+
+### 5. Choses pratiques
+
+- Worktree propre pour une référence « avant » : `git worktree add --detach <tmp> <commit>`, retirer le
+  dossier `reference` extrait avant de refaire le lien `ln -s`, copier `compare_particles_snp.py` (non
+  suivi par git), sauver depuis le worktree, comparer depuis l'arbre principal. Vérifier dans le worktree
+  que le code ancien est bien celui attendu (par exemple que la branche modifiée n'y est pas câblée).
+- Un `git commit --amend` d'un commit déjà poussé crée un commit divergent (`devant 1, derrière 1`) ; la
+  sortie propre est `git reset --soft origin/main` puis un commit normal.
+- `git add -p` pour séparer deux pistes d'un même fichier : vérifier `git diff --cached` avant le commit ;
+  un commit qui oublie `configuration.py` ne s'importe pas seul (`ImportError`), à tester dans un
+  worktree.
+- Contrôle de mutation sur une **copie du dépôt** (`cp -r bridge tests`), jamais sur l'arbre de travail ;
+  un motif de remplacement qui ne s'applique pas laisse passer le test vert : l'`assert` sur
+  `s.count(ancien) == 1` est indispensable (un motif avec une ligne blanche à espaces avait échoué sans bruit).
+- Espion sur une fonction C : on ne patche pas la méthode d'une classe d'extension, on remplace le **nom**
+  `_msprime` dans le module testé (la fonction le cherche dans ses globales à chaque appel).
+- `printf "%6.2f"` avec une locale française refuse `12.588` (virgule décimale) et tronque : lire les
+  sorties brutes.
+
+### 6. Ce qu'il reste
+
+- **`<M>` et `<Y>`** (voir Open work dans `CLAUDE.md`) : le banc d'essai est prêt (une variante de header par
+  type, 7 s de DIYABC, un rejeu). Pistes : échantillons de `<Y>` (mâles seuls), de `<M>`, mutation sur
+  l'arbre partagé.
+- **`_derived_mask` limité aux arêtes dont le parent n'est pas plus jeune que le nœud muté**, et un
+  masque d'un seul nœud pour une feuille : 28 → 12,5 µs par locus, masques identiques sur 800 loci,
+  ~77 ms (6 %) d'une particule de `human`. Non fait. La même idée pour `_derived_count` : ~12 ms sur 136
+  côté MAF, au mieux quelques points.
+- Réutiliser un `Simulator` entre lots : −10 %, change le flux, exige un rejeu (voir étape 6 et section 3).
+- `seed_offset` pour le rejeu SNP (seule la chaîne MicroSat l'a).
+- Le benchmark à 1000 particules de `toy_example3_500loci` et de `human_seriel` n'a pas été relancé après
+  l'appel direct de `run` et le flux unique ; les chiffres du tableau de `CLAUDE.md` pour ces deux lignes
+  sont marqués comme tels.
+- Ménage : `draw_mutation_and_derived_count` et `genotypes_from_mutated_node` n'ont plus que le repli pour
+  appelant ; la ligne tronquée `counts_per_sample:` dans l'`Args:` de `simulate_snp_genotypes`.
