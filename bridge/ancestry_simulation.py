@@ -860,6 +860,7 @@ def simulate_snp_genotypes(
             d'une particule sur 5000 loci (voir notes/exploration.md,
             entrée du 20/07/2026) -- le plus gros poste évitable du
             surcoût tskit par locus identifié dans cette investigation.
+        counts_per_sample: Les effectifs observés, UN PAR ÉCHANTILLON,
 
     Returns:
         Un itérateur de dicts {nom_population: [génotype, ...]} (un
@@ -886,6 +887,63 @@ def simulate_snp_genotypes(
 
         genotypes_by_population = {
             pop_name: [1 if s in derived_samples else 0 for s in sample_ids]
+            for pop_name, sample_ids in population_layout
+        }
+        yield genotypes_by_population
+
+
+def simulate_snp_genotypes_from_light_replicates(
+    light_replicates: Iterator[LightReplicate],
+    seed: int,
+    population_layout: list[tuple[str | None, np.ndarray]] | None = None,
+) -> Iterator[dict[str, list[int]]]:
+    """Tire une mutation par locus (Hudson) et retourne des dict clés par nom d'échantillon.
+
+    Pour chaque LightReplicate (un locus = un arbre indépendant), tire
+    une mutation UNIQUE selon l'algorithme de Hudson (vectorisé), et
+    retourne les génotypes (0=ancestral, 1=dérivé) REGROUPÉS PAR
+    POPULATION. Voir _draw_single_mutation_edge_child pour l'algorithme
+    de tirage, et la docstring d'origine pour la justification du
+    modèle (doc DIYABC section 2.4.3 : exactement une mutation par
+    locus, locus toujours polymorphe).
+
+    Args:
+        light_replicates: Un itérateur de LightReplicate, un arbre
+            indépendant par locus.
+        seed: La graine du tirage de mutation.
+        population_layout: Voir `compute_population_layout`. Si
+            `None` (cas d'un appel unique sur tout un flux de loci,
+            ex: chemin `maf=0.0`), calculé UNE SEULE FOIS ici même, au
+            premier locus, et réutilisé pour tous les suivants --
+            valable car tous les `light_replicates` d'un même appel
+            partagent la même `demography`/`samples` d'origine (mêmes
+            réplicats d'un seul appel à simulate_light_replicates)
+            : seule la topologie coalescente varie d'un locus à l'autre,
+            jamais l'assignation des noeuds échantillons aux populations
+            (vérifié empiriquement). Si fourni par l'appelant (ex:
+            boucles de rejet MAF de `with_maf_filter`/`with_maf_
+            filter_shared_ancestry`, qui appellent cette fonction une
+            fois PAR TENTATIVE et calculent donc leur propre cache à
+            travers les tentatives), utilisé tel quel sans jamais être
+            recalculé.
+    Returns:
+        Un itérateur de dicts {nom_population: [génotype, ...]} (un
+        dict par locus).
+    """
+
+    rng = random.Random(seed)
+
+    for replicate in light_replicates:
+        mutated_node = _draw_single_mutation_edge_child(
+            replicate.parent, replicate.child, replicate.nodes_time, rng
+        )
+        derived_mask = _derived_mask(replicate, mutated_node)
+
+        # Vérification que le layout fourni correspond bien au ts
+        # _check_layout_matches(population_layout, ts)
+
+        genotypes_by_population = {
+            pop_name: derived_mask[sample_ids].astype(int).tolist()
             for pop_name, sample_ids in population_layout
         }
         yield genotypes_by_population
@@ -1039,15 +1097,42 @@ def with_maf_filter(
         [génotype, ...]}, tous au-dessus du seuil MAF.
     """
     if maf == 0.0:
-        tree_sequences = simulate_independent_loci(
-            demography, samples, num_loci=num_loci, seed=seed, ploidy=ploidy
-        )
-        yield from simulate_snp_genotypes(
-            tree_sequences,
-            seed=seed,
-            population_layout=None,
-            counts_per_sample=counts_per_sample,
-        )
+        if msprime.__version__ == _VERSION_MS_PRIME_LIGHT_REPLICATES:
+            replicates = simulate_light_replicates(
+                demography,
+                samples,
+                num_loci=num_loci,
+                seed=seed,
+                ploidy=ploidy,
+            )
+
+            tree_sequences = simulate_independent_loci(
+                demography, samples, num_loci=1, seed=seed, ploidy=ploidy
+            )
+            ts = next(tree_sequences)
+            population_layout = (
+                compute_sample_layout(ts, counts_per_sample)
+                if counts_per_sample is not None
+                else compute_population_layout(ts)
+            )
+            _check_layout_matches(population_layout, ts)
+
+            yield from simulate_snp_genotypes_from_light_replicates(
+                replicates,
+                seed,
+                population_layout=population_layout,
+            )
+            return
+        else:
+            tree_sequences = simulate_independent_loci(
+                demography, samples, num_loci=num_loci, seed=seed, ploidy=ploidy
+            )
+            yield from simulate_snp_genotypes(
+                tree_sequences,
+                seed=seed,
+                population_layout=None,
+                counts_per_sample=counts_per_sample,
+            )
         return
 
     # batch_size dérive num_loci -- voir _MAF_BATCH_SIZE pour la

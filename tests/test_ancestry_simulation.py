@@ -942,6 +942,119 @@ def test_with_maf_filter_equals_batched_reference_within_first_batch(
     assert via_filter == batched
 
 
+def _serial_and_sex_stratified_cases():
+    """Deux jeux dont le layout n'est PAS « une population = un bloc de noeuds ».
+
+    - sériel : UNE population échantillonnée à trois dates (temps non nuls),
+      donc trois échantillons (au sens DIYABC) pour une seule population ;
+    - façon `<X>` : deux populations, chacune décrite par DEUX `SampleSet`
+      (femelles de ploïdie 2, mâles de ploïdie 1), un seul échantillon chacune.
+
+    Returns:
+        Une liste de (nom, démographie, sample sets, effectifs par échantillon,
+        ploïdie du paramètre global, nombre de noeuds échantillons par
+        échantillon).
+    """
+    one_pop = msprime.Demography()
+    one_pop.add_population(name="pop1", initial_size=1000)
+
+    two_pops = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        two_pops.add_population(name=name, initial_size=1000)
+    two_pops.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+
+    return [
+        (
+            "serial",
+            one_pop,
+            [
+                msprime.SampleSet(4, "pop1", time=0),
+                msprime.SampleSet(4, "pop1", time=50),
+                msprime.SampleSet(4, "pop1", time=200),
+            ],
+            {"s1": 4, "s2": 4, "s3": 4},
+            2,
+            {"s1": 8, "s2": 8, "s3": 8},
+        ),
+        (
+            "x_like",
+            two_pops,
+            [
+                msprime.SampleSet(3, "pop1", ploidy=2),
+                msprime.SampleSet(2, "pop1", ploidy=1),
+                msprime.SampleSet(4, "pop2", ploidy=2),
+                msprime.SampleSet(1, "pop2", ploidy=1),
+            ],
+            {"pop1": 5, "pop2": 5},
+            1,
+            {"pop1": 8, "pop2": 9},
+        ),
+    ]
+
+
+@pytest.mark.parametrize("light_path", [True, False], ids=["leger", "repli"])
+@pytest.mark.parametrize("case", ["serial", "x_like"])
+def test_with_maf_filter_no_filter_equals_reference_on_serial_and_stratified(
+    monkeypatch, case, light_path
+):
+    """Sans filtre MAF (`maf=0.0`), `with_maf_filter` rend EXACTEMENT ce que
+    rendait l'ancien chemin (`simulate_independent_loci` +
+    `simulate_snp_genotypes`), y compris pour un échantillonnage sériel (une
+    population, plusieurs dates) et pour des `SampleSet` de ploïdies mixtes
+    (`<X>`), que `human` (un bloc par population) n'exerce pas.
+
+    `light_path=False` force la garde de version à échouer : c'est le repli sur
+    l'API publique de msprime, que plus aucun autre test n'atteint."""
+    (_, demography, sample_sets, counts, ploidy, nodes_per_sample) = next(
+        c for c in _serial_and_sex_stratified_cases() if c[0] == case
+    )
+    if not light_path:
+        monkeypatch.setattr(as_module, "_VERSION_MS_PRIME_LIGHT_REPLICATES", "0.0.0")
+
+    # Quel chemin est réellement emprunté ? (espion sur le générateur léger)
+    original = as_module.simulate_light_replicates
+    light_calls = []
+
+    def spy(*args, **kwargs):
+        light_calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(as_module, "simulate_light_replicates", spy)
+
+    num_loci = 12
+    result = list(
+        with_maf_filter(
+            demography,
+            sample_sets,
+            num_loci,
+            0.0,
+            321,
+            ploidy=ploidy,
+            counts_per_sample=counts,
+        )
+    )
+    reference = list(
+        _reference_with_maf_filter(
+            demography,
+            sample_sets,
+            num_loci,
+            0.0,
+            321,
+            ploidy=ploidy,
+            counts_per_sample=counts,
+        )
+    )
+
+    assert bool(light_calls) is light_path
+    assert result == reference
+    # Le layout a bien le bon découpage (sinon l'égalité ci-dessus pourrait
+    # tenir entre deux sorties fausses de la même façon).
+    assert len(result) == num_loci
+    for genotypes in result:
+        assert {name: len(g) for name, g in genotypes.items()} == nodes_per_sample
+        assert all(g in (0, 1) for gs in genotypes.values() for g in gs)
+
+
 @pytest.mark.parametrize("seed", [123, 456, 789])
 def test_with_maf_filter_shared_ancestry_matches_reference(
     header_text_te5_with_maf, monkeypatch, seed
