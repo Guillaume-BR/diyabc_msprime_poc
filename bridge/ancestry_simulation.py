@@ -514,7 +514,7 @@ class LightReplicate(NamedTuple):
 def simulate_light_replicates(
     demography: msprime.Demography,
     samples: dict[str, int] | list[msprime.SampleSet],
-    num_loci: int,
+    num_loci: int | None,
     seed: int,
     ploidy: int = 2,
 ) -> Iterator[LightReplicate]:
@@ -531,7 +531,7 @@ def simulate_light_replicates(
             build_sex_stratified_samples_argument_snp). Les deux formes
             sont transmises telles quelles à msprime.sim_ancestry, qui
             les accepte indifféremment.
-        num_loci: Le nombre de généalogies indépendantes à simuler.
+        num_loci: Le nombre de généalogies indépendantes à simuler. Peut-être None pour un flux infini de réplicats.
         seed: La graine de la simulation.
         ploidy: 2 (défaut) pour <A>, cohérent avec une transmission
             diploïde classique -- chaque "sample individual" de
@@ -565,7 +565,8 @@ def simulate_light_replicates(
     )
 
     nb_models = len(sim.models)
-    for _ in range(num_loci):
+    iterable = range(num_loci) if num_loci is not None else itertools.count()
+    for _ in iterable:
         if nb_models == 1:
             while True:
                 code = _msprime.Simulator.run(
@@ -1057,16 +1058,69 @@ def with_maf_filter(
     # (attempt_in_batch va de 0 à batch_size-1), quelle que soit la
     # taille du lot.
     batch_size = max(_MAF_BATCH_SIZE, num_loci // 4)
-    accepted_loci = 0
-    # Calculé à la première ts et mis en cache : la structure
-    # échantillons/noeuds ne dépend que de demography/samples, jamais de
-    # la topologie -- voir compute_population_layout.
-    population_layout = None
     batch_index = 0
+    accepted_loci = 0
+    population_layout = None
 
-    while accepted_loci < num_loci:
-        batch_seed = _locus_seed(seed, _MAF_BATCH_SEED_OFFSET, batch_index)
-        if msprime.__version__ != _VERSION_MS_PRIME_LIGHT_REPLICATES:
+    if msprime.__version__ == _VERSION_MS_PRIME_LIGHT_REPLICATES:
+        replicates = simulate_light_replicates(
+            demography,
+            samples,
+            num_loci=None,
+            seed=_locus_seed(seed, _MAF_BATCH_SEED_OFFSET, 0),
+            ploidy=ploidy,
+        )
+        for attempt, replicate in enumerate(replicates):
+            if population_layout is None:
+                # nécessaire pour pouvoir construire le layout des populations
+                tree_sequence = simulate_independent_loci(
+                    demography,
+                    samples,
+                    num_loci=1,
+                    seed=_locus_seed(seed, _MAF_REJECTION_SEED_OFFSET, attempt),
+                    ploidy=ploidy,
+                )
+                ts = next(tree_sequence)
+                population_layout = (
+                    compute_sample_layout(ts, counts_per_sample)
+                    if counts_per_sample is not None
+                    else compute_population_layout(ts)
+                )
+                # Une seule fois : le layout doit décrire les noeuds échantillons.
+                _check_layout_matches(population_layout, ts)
+                n_total = int(replicate.is_sample.sum())
+            rng = random.Random(
+                _locus_seed(
+                    seed,
+                    _MAF_REJECTION_SEED_OFFSET,
+                    attempt,
+                )
+            )
+            mutated_node = _draw_single_mutation_edge_child(
+                replicate.parent,
+                replicate.child,
+                replicate.nodes_time,
+                rng,
+            )
+            n_derived = _derived_count(replicate, mutated_node)
+            maf_observed = min(n_derived, n_total - n_derived) / n_total
+            if maf_observed >= maf:
+                mask = _derived_mask(replicate, mutated_node)
+                yield {
+                    pop_name: mask[sample_ids].astype(int).tolist()
+                    for pop_name, sample_ids in population_layout
+                }
+                accepted_loci += 1
+                if accepted_loci >= num_loci:
+                    return
+    else:
+        # Calculé à la première ts et mis en cache : la structure
+        # échantillons/noeuds ne dépend que de demography/samples, jamais de
+        # la topologie -- voir compute_population_layout.
+
+        while accepted_loci < num_loci:
+            batch_seed = _locus_seed(seed, _MAF_BATCH_SEED_OFFSET, batch_index)
+
             tree_sequences = simulate_independent_loci(
                 demography,
                 samples,
@@ -1098,59 +1152,6 @@ def with_maf_filter(
                     yield genotypes_from_mutated_node(
                         ts, tree, mutated_node, population_layout
                     )
-                    accepted_loci += 1
-                    if accepted_loci >= num_loci:
-                        return
-            batch_index += 1
-        else:
-            replicates = simulate_light_replicates(
-                demography,
-                samples,
-                num_loci=batch_size,
-                seed=batch_seed,
-                ploidy=ploidy,
-            )
-            for attempt_in_batch, replicate in enumerate(replicates):
-                if population_layout is None:
-                    # nécessaire pour pouvoir construire le layout des populations
-                    tree_sequence = simulate_independent_loci(
-                        demography,
-                        samples,
-                        num_loci=1,
-                        seed=batch_seed,
-                        ploidy=ploidy,
-                    )
-                    ts = next(tree_sequence)
-                    population_layout = (
-                        compute_sample_layout(ts, counts_per_sample)
-                        if counts_per_sample is not None
-                        else compute_population_layout(ts)
-                    )
-                    # Une seule fois : le layout doit décrire les noeuds échantillons.
-                    _check_layout_matches(population_layout, ts)
-                    n_total = int(replicate.is_sample.sum())
-
-                rng = random.Random(
-                    _locus_seed(
-                        seed,
-                        _MAF_REJECTION_SEED_OFFSET,
-                        batch_index * batch_size + attempt_in_batch,
-                    )
-                )
-                mutated_node = _draw_single_mutation_edge_child(
-                    replicate.parent,
-                    replicate.child,
-                    replicate.nodes_time,
-                    rng,
-                )
-                n_derived = _derived_count(replicate, mutated_node)
-                maf_observed = min(n_derived, n_total - n_derived) / n_total
-                if maf_observed >= maf:
-                    mask = _derived_mask(replicate, mutated_node)
-                    yield {
-                        pop_name: mask[sample_ids].astype(int).tolist()
-                        for pop_name, sample_ids in population_layout
-                    }
                     accepted_loci += 1
                     if accepted_loci >= num_loci:
                         return

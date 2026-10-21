@@ -517,6 +517,46 @@ def test_simulate_light_replicates_yields(header_text_te5_with_maf):
         assert hasattr(replicate, "is_sample")
 
 
+def test_simulate_light_replicates_with_none_loci(header_text_te5_with_maf):
+    """Vérifie que simulate_light_replicates renvoie un itérateur vide si
+    num_loci=0."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te5_with_maf, scenario_index=1, seed=42
+    )
+    samples = build_samples_argument(OBSERVED_SNP_FILE_TE5_WITH_MAF)
+    num_loci = 50
+    ploidy = 2
+
+    replicates = list(
+        simulate_light_replicates(
+            demography=demography,
+            samples=samples,
+            num_loci=num_loci,
+            seed=123,
+            ploidy=ploidy,
+        )
+    )
+
+    replicates_with_none = itertools.islice(
+        simulate_light_replicates(
+            demography=demography,
+            samples=samples,
+            num_loci=num_loci,
+            seed=123,
+            ploidy=ploidy,
+        ),
+        50,
+    )
+    liste_replicates_with_none = list(replicates_with_none)
+
+    assert len(liste_replicates_with_none) == len(replicates)
+    for rep1, rep2 in zip(liste_replicates_with_none, replicates, strict=True):
+        assert np.array_equal(rep1.parent, rep2.parent)
+        assert np.array_equal(rep1.child, rep2.child)
+        assert np.array_equal(rep1.nodes_time, rep2.nodes_time)
+        assert np.array_equal(rep1.is_sample, rep2.is_sample)
+
+
 @pytest.mark.parametrize("ploidy", [1, 2])
 def test_compare_light_replicates_with_reference(header_text_te5_with_maf, ploidy):
     """Vérifie que simulate_light_replicates renvoie exactement le même résultat
@@ -646,7 +686,70 @@ def _reference_with_maf_filter(
     *,
     counts_per_sample: dict[str, int] | None = None,
 ) -> Iterator[dict[str, list[int]]]:
-    """Oracle gardé pour vérification"""
+    """Oracle de `with_maf_filter` : UN SEUL flux d'arbres, API publique de msprime.
+
+    Une seule simulation à un nombre de réplicats énorme, consommée
+    paresseusement (seuls les arbres lus sont simulés), graine du lot 0 ; la
+    graine de mutation de la tentative `k` est celle de l'ancien lot, qui n'est
+    autre que le numéro global de la tentative."""
+    if maf == 0.0:
+        tree_sequences = simulate_independent_loci(
+            demography, samples, num_loci=num_loci, seed=seed, ploidy=ploidy
+        )
+        yield from simulate_snp_genotypes(
+            tree_sequences,
+            seed=seed,
+            population_layout=None,
+            counts_per_sample=counts_per_sample,
+        )
+        return
+
+    tree_sequences = simulate_independent_loci(
+        demography,
+        samples,
+        num_loci=10**9,
+        seed=_locus_seed(seed, _MAF_BATCH_SEED_OFFSET, 0),
+        ploidy=ploidy,
+    )
+    population_layout = None
+    accepted_loci = 0
+    for attempt, ts in enumerate(tree_sequences):
+        if population_layout is None:
+            population_layout = (
+                compute_sample_layout(ts, counts_per_sample)
+                if counts_per_sample is not None
+                else compute_population_layout(ts)
+            )
+        genotypes_by_population = next(
+            simulate_snp_genotypes(
+                [ts],
+                seed=_locus_seed(seed, _MAF_REJECTION_SEED_OFFSET, attempt),
+                population_layout=population_layout,
+            )
+        )
+        if observed_maf(genotypes_by_population) >= maf:
+            yield genotypes_by_population
+            accepted_loci += 1
+            if accepted_loci >= num_loci:
+                return
+
+
+def _reference_with_maf_filter_batched(
+    demography: msprime.Demography,
+    samples: dict[str, int] | list[msprime.SampleSet],
+    num_loci: int,
+    maf: float,
+    seed: int,
+    ploidy: int = 2,
+    *,
+    counts_per_sample: dict[str, int] | None = None,
+) -> Iterator[dict[str, list[int]]]:
+    """Ancien `with_maf_filter` : un `Simulator` NEUF par lot de `batch_size` arbres.
+
+    N'est plus la sortie de `with_maf_filter` que tant que la simulation tient
+    dans le PREMIER lot (au plus `batch_size` tentatives) : le chemin léger
+    poursuit ensuite le flux du lot 0 au lieu de repartir d'un simulateur neuf
+    à la graine du lot suivant (voir `_reference_with_maf_filter`)."""
     if maf == 0.0:
         tree_sequences = simulate_independent_loci(
             demography, samples, num_loci=num_loci, seed=seed, ploidy=ploidy
@@ -800,6 +903,43 @@ def test_with_maf_filter_matches_reference(header_text_te5_with_maf, monkeypatch
     list(as_module.with_maf_filter(demography, samples, num_loci, maf, seed, ploidy=1))
     assert len(replicates) > num_loci
     # assert all(tree is None for tree in trees)
+
+
+@pytest.mark.parametrize("seed", [123, 789])
+def test_with_maf_filter_equals_batched_reference_within_first_batch(
+    header_text_te5_with_maf, monkeypatch, seed
+):
+    """Tant que la particule tient dans le premier lot, le flux unique est
+    IDENTIQUE à l'ancien (un Simulator neuf par lot) : les particules courtes
+    n'ont pas bougé. Les graines 123 et 789 demandent 18 et 17 tentatives pour
+    un lot de 20 (voir le test de reprise pour un cas qui le dépasse)."""
+    demography, _ = build_random_demography_for_scenario_index(
+        header_text_te5_with_maf, scenario_index=1, seed=42
+    )
+    samples = build_samples_argument(OBSERVED_SNP_FILE_TE5_WITH_MAF)
+    num_loci, maf = 10, 0.1
+    batch_size = max(_MAF_BATCH_SIZE, num_loci // 4)
+
+    attempts = []
+    original = as_module._derived_count
+
+    def spy(replicate, node):
+        attempts.append(1)
+        return original(replicate, node)
+
+    monkeypatch.setattr(as_module, "_derived_count", spy)
+    via_filter = list(
+        with_maf_filter(demography, samples, num_loci, maf, seed, ploidy=1)
+    )
+
+    # Hypothèse du test, rendue explicite : des rejets, mais un seul lot.
+    assert num_loci < len(attempts) <= batch_size
+    batched = list(
+        _reference_with_maf_filter_batched(
+            demography, samples, num_loci, maf, seed, ploidy=1
+        )
+    )
+    assert via_filter == batched
 
 
 @pytest.mark.parametrize("seed", [123, 456, 789])
