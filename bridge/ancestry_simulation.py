@@ -582,6 +582,9 @@ def _derived_count(replicate: LightReplicate, node: int) -> int:
     on traite l'arête (parent, enfant), toutes les arêtes dont l'enfant est
     lui-même le parent ont déjà été traitées, son compte est donc final.
 
+    Sortie prématurée si un échantillon est une feuille, son compte est 1 sans
+    parcourir les autres arêtes.
+
     Args:
         replicate: Le réplicat light.
         node: L'ID du noeud dont on compte les échantillons.
@@ -591,6 +594,8 @@ def _derived_count(replicate: LightReplicate, node: int) -> int:
     """
     # Listes Python : indexer un ndarray par un scalaire numpy est ~3x plus
     # lent dans cette boucle de ~160 itérations.
+    if replicate.is_sample[node]:
+        return 1
     count = replicate.is_sample.astype(int).tolist()
     for parent, child in zip(
         replicate.parent.tolist(), replicate.child.tolist(), strict=True
