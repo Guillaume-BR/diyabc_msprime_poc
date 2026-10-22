@@ -384,7 +384,7 @@ def compute_summary_statistics_snp(
     stats_filter: str = "ALL",
     observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
 ) -> tuple[dict[str, float], dict[str, float]]:
-    """Calcule les statistiques résumées SNP/PoolSeq sur des données SIMULÉES.
+    """Calcule les statistiques résumées SNP IndSeq/PoolSeq sur des données SIMULÉES.
 
     Utilise nos formules Python validées (summary_statistics.py) --
     remplace la délégation au binaire C++ (subprocess + fichier .snp

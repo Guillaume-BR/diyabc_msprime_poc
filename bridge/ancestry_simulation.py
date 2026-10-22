@@ -869,7 +869,7 @@ def simulate_snp_genotypes(
             d'une particule sur 5000 loci (voir notes/exploration.md,
             entrée du 20/07/2026) -- le plus gros poste évitable du
             surcoût tskit par locus identifié dans cette investigation.
-        counts_per_sample: Les effectifs observés, UN PAR ÉCHANTILLON,
+        counts_per_sample: Les effectifs observés, UN PAR ÉCHANTILLON, pour chaque échantillon.
 
     Returns:
         Un itérateur de dicts {nom_population: [génotype, ...]} (un
@@ -1474,8 +1474,15 @@ def simulate_genotypes_for_locus_type(
             if sample_sets is not None
             else build_samples_argument(snp_file_path)
         )
+        # On rescale seulement si le sex ratio est différent de 0.5, afin d'éviter de convertir des entiers en flottants.
+        if sex_ratio == 0.5:
+            rescaled_demography = demography
+        else:
+            rescaled_demography = rescale_demography(
+                demography, coalescence_coefficient(locus_type, sex_ratio) / 4
+            )
         return with_maf_filter(
-            demography,
+            rescaled_demography,
             samples,
             num_loci,
             maf_ratio,
@@ -1918,9 +1925,15 @@ def simulate_poolseq_reads_with_mrc_filter(
         counts_per_sample = individual_counts
     if observed_reads_per_locus is None:
         observed_reads_per_locus = prepare_poolseq_observed_reads(context)
-
+    sex_ratio = context.sex_ratio
+    if sex_ratio == 0.5:
+        rescaled_demography = demography
+    else:
+        rescaled_demography = rescale_demography(
+            demography, coalescence_coefficient("A", sex_ratio) / 4
+        )
     return with_mrc_filter(
-        demography,
+        rescaled_demography,
         samples,
         num_loci,
         mrc,

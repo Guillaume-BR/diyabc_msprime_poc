@@ -2,6 +2,7 @@
 msprime.sim_ancestry, simulation de généalogies indépendantes par locus, et
 mutation Hudson (exactement une mutation par locus, toujours polymorphe)."""
 
+import dataclasses
 import itertools
 import types
 from collections.abc import Iterator
@@ -323,6 +324,80 @@ def test_simulate_genotypes_for_locus_type(snp_context_te5):
                 0,
                 1,
             }, f"Locus non polymorphe : {locus_genotypes}"
+
+
+@pytest.mark.parametrize("sex_ratio", [0.1, 0.3, 0.5, 0.7, 0.9])
+def test_simulate_genotypes_for_locus_type_rescales_autosomal_demography_by_sex_ratio(
+    snp_context_human, monkeypatch, sex_ratio
+):
+    # Création de notre démographie de test
+    demography = msprime.Demography()
+    demography.add_population(name="pop1", initial_size=1000)
+    demography.add_population(name="pop2", initial_size=2000)
+    demography.set_migration_rate("pop1", "pop2", 0.2)
+
+    # On espionne la fonction with_maf_filter pour capturer la démographie reçue
+    collect = {}
+
+    def spy(demography_received, *args, **kwargs):
+        collect["demography"] = demography_received
+        return iter(
+            ()
+        )  # retour bidon pour ne pas perturber le test, on ne s'intéresse pas au reste du résultat.
+        # On met qqchose qui ressemble au résultat attendu.
+
+    # On remplace la fonction with_maf_filter par notre espion pour contrôler la démographie reçue
+    monkeypatch.setattr(as_module, "with_maf_filter", spy)
+    simulate_genotypes_for_locus_type(
+        demography=demography,
+        locus_type="A",
+        context=dataclasses.replace(snp_context_human, sex_ratio=sex_ratio),
+        num_loci=5,
+        seed=42,
+    )
+
+    # On vérifie que la démographie reçue correspond bien à mes attentes.
+    facteur = 16 * sex_ratio * (1 - sex_ratio) / 4
+    demography_received = collect["demography"]
+    assert demography_received["pop1"].initial_size == pytest.approx(1000 * facteur)
+    assert demography_received["pop2"].initial_size == pytest.approx(2000 * facteur)
+
+
+@pytest.mark.parametrize("sex_ratio", [0.1, 0.3, 0.5, 0.7, 0.9])
+def test_simulate_poolseq_reads_with_mrc_filter_rescales_autosomal_demography_by_sex_ratio(
+    snp_context_te4, monkeypatch, sex_ratio
+):
+    # Création de notre démographie de test
+    demography = msprime.Demography()
+    demography.add_population(name="pop1", initial_size=1000)
+    demography.add_population(name="pop2", initial_size=2000)
+    demography.set_migration_rate("pop1", "pop2", 0.2)
+
+    # On espionne la fonction with_maf_filter pour capturer la démographie reçue
+    collect = {}
+
+    def spy(demography_received, *args, **kwargs):
+        collect["demography"] = demography_received
+        return iter(
+            ()
+        )  # retour bidon pour ne pas perturber le test, on ne s'intéresse pas au reste du résultat.
+        # On met qqchose qui ressemble au résultat attendu.
+
+    # On remplace la fonction with_maf_filter par notre espion pour contrôler la démographie reçue
+    monkeypatch.setattr(as_module, "with_mrc_filter", spy)
+    simulate_poolseq_reads_with_mrc_filter(
+        demography=demography,
+        context=dataclasses.replace(snp_context_te4, sex_ratio=sex_ratio),
+        observed_reads_per_locus=snp_context_te4.reads_observed,
+        num_loci=5,
+        seed=42,
+    )
+
+    # On vérifie que la démographie reçue correspond bien à mes attentes.
+    facteur = 16 * sex_ratio * (1 - sex_ratio) / 4
+    demography_received = collect["demography"]
+    assert demography_received["pop1"].initial_size == pytest.approx(1000 * facteur)
+    assert demography_received["pop2"].initial_size == pytest.approx(2000 * facteur)
 
 
 def _reference_compute_sample_layout(
