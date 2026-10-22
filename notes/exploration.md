@@ -5146,14 +5146,185 @@ sur la foi du 3,04 s, falsifiée par cette mesure).
 - **`<M>` et `<Y>`** (voir Open work dans `CLAUDE.md`) : le banc d'essai est prêt (une variante de header par
   type, 7 s de DIYABC, un rejeu). Pistes : échantillons de `<Y>` (mâles seuls), de `<M>`, mutation sur
   l'arbre partagé.
-- **`_derived_mask` limité aux arêtes dont le parent n'est pas plus jeune que le nœud muté**, et un
-  masque d'un seul nœud pour une feuille : 28 → 12,5 µs par locus, masques identiques sur 800 loci,
-  ~77 ms (6 %) d'une particule de `human`. Non fait. La même idée pour `_derived_count` : ~12 ms sur 136
-  côté MAF, au mieux quelques points.
+- **Fait le 22/10 : `_derived_mask` limité aux arêtes dont le parent n'est pas plus jeune que le nœud muté**
+  (un préfixe du tableau, car les arêtes sont triées par temps de parent ; `side="right"` est indispensable,
+  les arêtes des enfants du nœud ont son propre temps), **et masque d'un seul nœud pour une feuille** (48 %
+  des tirages). 30,7 → 23,6 µs avec le préfixe seul, → **16,5 µs** avec le cas feuille (800 loci réels de
+  `human`, masques identiques). Particule de `human`, mesure alternée contre `HEAD` : 1,23 / 1,22 / 1,18 s →
+  1,12 / 1,12 / 1,11 s (−5 à −9 %). Rien de mesurable sur la boucle MAF (127 contre 128 ms) : le masque n'y
+  tourne que pour les ~500 loci acceptés. Identité : `human`, `human_seriel`, `toy_example5`,
+  `toy_example3_500loci`. Contrôles de mutation : `side="left"` rend le test contre tskit rouge ; le cas
+  feuille n'est qu'une affaire de vitesse (aucun test ne peut rougir), à vérifier par la mesure. Étape de
+  méthode : le préfixe seul ne donnait que la moitié du gain, les conversions fixes (liste de 480 éléments,
+  retour en tableau) étaient le reste.
+- **Mesuré et écarté : le même préfixe dans `_derived_count`.** Sur 80 gènes il est plus lent (3,7 → 4,1 µs,
+  le coût fixe du `searchsorted` annule l'économie d'une boucle déjà courte). Croisement mesuré sur une
+  population constante : −82 % à 20 gènes, −39 % à 40, −17 % à 80, 0 % à 160 (318 arêtes), +1 % à 240, +3 %
+  à 320 ; sur la démographie à 4 populations de `human` : +17 % à 240 gènes (12,1 → 10,1 µs), mais la
+  fonction n'y est pas appelée (elle ne sert que dans la boucle MAF). Au mieux ~2 ms par particule, avec un
+  seuil qui dépend de la démographie : sous la limite de 1 ms par fonction ajoutée, laissé à la version
+  simple (cas feuille seul). Un deuxième branchement (seuil sur le nombre d'arêtes) a été envisagé et non fait.
+  Piège de la mesure : un contrôle de mutation sur `_derived_count` qui inclut les tests de boucle MAF
+  peut tourner sans fin (un compte faux empêche un locus d'atteindre le seuil et `with_maf_filter` retire
+  des mutations à l'infini) : toujours un `timeout`, et le seul test contre tskit.
 - Réutiliser un `Simulator` entre lots : −10 %, change le flux, exige un rejeu (voir étape 6 et section 3).
 - `seed_offset` pour le rejeu SNP (seule la chaîne MicroSat l'a).
 - Le benchmark à 1000 particules de `toy_example3_500loci` et de `human_seriel` n'a pas été relancé après
   l'appel direct de `run` et le flux unique ; les chiffres du tableau de `CLAUDE.md` pour ces deux lignes
   sont marqués comme tels.
-- Ménage : `draw_mutation_and_derived_count` et `genotypes_from_mutated_node` n'ont plus que le repli pour
-  appelant ; la ligne tronquée `counts_per_sample:` dans l'`Args:` de `simulate_snp_genotypes`.
+- Ménage : une ligne `counts_per_sample:` tronquée dans l'`Args:` de `simulate_snp_genotypes`. (Corrigé le 22/10 :
+  `draw_mutation_and_derived_count` et `genotypes_from_mutated_node` NE sont PAS du code mort : elles servent au repli
+  de `with_maf_filter` et, sans garde de version, au chemin principal de `with_maf_filter_shared_ancestry` (`<M>`/`<Y>`).)
+
+## 2026-10-22 — Le « défaut » `<M>`/`<Y>` est le mode de DIYABC (sex-ratio forcé à 0,5), et `<A>` ignore le sex-ratio
+
+Suite du 21/10 : les écarts par type (`<M>` −7 %, `<Y>` +9 %) ont une cause trouvée en lisant
+`DataC::loadfromfile` (`data.cpp:1636-1664`) et vérifiée par six rejeux et deux reftables frais.
+
+### 1. Ce que fait DIYABC
+
+- **Un `.snp.bin` existe** : `libin`, puis `cout << "sexratio=" << ...` (la valeur lue, 0,3), puis
+  **`this->sexratio = 0.5;`** puis `cal_coeffcoal`. Le `<NM=...>` du `.snp` est ignoré. Le journal affiche
+  `sexratio=0.3`, ce qui masque l'écrasement.
+- **Pas de `.snp.bin`** : lecture du `.snp` en texte, `cal_coeffcoal` avec le vrai sex-ratio, écriture du
+  binaire, **relecture** (`libin` rend 0,3), `cal_coeffcoal` à nouveau : vrai sex-ratio.
+- Le comportement dépend donc de l'existence du binaire : premier run vrai ratio, runs suivants 0,5.
+  Coefficients à 0,3 (`cal_coeffcoal`, `data.cpp:1589-1605`) : premier run `A` 16 s (1−s) = 3,36,
+  `X` 2,91, `Y` 0,6, `M` 1,4 ; runs suivants `A` 4, `X` 3, `Y` 1, `M` 1.
+
+### 2. Notre code
+
+`coalescence_coefficient` reproduit `cal_coeffcoal` et `X`/`Y`/`M` reçoivent
+`rescale_demography(coefficient / 2)` en ploïdie 1 avec le vrai sex-ratio. **`<A>` n'est pas remis à
+l'échelle** : il garde la démographie telle quelle, équivalente au coefficient 4 (sex-ratio 0,5).
+
+### 3. Les mesures (`toy_example5_with_maf`, sex-ratio 0,3, une variante de header par type, MAF actif)
+
+| Mode de DIYABC | `<A>` | `<X>` | `<M>` | `<Y>` |
+|---|---|---|---|---|
+| `.snp.bin` présent (0,5), nous à **0,3** | −0,02 % | +1,3 % | −7,0 à −7,8 % (3 reftables) | +8,5 à +10,3 % (3 reftables) |
+| `.snp.bin` présent (0,5), nous à **0,5** (`<NM=1NF>` dans une copie du `.snp`) | identique | −0,8 % | +0,8 / +0,2 / −0,2 % | −0,3 / +0,9 / −0,1 % |
+| conversion fraîche (0,3), nous à 0,3 | **−6,7 %, 37/50 colonnes, `FST*m` −6,9 %** | −0,02 % | +1,5 % (2/50) | −0,2 % (0/50) |
+
+Avec 0,5 de notre côté, les six reftables `<M>`/`<Y>` passent à 0 ou 1 colonne flaggée sur 50. Le défaut
+est `<A>` en mode premier run : le taux de coalescence par paire de DIYABC est `2 / (16 s (1−s) N)`
+(3,36 → 0,595/N) contre `1/(2N)` chez nous (0,5/N). Correction : `rescale_demography(coeff_A / 4)` en ploïdie 2,
+neutre à 0,5 (`human` et tous les `NM=1` restent identiques au bit).
+
+### 4. Pourquoi tout cela restait invisible
+
+- `human` et les jeux `NM=1` ont un sex-ratio de 0,5 : les deux modes coïncident.
+- Le jeu mixte masque tout : `<A>` (350 loci) domine et colle au mode 0,5, `<M>`/`<Y>` se compensent.
+- Les reftables de référence de la famille `toy_example5` ont été générés avec un `.snp.bin` résiduel ou non,
+  sans trace dans le dossier : le mode est inconnu. Le −2,65 % de `toy_example5` attribué au nombre de loci
+  est peut-être un effet du mode.
+- Mes premiers rejeux (avec `.snp.bin`) comparaient donc un DIYABC à 0,5 à un msprime à 0,3.
+
+### 5. Erreurs de méthode
+
+- J'ai présenté `<M>`/`<Y>` comme un « défaut de justesse » alors que c'était une comparaison de deux
+  modes. Le signal à lire plus tôt : l'écart de `<A>` à zéro, de `<X>` à +1 % (coefficient 3,0 contre 2,91),
+  de `<Y>` et `<M>` de signes opposés, comme `1,0 contre 0,6` et `1,0 contre 1,4`.
+- Les affirmations « les coefficients et le sex-ratio sont identiques à DIYABC » portaient sur notre
+  lecture du fichier, pas sur ce que DIYABC utilise réellement : à vérifier dans la valeur effective
+  appliquée (`cal_coeffcoal` après `loadfromfile`), pas dans l'affichage `sexratio=`.
+
+### 6. Décision à prendre
+
+Quel mode suivre ? (a) Le vrai sex-ratio (intention documentée, premier run sur un jeu converti à neuf) :
+corriger `<A>`. (b) Le mode binaire (sex-ratio 0,5) : ne plus tenir compte du `<NM=...>` pour les
+coefficients. (c) Les deux, par un paramètre explicite. Quel que soit le choix, regénérer la référence de
+`toy_example5` dans un mode connu (supprimer `*.snp.bin` et `*.snpbin.txt` avant, ou les laisser, mais le
+consigner).
+
+### 7. Décision et correction (22/10, suite)
+
+**Décision** : suivre le vrai sex-ratio du `.snp` (ce que fait DIYABC sur le run qui convertit le fichier).
+**Correction** : `<A>` est remis à l'échelle par `coalescence_coefficient("A", s) / 4` (ploïdie 2) dans la branche
+`"A"` de `simulate_genotypes_for_locus_type` (IndSeq) et dans `simulate_poolseq_reads_with_mrc_filter`
+(PoolSeq, qui reçoit déjà `context.sex_ratio`), avec une garde `sex_ratio == 0.5` qui évite de toucher aux tailles.
+
+**Vérifications d'identité (jeux à `NM=1`)** : IndSeq `human` (3900 valeurs), `human_seriel` (1300),
+`toy_example3_500loci` (3900) ; PoolSeq `toy_example4`, `toy_example4_hudson` (20 particules chacun),
+`toy_example4_seriel` (6), avec l'outil `scripts/compare_particles_snp_pool.py` (équivalent PoolSeq de
+`compare_particles_snp.py`) : tous identiques valeur par valeur. `toy_example5` (`NM=0,43`) change : 1482 valeurs
+sur 1530, c'est le but. Deux tests pytest protègent le facteur `16 s (1−s) / 4 = 0,84` à 0,3 (ajoutés le 22/10) :
+`test_simulate_genotypes_for_locus_type_rescales_autosomal_demography_by_sex_ratio` (espion sur `with_maf_filter`)
+et `test_simulate_poolseq_reads_with_mrc_filter_rescales_autosomal_demography_by_sex_ratio` (espion sur
+`with_mrc_filter`), qui lisent les tailles de la démographie reçue sans rien simuler. Contrôle de mutation croisé
+fait : `/ 4` → `/ 2` dans la branche IndSeq ne fait rougir que le premier, dans le chemin PoolSeq que le second.
+Le cas sex-ratio 0,5 (tailles inchangées, objet identique) n'est pas couvert par ces deux tests.
+
+**Validation contre DIYABC en conversion fraîche** (sex-ratio 0,3, 1000 particules, MAF actif, rejeu avec le
+code corrigé) :
+
+| Loci | Avant la correction | Après |
+|---|---|---|
+| `<A>` seuls (350) | −6,72 %, 37/50 colonnes, `FST*m` −6,93 % | **−0,03 %, 0/50**, `FST*m` +0,04 % |
+| `<X>` seuls (50) | −0,02 %, 0/50 | −0,02 %, 0/50 |
+| `<M>` seuls (50), trois reftables | +1,53 % (2/50) | +1,53 % (2/50), +0,52 % (0/50), +0,12 % (0/50) |
+| `<Y>` seuls (50) | −0,21 %, 0/50 | −0,21 %, 0/50 |
+| jeu mixte (350 `<A>` + 50 chacun) | | **−0,10 %, 0/50**, signes 34/50 (p = 0,015) |
+
+`<M>` à +1,5 % sur le premier reftable était du bruit (deux reftables indépendants de plus : +0,5 % et +0,1 %).
+
+**Pièges de cette étape** : le répertoire de travail de la session (`CLAUDE_JOB_DIR`) a changé en cours de route
+et les reftables DIYABC frais étaient restés dans l'ancien ; l'outil de comparaison PoolSeq avait trois champs du
+contexte qui divergeaient de la construction réelle (`sexes_per_sample` appelé sur un fichier sans colonne `SEX`,
+`observed_reads` sans le nombre de loci, `maf_ratio` à `None`) : recopier le bloc du vrai code plutôt que le
+réinventer champ par champ.
+
+**Fait ensuite (22/10, 16:01-16:09)** : références de `toy_example5` et `toy_example5_with_maf` régénérées par
+l'utilisateur sans `.snp.bin` (les fichiers `.snp.bin`, `.snpbin.txt`, `maf.txt` et `reftableRF.bin` portent la même
+minute). Rejeu de 1000 particules, 50 statistiques, priors appariés, arrondi à 6 décimales : `toy_example5` 0 colonne
+KS < 0,05, signes 21/50 (p = 0,32), médiane +0,09 % ; `toy_example5_with_maf` 0 colonne, signes 32/50 (p = 0,065),
+médiane −0,18 %. L'utilisateur a rapporté 28/50, p = 0,48, médiane −0,196 %, 0 colonne : même ordre de grandeur, le
+fichier ou le rejeu d'où viennent ses chiffres n'est pas celui des dossiers (non élucidé). Le −2,65 % de `toy_example5`
+n'est pas reproduit sur la référence régénérée (hypothèse, non prouvée : l'ancien reftable était en mode premier run
+et notre `<A>` n'était pas remis à l'échelle). **Boucle MAF finale validée sur `toy_example3_500loci` (22/10, 16:12-16:15)** : référence régénérée par l'utilisateur
+(`maf.txt`, `.snp.bin` et `reftableRF.bin` à la même minute, `maf = 0,05`, `NM=1`), 1000 particules, six scénarios,
+priors appariés. Mon calcul : 0 colonne KS < 0,05 sur 130 (plus petite p 0,20), signes 63/130 (p = 0,79), médiane
++0,01 %. Le calcul de l'utilisateur : 0 colonne, signes 55/127 (p = 0,155), médiane +0,070 % ; les 3 colonnes de
+différence ne sont pas identifiées (probablement des moyennes nulles écartées). Même conclusion, un seul reftable,
+pas de réplique avec `seed_offset`.
+
+**`human_seriel` validé avec le code final (22/10, 16:22-16:30)** : référence régénérée (`.snp.bin`, `maf.txt` et
+`reftableRF.bin` à la même minute, `MAF=hudson`, `NM=1`), 5000 `<A>` échantillonnés à quatre dates, deux scénarios
+(481 et 519 lignes), priors appariés. Mon calcul : 0 colonne KS < 0,05 sur 130 (plus petite p 0,078), signes
+50/130 négatifs (p = 0,011), médiane +0,037 %, |écart| médian 0,075 %, 90e centile 1,36 %. L'utilisateur : 41/130
+(p = 3,1e-5), médiane +0,075 %. Le test des signes est significatif, mais l'amplitude est inférieure à 0,1 %, du
+même ordre que le +0,05 % du 06/10 : le résidu lié au nombre de loci (CLAUDE.md, « Systematic negative bias »), de
+signe positif ici, sans colonne divergente. Le maximum de |écart| (216 %) tombe sur une colonne à moyenne proche
+de zéro (non identifiée), lecture en absolu à faire si on s'y intéresse. **Reste** : plusieurs reftables indépendants par jeu pour une
+réplique au sens du projet ; le PoolSeq à un sex-ratio différent de 0,5 n'a pas de jeu de référence dans le dépôt (les trois
+jeux PoolSeq ont `NM=1`) : il a été vérifié à la main par l'utilisateur le 22/10 sur `toy_example4` dont le
+`<NM=...>` avait été modifié, contre DIYABC sans `.snp.bin` (conversion fraîche) : « valeurs identiques ».
+Le sex-ratio retenu, le nombre de particules et le nombre de colonnes flaggées ne sont pas consignés ; à
+refaire proprement (outil `compare_particles_snp_pool.py` pour l'identité, rejeu appairé pour DIYABC) si on veut
+un chiffre citable.
+
+### 8. Benchmark complet du 22/10 et clôture des gains de vitesse
+
+Benchmark à 1000 particules, 16 workers, DIYABC relancé juste avant (`benchmark_results.csv` et
+`benchmark_diyabc_results.csv`, worktree `bench/timings`, 07:25-07:54), une exécution par ligne, avec le code qui
+contient tous les gains de la série (le rescale de `<A>` du 22/10 ajoute un `rescale_demography` par particule, sans
+effet mesurable) :
+
+| Cas | DIYABC | msprime | Ratio | Avant |
+|---|---|---|---|---|
+| IndSeq Hudson (`human`) | 116,5 s | 157,2 s | 1,35x | 1,8x |
+| IndSeq MAF > 0 (`toy_example3_500loci`) | 5,3 s | 19,7 s | 3,72x | 6,7x |
+| IndSeq sériel (`human_seriel`) | 146,2 s | 150,0 s | 1,03x | 1,6x |
+| PoolSeq Hudson / MRC > 0 / sériel | 26,2 / 86,7 / 524,9 s | 19,2 / 40,3 / 219,8 s | 0,73 / 0,47 / 0,42x | 0,79 / 0,44 / 0,40x |
+| DNA | 1,6 s | 12,3 s | 7,57x | 7,9x |
+| DNA sériel | 15,4 s (1,6 s le 07/10) | 30,8 s | 1,99x | 64x |
+| MicroSat / sériel | 2,1 / 2,2 s | 9,7 / 10,3 s | 4,59x / 4,66x | 8,9x / 9,8x |
+
+Le MicroSat (4,6x) valide l'estimation « ~4x » de la série du 15-19/10. **DNA sériel : le temps de DIYABC est dix fois
+supérieur à celui du 07/10 (15,4 s contre 1,6 s)** sans explication ; le ratio de 1,99x n'est pas interprétable
+avant de l'avoir comprise (réservé à une autre session). Les parts simulation / statistiques viennent de la somme
+des temps de workers : IndSeq et PoolSeq à plus de 98 % en simulation, MicroSat 50 / 50, DNA 64 / 36, DNA sériel 35 / 65.
+
+**Clôture IndSeq (22/10)** : plus de gain de vitesse disponible à sortie constante. Le reste est le coalescent de
+msprime (43 % de `human`) et la conversion de tables de son API publique (~23 %). Seule piste ouverte : réutiliser
+un `Simulator` entre lots (−10 %, change le flux, exigerait un rejeu), écartée.

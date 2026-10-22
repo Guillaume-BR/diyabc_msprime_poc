@@ -20,7 +20,7 @@ structurally and statistically equivalent to the real DIYABC's output.
 |---|---|---|
 | SNP IndSeq | complete, 130 stats | `human` (5000 loci), `toy_example3`, `toy_example5` |
 | SNP PoolSeq | complete | `toy_example4` |
-| Heritage `<A>/<H>/<X>/<Y>/<M>` (SNP) | complete, **but `<M>` and `<Y>` are off per type** (21/10) | `human`, `toy_example5`; per type on `toy_example5_with_maf`: `<A>` exact, `<X>` +1 %, `<M>` −7 %, `<Y>` +9 %, see Open work |
+| Heritage `<A>/<H>/<X>/<Y>/<M>` (SNP) | complete; real sex ratio followed, `<A>` rescaled (22/10) | `human`, `toy_example5`; per type and mixed on `toy_example5_with_maf` against DIYABC freshly converted (sex ratio 0.3): 0/50 flagged for `<A>`, `<X>`, `<Y>` and the mix |
 | MicroSat | complete, 11 stats + `AML` | `toy_example2_ms_dna_K2P`, `toy_example1_ms_modified` |
 | DNA sequences | complete, 13 stats; `JK`/`K2P`/`TN` all covered | `toy_example2_ms_dna_{JK,K2P,TN}` (5 loci/group, 2 runs each), `toy_example2_ms_dna_50loci_K2P` (50/group, 2 runs) — the **G2 `MPD`/`VPD` residual is a DIYABC bug, located to the line** (its `MPD` denominator drops loci the simulation left monomorphic), see Open work |
 | DNA sequences `<X>`/`<Y>` | implemented | synthetic fixture only — the real binary SIGSEGVs on this case |
@@ -64,7 +64,30 @@ is identical up to the first batch of attempts and **changes the tree stream bey
 **with the filter on** (`toy_example5_with_maf`, 1000 particles, 50 statistics, rectangular
 read): 11 KS flags (p < 0.05) after the change, 12 before, both led by the `FST*m` family, same
 sign-test median (−3.6 % / −3.5 %), i.e. neutral. The reference reftable first used for it was wrong, see Closed
-investigations ("`maf.txt`").
+investigations ("`maf.txt`"). **Final MAF code (light replicates, lean `run`, single stream, `_derived_mask` prefix, `<A>`
+rescale) re-replayed on 22/10 against a regenerated `toy_example3_500loci` reftable** (500 `<A>`, `maf = 0.05`, `NM=1`,
+converted in the same run: `maf.txt`, `.snp.bin` and `reftableRF.bin` share the minute; 1000 particles, six scenarios,
+priors paired): 0 KS flag out of 130 statistics (smallest p = 0.20), sign test 63/130 (p = 0.79), median +0.01 %
+by my count; the user reports 0 flag, 55/127 (p = 0.155), +0.070 % on 127 columns (3 columns not kept, which ones
+not recorded). One reftable, no `seed_offset` replica. **`human_seriel`** (5000 `<A>`, one population at four dates,
+`MAF=hudson`, regenerated 22/10 with `.snp.bin`, `maf.txt` and the reftable in the same minute; two scenarios, 1000
+particles, priors paired) with the final no-filter code: 0 KS flag out of 130 (smallest p = 0.078), sign test 50/130
+negative (p = 0.011), median `rdiff` +0.04 % by my count; the user reports 41/130 (p = 3.1e-5), +0.075 %. The sign test
+is significant but the amplitude is under 0.1 % (median |`rdiff`| 0.075 %), the same order as the +0.05 % of the
+06/10 validation: the loci-count residual, positive-signed here, not a defect.
+
+**Validation status after the 22/10 change (`<A>` rescaled by the real sex ratio).** Decision: follow the
+real `<NM=...>` (what a freshly converted dataset does in DIYABC). Neutral at sex ratio 0.5, so `human`,
+`human_seriel`, `toy_example3_500loci` (IndSeq) and `toy_example4`, `_hudson`, `_seriel` (PoolSeq,
+`scripts/compare_particles_snp_pool.py`) stay **bit-identical**; `toy_example5` changes (1482 of 1530 values).
+Paired replay against DIYABC freshly converted (no `.snp.bin`, sex ratio 0.3), `toy_example5_with_maf`,
+1000 particles: `<A>` −6.7 % (37/50 flagged) → **−0.03 % (0/50)**, `<X>` −0.02 % (0/50), `<Y>` −0.2 % (0/50),
+`<M>` +1.5 % / +0.5 % / +0.1 % on three independent reftables (2, 0, 0 flagged), and the **mixed header**
+(350 `<A>` + 50 each) −0.10 % (0/50, sign test 34/50, p = 0.015). One reftable per cell except `<M>`.
+**PoolSeq** at a sex ratio ≠ 0.5: `toy_example4` with its `<NM=...>` edited, DIYABC freshly converted (no `.snp.bin`),
+values reported identical by the user (sex ratio, particle count and flag count not recorded). The factor itself is
+guarded by two pytest spies (`..._rescales_autosomal_demography_by_sex_ratio`, IndSeq and PoolSeq, mutation `/ 4` →
+`/ 2` checked crosswise); the 0.5 case (sizes untouched) is not covered by them.
 
 Validation means a *paired* comparison: the real DIYABC priors are replayed
 particle-by-particle through our pipeline (`replay_reftable_simulation_snp*`,
@@ -555,7 +578,9 @@ locus/particle.
   a dataset with `maf > 0`, and after any edit of the first line of the `.snp`: delete the `*.snp.bin`
   and `*.snpbin.txt` of the folder** (or write `maf.txt` by hand), then check that `maf.txt` exists and
   holds the value, that the run prints `THIS->MAF=<value>` and that `reftable.log` ends in `END|n|`
-  (see Closed investigations, 21/10).
+  (see Closed investigations, 21/10). **Same file, second effect: with a `.snp.bin` present DIYABC also
+  forces the sex ratio to 0.5** (`data.cpp:1649`), so a reference generated that way follows the 0.5
+  coefficients whatever the `<NM=...>`; only a fresh conversion keeps the real ratio (Open work, 22/10).
 - **An independent replay needs a NEW DIYABC reftable, initialised in its own step.**
   `./diyabc -p ./ -n "t:16;s:<seed>;f:"` only writes `RNG_state_0000.bin` and exits; the `-R ALL ...`
   run is a second command. Three msprime seed sets against ONE DIYABC reftable are one replica: that
@@ -904,8 +929,16 @@ under the date given.
   Same inputs, regenerated with `maf.txt`: our replay agrees. The "7.2x" timing was the same
   artefact (filter-on msprime against filter-off DIYABC); the real ratio is 3.3x.
 - **"Persistent −3.5 % on `toy_example5_with_maf`" (21/10) — not established.** One DIYABC reftable
-  read with three msprime seed sets; a second DIYABC reftable shows no divergent column. What survives
-  is the per-type `<M>`/`<Y>` residual (Open work), which the mix hides.
+  read with three msprime seed sets; a second DIYABC reftable shows no divergent column. The per-type
+  `<M>`/`<Y>` residual seen next was DIYABC's sex-ratio mode, not a defect of ours (Open work, 22/10).
+
+- **Per-type `<M>`/`<Y>`/`<A>` residuals on `toy_example5_with_maf` (21-22/10) — DIYABC's sex-ratio mode plus
+  one real defect (`<A>` not rescaled), fixed.** `<M>` −7 % / `<Y>` +9 % came from comparing our 0.3 with a
+  DIYABC that had loaded a `.snp.bin` (forced 0.5): with `<NM=1NF>` on our side 6 reftables fall to 0-1 flagged
+  columns of 50. The real defect was `<A>` at a sex ratio ≠ 0.5 (pair rate `2 / (16 s (1 − s) N)` in DIYABC
+  against our `1 / (2 N)`), −6.7 % against a freshly converted DIYABC; fixed and validated (status above).
+  Claiming "the coefficients equal DIYABC's" from our reading of the file and from the `sexratio=` line of the
+  DIYABC log was the error: the value that counts is the one applied after `loadfromfile`.
 
 ## Domain knowledge
 
@@ -916,7 +949,8 @@ mutation. `<M>` and `<Y>` loci share a single genealogy across all loci of
 their type (`simulate_shared_ancestry_loci`, `particuleC.cpp:2422-2435`
 `GeneTreeM`/`GeneTreeY`). Non-`<A>` heritage types get a rescaled demography
 (`rescale_demography(coalescence_coefficient(heritage, sex_ratio) / 2)`) and
-`ploidy=1`. PoolSeq reads go through `with_mrc_filter` against a global pool.
+`ploidy=1`; `<A>` (ploidy 2, IndSeq and PoolSeq) is rescaled by `coalescence_coefficient("A", sex_ratio) / 4`
+(identity at sex ratio 0.5, where the factor is skipped). PoolSeq reads go through `with_mrc_filter` against a global pool.
 
 ### MicroSat
 
@@ -1228,7 +1262,7 @@ because DIYABC's own output depends on them.
   accumulators, duplicate `def` names, name shadowing, signature refactors)
   live in the persistent memory files, not here.
 
-## Performance — measured state (07/10; MicroSat 12/10; DNA and MicroSat 13-14/10; IndSeq 21/10)
+## Performance — measured state (**full 1000-particle benchmark of 22/10**, one run per row; `benchmark_results.csv` on `bench/timings`)
 
 Verdicts only; each case below is meant to be worked in its **own session**.
 Narrative and raw numbers: `notes/exploration.md`.
@@ -1242,17 +1276,17 @@ case: the variance is not measured.**
 
 | Case | Directory | Loci | DIYABC | msprime | msprime / DIYABC | msprime time: sim / stats |
 |---|---|---|---|---|---|---|
-| IndSeq Hudson | `human` | 5000 | 127 s (21/10) | **171 s** (238.4 s before 21/10; 291.6 s on 07/10) | **1.35x** | not re-measured |
-| IndSeq MAF > 0 | `toy_example3_500loci` | 500 | 5.9 s | 39.7 s before 21/10; **not re-run after the lean `run` and the single stream** (particle 265 → ~136 ms in-process) | **4.4x** (benchmark of 21/10 after the light replicates; 6.7x before) | not re-measured |
+| IndSeq Hudson | `human` | 5000 | 116.5 s | **157.2 s** (238.4 s before 21/10; 291.6 s on 07/10) | **1.35x** | 98.8 / 1.2 % |
+| IndSeq MAF > 0 | `toy_example3_500loci` | 500 | 5.3 s | **19.7 s** (39.7 s before 21/10) | **3.72x** (6.7x before) | 98.2 / 1.8 % |
 | IndSeq MAF > 0, `<X>/<M>/<Y>` | `toy_example5_with_maf` | 500 (350 `<A>`, 50 each) | 7.0 s (`-t 16`; 3.0 s **without** the filter, see Hard rules) | 23.0 s and 23.7 s (26.8 s at 8 workers) | **3.3x** | not re-measured |
-| IndSeq serial | `human_seriel` | 5000 | 141.7 s | 228.7 s (268.4 s); **not re-timed after 21/10**, identity-checked (10 particles) | ≤ 1.6x | 99.2 / 0.8 % |
-| PoolSeq Hudson | `toy_example4_hudson` | 100 | 28.6 s | 22.5 s (07/10, not re-run) | 0.79x | 98.7 / 1.3 % |
-| PoolSeq MRC > 0 | `toy_example4` | 100 | 93.5 s | 41.0 s (46.8 s) | 0.44x | 99.4 / 0.6 % |
-| PoolSeq serial | `toy_example4_seriel` | 1000 | 571.7 s | 228.8 s (255.4 s) | 0.40x | 99.8 / 0.2 % |
-| DNA | `toy_example2_ms_dna_50loci_TN` | 110 | 1.7 s | **13.4 s** (104.1 s on 07/10; 16.4 s at the 14/10 morning benchmark) | **7.9x** | ~63 / 34 % (one particle, 14/10) |
-| DNA serial | `..._50loci_TN_seriel` | 110 | 1.6 s | 104.1 s (07/10, not re-run) | 64x | 74 / 26 % |
-| MicroSat | `toy_example1_ms_modified` | 50 | 2.3 s | **20.4 s** (41.0 s on 12/10, 228.7 s before; **not re-run after 15-16/10**, particle 133 → ~66 ms in-process) | **8.9x** | 44 / 56 % |
-| MicroSat serial | `toy_example1_ms_seriel` | 50 | 2.4 s | **23.6 s** (256.7 s on 07/10) | **9.8x** | 38 / 62 % |
+| IndSeq serial | `human_seriel` | 5000 | 146.2 s | **150.0 s** (228.7 s before 21/10) | **1.03x** (1.6x before) | 98.7 / 1.3 % |
+| PoolSeq Hudson | `toy_example4_hudson` | 100 | 26.2 s | 19.2 s | 0.73x | 98.6 / 1.4 % |
+| PoolSeq MRC > 0 | `toy_example4` | 100 | 86.7 s | 40.3 s | 0.47x | 99.4 / 0.6 % |
+| PoolSeq serial | `toy_example4_seriel` | 1000 | 524.9 s | 219.8 s | 0.42x | 99.8 / 0.2 % |
+| DNA | `toy_example2_ms_dna_50loci_TN` | 110 | 1.6 s | **12.3 s** (13.4 s on 14/10; 104.1 s on 07/10) | **7.57x** | 63.7 / 36.3 % |
+| DNA serial | `..._50loci_TN_seriel` | 110 | **15.4 s — 1.6 s on 07/10, 10x longer, unexplained; do not read the ratio until it is** | **30.8 s** (104.1 s on 07/10) | 1.99x (≈ 19x against the old 1.6 s) | 35.2 / 64.8 % |
+| MicroSat | `toy_example1_ms_modified` | 50 | 2.1 s | **9.7 s** (20.4 s on 12-14/10; 228.7 s before) | **4.59x** (8.9x before) | 49.9 / 50.1 % |
+| MicroSat serial | `toy_example1_ms_seriel` | 50 | 2.2 s | **10.3 s** (23.6 s on 12-14/10; 256.7 s on 07/10) | **4.66x** (9.8x before) | 47.2 / 52.8 % |
 
 The 14/10 morning benchmark (`benchmark_results.csv` on `bench/timings`) ran the code
 with the `<A>` batching and the shared `<M>` tree, **before** the DNA statistics work of
@@ -1268,17 +1302,23 @@ isolated (candidates: `record_provenance=False` on every `sim_ancestry` /
 - Per-particle seconds measured at 16 workers are inflated by hyperthreading:
   trust shares and ratios, not the absolute cost of a particle (use a
   `max_workers=1` run for that).
-- **IndSeq (21/10), verdict: done.** `human` 1.8x → **1.35x**, MAF > 0 6.7x → 3.3-4.4x (levers in Closed
-  investigations). What is left per particle is msprime's own: on `human` `Simulator.run` 43 %,
-  `finalise_tables` + `reset` + `asdict` ~23 %, `_derived_mask` 11 % (the only part that is ours);
+- **IndSeq (21/10), verdict: done.** `human` 1.8x → **1.35x**, MAF > 0 6.7x → **3.72x**, serial 1.6x → **1.03x**
+  (benchmark 22/10; levers in Closed investigations). What is left per particle is msprime's own: on `human` `Simulator.run` 43 %,
+  `finalise_tables` + `reset` + `asdict` ~23 %, `_derived_mask` 11 % before its fix (the only part that is ours);
   on the MAF loop `Simulator.run` 26 %, table conversion 18 %, `_locus_seed` + `Random(seed)` ~10 %
   (they define the stream, do not touch). **Per core, DIYABC does a particle of `toy_example5_with_maf`
   in ~48 ms of CPU and we need ~166 ms (3.5x)**; one tree costs us ~110 µs of which the C
-  coalescent is ~50, DIYABC's whole pipeline ~32. Going lower means leaving msprime. **Not done, in
-  order of value**: `_derived_mask` limited to the edges whose parent is not younger than the mutated
-  node (+ a one-node mask for a leaf): 28 → 12.5 µs per locus, masks identical on 800 loci, ~77 ms (6 %)
-  of a `human` particle; reusing one `Simulator` across batches (−10 %, changes the stream, see the
-  falsified reuse above). 8 physical cores: 16 workers gain only 8-17 % over 8, for DIYABC (7.6 → 7.0 s)
+  coalescent is ~50, DIYABC's whole pipeline ~32. Going lower means leaving msprime. **Done 22/10**:
+  `_derived_mask` returns a one-node mask for a sample node and scans only the edges whose parent is not
+  younger than the mutated node (a prefix, since edges are sorted by parent time; `side="right"` is
+  load-bearing: the node's own child edges have its time): 30.7 → 16.5 µs per locus (leaf case alone
+  saves as much as the prefix), masks identical on 800 loci, `human` particle 1.18-1.23 → 1.09-1.12 s
+  (−5 to −9 %), nothing measurable on the MAF loop (the mask only runs for the ~500 accepted loci).
+  **Measured and dropped**: the same prefix in `_derived_count` — slower on 80 genes (3.7 → 4.1 µs),
+  break-even near 160 genes (318 edges, one constant-size population), +17 % at 240 genes on the
+  4-population `human` demography, where the function is not even called; ~2 ms per particle at best
+  for a threshold that depends on the demography. **Not done**: reusing one `Simulator` across batches
+  (−10 %, changes the stream, see the falsified reuse above). 8 physical cores: 16 workers gain only 8-17 % over 8, for DIYABC (7.6 → 7.0 s)
   as for us (26.8 → 23 s); **no parallelism problem**.
 - **SNP IndSeq: the simulation is everything (07/10 state).** On `human`, ~93 % of a particle
   is in `simulate_snp_genotypes`, ~40 % of it the per-locus `TreeSequence`
@@ -1427,9 +1467,7 @@ arithmetic-order risk: the 24 `AML` triplets bisected in lock-step, `LIK` per lo
 loci and 30 particles) saved only 0.8 ms in situ, 1.2 % of a particle, for three more functions, a
 fallback branch and a dozen tests; rule kept: below ~1 ms per particle a new function is not worth it), the matrices of several loci in
 one 3-D array. Small exact ones: ~1 ms each (the 8 small statistics, the per-individual
-tuples of the shared reads). **Not re-run: the 1 000-particle replay** (table above is
-the 12-14/10 one; estimate, not measurement: 1 000 x 66 ms / 8 cores ~ 8-10 s, ~4x
-DIYABC; `scripts/benchmark_1000.py`, alone on the machine). Per-statistic timer:
+tuples of the shared reads). **Measured 22/10: 9.7 s against DIYABC 2.1 s, 4.59x** (the 8-10 s, ~4x estimate held). Per-statistic timer:
 `scripts/bench_time_stats.py`; the simulation split (patching the outer functions
 `build_matrix_microsat_per_locus`, `_simulate_ancestries_for_loci`,
 `msprime.sim_mutations`) was not kept as a script. (2)-(3) IndSeq (MAF > 0, Hudson, serial): **closed on 21/10**, see the IndSeq verdict above. (4) PoolSeq: none. (5) DNA: see the verdict above.
@@ -1538,18 +1576,21 @@ the worktree exists for that.
 
 ## Open work
 
-- **`<M>` and `<Y>` loci are wrong per type, in opposite directions, and the mix hides it (21/10).**
-  `toy_example5_with_maf` (sex ratio 0.3), paired replay, one locus type at a time, MAF on, 1000
-  particles, **four independent DIYABC reftables per type**: `<A>` (350 loci) 0/50 columns flagged,
-  median −0.02 %; `<X>` (50) 1/50, +1.3 %; **`<M>` (50) −7.0 to −7.8 %** and **`<Y>` (50) +8.5 to +10.3 %**
-  with 39-45/50 columns flagged and `FST*m` at −7/−9 % and +12/+13 %. Larger without the filter
-  (−10 % and +14 %), and **identical with the code of 78b33ea**: not a regression, not the MAF. Ruled
-  out: `coalescence_coefficient` (the four formulas equal `cal_coeffcoal`) and the sex ratio (0.3 on
-  both sides). Candidates: the samples given to `<Y>` (males only, `build_male_only_samples_argument_snp`)
-  and `<M>`, or the mutation drawn on the shared tree. Bench ready: header with one locus type
-  (`50 <M>` etc., the observed file only has 100 of each haploid type, DIYABC refuses more), DIYABC run
-  per variant (7 s), our replay, `rewrite_real_reftable_txt`. The mixed header passes (second DIYABC
-  reftable: no divergent column) because the two errors nearly cancel at this sex ratio and mix.
+- **DIYABC's sex-ratio mode (22/10) — we follow the real ratio; `toy_example5` is validated in that mode.**
+  DIYABC forces `this->sexratio = 0.5` when it loads an existing `.snp.bin` (`data.cpp:1636-1642`) and keeps the
+  real `<NM=...>` only on the run that converts the `.snp` (1644-1664); coefficients at 0.3: first run `A` 3.36,
+  `X` 2.91, `Y` 0.6, `M` 1.4; later runs `A` 4, `X` 3, `Y` 1, `M` 1. `<A>` is rescaled by
+  `coalescence_coefficient("A", s) / 4` (ploidy 2, skipped when `s == 0.5`) in `simulate_genotypes_for_locus_type`
+  and `simulate_poolseq_reads_with_mrc_filter`. The 0.5 mode shows up against us as `<M>` −7 %, `<Y>` +9 % (and
+  `<A>` exact); a reference to validate a dataset with `NM != 1` must be regenerated with no
+  `.snp.bin`/`.snpbin.txt` in the folder (Hard rules). **Done 22/10**: `reference/toy_example5` and
+  `reference/toy_example5_with_maf` regenerated that way (`.snp.bin`, `maf.txt` and `reftableRF.bin` carry the same
+  minute, i.e. converted in the same run); replay of the 1000 particles, 50 statistics, priors paired, rounded to
+  6 decimals: `toy_example5` 0 KS flag, sign 21/50, median +0.09 %; `toy_example5_with_maf` 0 flag, sign 32/50
+  (p = 0.065), median −0.18 %. The −2.65 % of `toy_example5` (70 loci) filed under "Systematic negative bias" is
+  **not reproduced** on the regenerated reference; it is consistent with the old reftable being in the
+  first-run mode while our `<A>` was not rescaled (ours would sit low), but the old reftable's mode is not
+  recorded, so that is a hypothesis, not a verdict.
 - **The SNP replay has no `seed_offset`** (only the MicroSat chain does); the 21/10 tests patched
   `compute_summary_statistics_snp_from_values` from outside to add it. Add it to
   `replay_reftable_simulation_snp` the way MicroSat has it.
