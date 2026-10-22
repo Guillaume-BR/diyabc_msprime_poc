@@ -1071,6 +1071,7 @@ def _run_single_particle_snp_from_values(
     num_loci: int | None = None,
     observed_reads_per_locus: list[dict[str, tuple[int, int]]] = None,
     stats_filter: str,
+    seed_offset: int = 0,
 ) -> ParticleResult:
     """Variante de _run_single_particle_snp qui NE TIRE AUCUN paramètre.
 
@@ -1089,11 +1090,12 @@ def _run_single_particle_snp_from_values(
         num_loci: Voir pipeline.compute_summary_statistics_snp_from_values.
         observed_reads_per_locus: PoolSeq uniquement.
         stats_filter: "ALL" ou "HEADER".
+        seed_offset: Le décalage de la graine pour le tirage aléatoire.
 
     Returns:
         Le ParticleResult de cette particule.
     """
-    seed = particle_index + 1
+    seed = particle_index + 1 + seed_offset
     summary_statistics = compute_summary_statistics_snp_from_values(
         context=context,
         scenario_index=scenario_index,
@@ -1120,6 +1122,7 @@ def replay_reftable_simulation_snp(
     num_loci: int | None = None,
     stats_filter: str = "ALL",
     max_workers: int | None = None,
+    seed_offset: int = 0,
 ) -> list[ParticleResult]:
     """Rejoue, particule par particule, les tirages de paramètres RÉELLEMENT
     effectués par DIYABC.
@@ -1144,6 +1147,7 @@ def replay_reftable_simulation_snp(
         num_loci: Voir pipeline.compute_summary_statistics_snp_from_values.
         stats_filter: "ALL" ou "HEADER".
         max_workers: Le nombre de process en parallèle.
+        seed_offset: Le décalage de la graine pour le tirage aléatoire.
 
     Returns:
         Les ParticleResult dans le MÊME ORDRE que les lignes du fichier
@@ -1204,6 +1208,7 @@ def replay_reftable_simulation_snp(
                 values,
                 num_loci=num_loci,
                 stats_filter=stats_filter,
+                seed_offset=seed_offset,
             ): particle_index
             for particle_index, (scenario_index, values) in enumerate(rows)
         }
@@ -1521,6 +1526,7 @@ def _run_single_particle_dna_from_values(
     group_priors_values: dict[str, float],
     *,
     stats_filter: str,
+    seed_offset: int = 0,
 ) -> ParticleResult:
     """Variante de _run_single_particle_dna qui NE TIRE AUCUN paramètre.
 
@@ -1540,11 +1546,12 @@ def _run_single_particle_dna_from_values(
             connues, {nom_colonne: valeur} (voir
             compute_summary_statistics_dna_from_values).
         stats_filter: "ALL" ou "HEADER".
+        seed_offset: Le décalage de la graine pour le tirage aléatoire.
 
     Returns:
         Le ParticleResult de cette particule.
     """
-    seed = particle_index + 1
+    seed = particle_index + 1 + seed_offset
     summary_statistics = compute_summary_statistics_dna_from_values(
         context=context,
         scenario_index=scenario_index,
@@ -1570,6 +1577,7 @@ def replay_reftable_simulation_dna(
     real_reftable_path: str | Path,
     stats_filter: str = "ALL",
     max_workers: int | None = None,
+    seed_offset: int = 0,
 ) -> list[ParticleResult]:
     """Rejoue, particule par particule, les tirages RÉELS de DIYABC (équivalent
     ADN de replay_reftable_simulation).
@@ -1638,6 +1646,7 @@ def replay_reftable_simulation_dna(
                 values,
                 group_priors_values,
                 stats_filter=stats_filter,
+                seed_offset=seed_offset,
             ): particle_index
             for particle_index, (
                 scenario_index,
