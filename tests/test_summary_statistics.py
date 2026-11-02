@@ -1,5 +1,6 @@
 import dataclasses
 import itertools
+import math
 
 import msprime
 import numpy as np
@@ -38,6 +39,10 @@ from bridge.summary_statistics import (
     _focal_genotype_frequencies,
     _genotype_matrix_by_sample,
     _genotypes_by_sample_and_individuals,
+    _haplotype_ids_by_sample,
+    _haplotype_ids_by_sample_and_individuals,
+    _haplotype_ids_from_matrix,
+    _haplotype_ids_per_node,
     _individuals_by_sample,
     _length_by_sample,
     _length_by_sample_and_individuals,
@@ -46,6 +51,7 @@ from bridge.summary_statistics import (
     _pairwise_distances_per_locus,
     _pairwise_hamming_distances,
     _parental_frequencies_with_cache,
+    _parents_are_polymorphic,
     _pool_allele_counts_for_two_samples,
     _prepare_matrices_poolseq,
     _prepared_parental_frequencies,
@@ -73,6 +79,7 @@ from bridge.summary_statistics import (
     compute_NS2,
     compute_NSS,
     compute_PSS,
+    compute_SML,
     compute_V2P,
     compute_VAR,
     compute_VNS,
@@ -1110,6 +1117,213 @@ def test_mean_hst_per_group_pairwize(dna_context_te2):
     assert mean_g3 == {"1.2": pytest.approx(0.05447581217193929)}
 
 
+# ---------------------------------------------------------------------------
+# Tests concernant la statistique SML
+# ---------------------------------------------------------------------------
+
+
+def _ts_from_genotype_matrix(genotypes: np.ndarray) -> tskit.TreeSequence:
+    """Fabrique à la main un TreeSequence dont `genotype_matrix()` a la même
+    égalité de colonnes que `genotypes`.
+
+    Arbre en étoile : n nœuds échantillons (0..n-1) sous une racine. Au site s,
+    le nœud k (un individu haploïde chacun) reçoit une mutation d'état dérivé str(genotypes[s, k]) quand cette
+    valeur n'est pas 0 (0 = état ancestral). Les numéros d'allèle de tskit
+    peuvent différer de `genotypes`, mais deux nœuds ont la même valeur dans
+    `genotypes` si et seulement si ils ont le même allèle dans le TreeSequence.
+
+    Args:
+        genotypes: Matrice d'entiers (n_sites, n_samples), au moins 1 site.
+
+    Returns:
+        Le TreeSequence, de longueur n_sites.
+    """
+    n_sites, n_samples = genotypes.shape
+    length = n_sites
+    tables = tskit.TableCollection(sequence_length=length)
+    for _ in range(n_samples):
+        individual = tables.individuals.add_row()  # un individu haploïde par nœud
+        tables.nodes.add_row(flags=tskit.NODE_IS_SAMPLE, time=0, individual=individual)
+    root = tables.nodes.add_row(flags=0, time=1)
+    for child in range(n_samples):
+        tables.edges.add_row(left=0, right=length, parent=root, child=child)
+    for site in range(n_sites):
+        site_id = tables.sites.add_row(position=site, ancestral_state="0")
+        for node in range(n_samples):
+            if genotypes[site, node] != 0:
+                tables.mutations.add_row(
+                    site=site_id, node=node, derived_state=str(genotypes[site, node])
+                )
+    tables.sort()
+    return tables.tree_sequence()
+
+
+def _assert_same_id_iff_same_column(
+    tree_sequence: tskit.TreeSequence, ids: np.ndarray
+) -> None:
+    """Deux nœuds ont le même id si et seulement si leurs colonnes de
+    `genotype_matrix()` sont égales."""
+    matrix = tree_sequence.genotype_matrix()
+    for i, j in itertools.combinations(range(tree_sequence.num_samples), 2):
+        same_column = bool((matrix[:, i] == matrix[:, j]).all())
+        assert (ids[i] == ids[j]) == same_column
+
+
+# 3 sites, 10 nœuds : A = nœuds 0-4, B = nœuds 5-6, C = nœuds 7-9.
+# Les colonnes 0 et 3 sont égales (deux nœuds de A) ; les 8 autres sont uniques.
+_GENOTYPES_SML = np.array(
+    [
+        [0, 2, 2, 0, 0, 2, 0, 3, 1, 2],
+        [1, 1, 0, 1, 1, 2, 2, 0, 0, 3],
+        [2, 3, 2, 2, 3, 2, 2, 1, 3, 3],
+    ]
+)
+_LAYOUT_SML = [
+    ("A", np.arange(0, 5)),
+    ("B", np.arange(5, 7)),
+    ("C", np.arange(7, 10)),
+]
+
+
+def _concatenated_ids(result: dict[str, np.ndarray]) -> np.ndarray:
+    return np.concatenate([result[name] for name in ("A", "B", "C")])
+
+
+def test_haplotype_ids_by_sample_same_column_same_id():
+    """Les ids suivent l'égalité des colonnes, sans dépendre de la numérotation."""
+    ts = _ts_from_genotype_matrix(_GENOTYPES_SML)
+    result = _haplotype_ids_by_sample(ts, layout=_LAYOUT_SML)
+    ids = _concatenated_ids(result)
+    _assert_same_id_iff_same_column(ts, ids)
+    assert ids[0] == ids[3]
+    assert len(set(ids)) == 9
+    assert [len(result[name]) for name in ("A", "B", "C")] == [5, 2, 3]
+
+
+def test_haplotype_ids_by_sample_numbering_shared_between_samples():
+    """Un même haplotype reçoit le même id dans deux échantillons différents :
+    la numérotation est commune à tout le locus, pas faite échantillon par échantillon."""
+    genotypes = _GENOTYPES_SML.copy()
+    genotypes[:, 6] = genotypes[:, 0]  # nœud 6 (B) = nœud 0 (A)
+    ts = _ts_from_genotype_matrix(genotypes)
+    result = _haplotype_ids_by_sample(ts, layout=_LAYOUT_SML)
+    assert result["A"][0] == result["B"][1]
+    assert result["A"][0] == result["A"][3]
+    assert len(set(_concatenated_ids(result))) == 8
+    _assert_same_id_iff_same_column(ts, _concatenated_ids(result))
+
+
+def test_haplotype_ids_by_sample_and_individuals_keeps_true_ploidy():
+    """Un tuple à 2 ids par individu diploïde, à 1 id par individu haploïde.
+
+    L'attendu est relu individu par individu avec l'API tskit (`ts.individual`),
+    sans passer par `individuals_nodes` que la fonction utilise.
+    """
+    ts = msprime.sim_ancestry(
+        [msprime.SampleSet(2, ploidy=2), msprime.SampleSet(2, ploidy=1)],
+        population_size=1000,
+        sequence_length=50,
+        random_seed=1,
+    )
+    ts = msprime.sim_mutations(ts, rate=1e-3, random_seed=2)
+    assert ts.num_sites > 0
+    layout = [("A", np.arange(0, 4)), ("B", np.arange(4, 6))]
+
+    result = _haplotype_ids_by_sample_and_individuals(ts, layout=layout)
+
+    ids = _haplotype_ids_per_node(ts)
+    expected = [tuple(int(ids[n]) for n in ind.nodes) for ind in ts.individuals()]
+    assert result["A"] == expected[:2]
+    assert result["B"] == expected[2:]
+    assert [len(t) for t in result["A"]] == [2, 2]
+    assert [len(t) for t in result["B"]] == [1, 1]
+
+
+def test_parents_are_polymorphic_follows_cal_aml3p_guard():
+    """La garde de SML ne regarde que les deux parents, réunis, et un seul
+    locus polymorphe suffit ; le focal n'intervient pas."""
+    # (length_by_sample, genotypes_by_sample) par locus ; seuls les ids comptent.
+    same = ({"P1": [(0, 3)], "P2": [(0, 2)], "F": [(7, 4)]}, {})
+    assert not _parents_are_polymorphic([same, same], "P1", "P2")
+
+    # Parents monomorphes chacun, mais différents l'un de l'autre.
+    differ = ({"P1": [(0, 3)], "P2": [(1, 2)], "F": [(0, 4)]}, {})
+    assert _parents_are_polymorphic([differ], "P1", "P2")
+
+    # Un seul parent polymorphe suffit (deux ids chez P1, un seul chez P2).
+    one_poly = ({"P1": [(0, 1), (1, 2)], "P2": [(0, 2)]}, {})
+    assert _parents_are_polymorphic([one_poly], "P1", "P2")
+
+    # Un locus polymorphe parmi plusieurs monomorphes suffit.
+    assert _parents_are_polymorphic([same, same, differ], "P1", "P2")
+
+    # Un parent absent du locus ne compte pas comme polymorphe.
+    assert not _parents_are_polymorphic([({"P1": [(0, 3)]}, {})], "P1", "P2")
+
+
+def _haploid_ts_from_haplotypes(haplotypes: list[int]) -> tskit.TreeSequence:
+    """TreeSequence haploïde à un site dont le nœud k porte l'allèle haplotypes[k]."""
+    return _ts_from_genotype_matrix(np.array([haplotypes]))
+
+
+def test_compute_SML_bounds_and_guard():
+    """Bornes de la bissection et garde, sur des haplotypes faits à la main.
+
+    Deux échantillons parentaux P1 (haplotype 1 partout) et P2 (haplotype 2
+    partout), un focal F : un focal qui ne porte que l'haplotype de P1 donne
+    a = 1, celui de P2 donne a = 0 ; avec deux parents identiques, la garde
+    renvoie 0,5 quelle que soit la graine.
+    """
+    layout = [("F", np.arange(0, 3)), ("P1", np.arange(3, 6)), ("P2", np.arange(6, 9))]
+    names = ["F", "P1", "P2"]
+
+    def sml(haplotypes, seed=0):
+        ts = _haploid_ts_from_haplotypes(haplotypes)
+        return compute_SML([ts], names, seed, layouts=[layout])["1.2.3"]
+
+    assert sml([1, 1, 1, 1, 1, 1, 2, 2, 2]) == 1.0  # focal = P1
+    assert sml([2, 2, 2, 1, 1, 1, 2, 2, 2]) == 0.0  # focal = P2
+    # Parents identiques (même haplotype partout) : garde, indépendante de la graine.
+    assert sml([1, 2, 1, 1, 1, 1, 1, 1, 1], seed=1) == 0.5
+    assert sml([1, 2, 1, 1, 1, 1, 1, 1, 1], seed=2) == 0.5
+
+
+@pytest.mark.parametrize("n_sites", [1, 7, 31, 32, 100])
+def test_haplotype_ids_from_matrix_multi_block_matches_unique(n_sites):
+    """Numérotation en base K par blocs de sites : mêmes partitions que
+    `np.unique(axis=1)`, y compris quand les sites dépassent un bloc (K = 4 :
+    31 sites par bloc)."""
+    rng = np.random.default_rng(n_sites)
+    base = rng.integers(0, 4, size=(n_sites, 12))
+    matrix = np.concatenate([base, base[:, [0, 3, 3, 7]]], axis=1)  # doublons exacts
+    ids = _haplotype_ids_from_matrix(matrix)
+    _, expected = np.unique(matrix, axis=1, return_inverse=True)
+    for i, j in itertools.combinations(range(matrix.shape[1]), 2):
+        assert (ids[i] == ids[j]) == (expected[i] == expected[j])
+    assert len(set(ids)) == len(set(expected))
+
+
+def test_compute_SML_numbers_haplotypes_once_per_locus(monkeypatch):
+    """La numérotation (la partie coûteuse) n'est faite qu'une fois par locus,
+    pas une fois par lecture (comptes, individus)."""
+    layout = [("F", np.arange(0, 3)), ("P1", np.arange(3, 6)), ("P2", np.arange(6, 9))]
+    tree_sequences = [
+        _haploid_ts_from_haplotypes([1, 1, 1, 1, 1, 1, 2, 2, 2]),
+        _haploid_ts_from_haplotypes([1, 2, 1, 2, 2, 2, 1, 1, 1]),
+    ]
+    original = ss_module._haplotype_ids_per_node
+    calls = []
+
+    def spy(ts):
+        calls.append(ts)
+        return original(ts)
+
+    monkeypatch.setattr(ss_module, "_haplotype_ids_per_node", spy)
+    compute_SML(tree_sequences, ["F", "P1", "P2"], 0, layouts=[layout, layout])
+    assert len(calls) == 2
+
+
+# Tests concernant toutes stats DNA
 def test_compute_all_statistics_dna(dna_context_te2):
     """Vérifie compute_all_statistics_dna sur toy_example2_ms_dna."""
     demography, _ = build_random_demography_for_scenario_index(
@@ -3054,6 +3268,35 @@ def test_log_likelihood_admixture_vs_reference(empty_blocks, a):
     expected = _reference_log_likelihood_admixture(data, a)
     result = _log_likelihood_admixture(data, a)
     assert result == expected
+
+
+@pytest.mark.parametrize("a", [0.25, 0.8])
+def test_log_likelihood_admixture_heterozygous_with_one_zero_frequency(a):
+    """Un hétérozygote dont un seul allèle a une fréquence nulle contribue
+    `log` de l'autre fréquence (pente_lik, sumstat.cpp:1252-1260) ; si les deux
+    sont nulles il contribue 0 ; si les deux sont > 0, `log(2 * fx * fy)`.
+
+    L'attendu est écrit à la main avec `math.log`, génotype par génotype.
+    """
+    # Quatre hétérozygotes : y absent des deux parents, x absent des deux
+    # parents, les deux absents, les deux présents.
+    data = FocalGenotypeFrequencies(
+        haploid_f1=np.array([]),
+        haploid_f2=np.array([]),
+        homozygous_f1=np.array([]),
+        homozygous_f2=np.array([]),
+        heterozygous_f1_x=np.array([0.2, 0.0, 0.0, 0.1]),
+        heterozygous_f2_x=np.array([0.6, 0.0, 0.0, 0.5]),
+        heterozygous_f1_y=np.array([0.0, 0.3, 0.0, 0.4]),
+        heterozygous_f2_y=np.array([0.0, 0.5, 0.0, 0.2]),
+    )
+    fx1 = a * 0.2 + (1 - a) * 0.6
+    fy2 = a * 0.3 + (1 - a) * 0.5
+    fx4 = a * 0.1 + (1 - a) * 0.5
+    fy4 = a * 0.4 + (1 - a) * 0.2
+    expected = math.log(fx1) + math.log(fy2) + math.log(2 * fx4 * fy4)
+
+    assert _log_likelihood_admixture(data, a) == pytest.approx(expected, abs=1e-12)
 
 
 @pytest.mark.parametrize(

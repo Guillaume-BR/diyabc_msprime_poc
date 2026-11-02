@@ -831,7 +831,11 @@ def compute_summary_statistics_dna(
 
     sample_names = list(context.samples_default.keys())
     summary_stats = compute_all_statistics_dna(
-        header_text, mutated, sample_names, layouts_by_locus=layouts_by_locus
+        header_text,
+        mutated,
+        sample_names,
+        seed=seed,
+        layouts_by_locus=layouts_by_locus,
     )
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 
@@ -907,7 +911,11 @@ def compute_summary_statistics_dna_from_values(
     }
     sample_names = list(context.samples_default.keys())
     summary_stats = compute_all_statistics_dna(
-        header_text, mutated, sample_names, layouts_by_locus=layouts_by_locus
+        header_text,
+        mutated,
+        sample_names,
+        seed=seed,
+        layouts_by_locus=layouts_by_locus,
     )
     summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
 

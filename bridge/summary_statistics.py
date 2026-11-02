@@ -1,7 +1,7 @@
 """
 Implémentation Python des statistiques résumées calculées par DIYABC
 (HeaderC::calstatobs / ParticleC::docalstat, src-JMC-C++/sumstat.cpp) --
-SNP (IndSeq et PoolSeq) et séquences ADN.
+SNP (IndSeq et PoolSeq), séquences ADN et microsats.
 
 PROTOCOLE DE VALIDATION : pour chaque formule implémentée ici, on vérifie
 qu'elle produit les mêmes valeurs que le vrai binaire `general` sur les
@@ -2605,10 +2605,310 @@ def compute_HST(
 
 
 # ---------------------------------------------------------------------------
+# SML : Maximum likelihood coefficient of admixture
+# ---------------------------------------------------------------------------
+
+
+def _haplotype_ids_per_node(tree_sequence: tskit.TreeSequence) -> np.ndarray:
+    """Numérote les haplotypes d'un locus, un id par nœud échantillon.
+
+    Deux nœuds ont le même id si et seulement s'ils portent le même allèle à
+    tous les sites. La numérotation est commune à tous les nœuds du locus (donc
+    à tous les échantillons) : c'est ce qui permet de comparer les fréquences
+    d'un même haplotype d'un échantillon à l'autre. Les numéros eux-mêmes n'ont
+    aucun sens (rang dans le tri lexicographique des colonnes) : seule l'égalité
+    compte. Un locus sans mutation n'a qu'un haplotype (id 0 partout).
+
+    Args:
+        tree_sequence: Un TreeSequence muté (un locus [S]).
+
+    Returns:
+        Un tableau d'entiers de longueur `num_samples`, l'id du nœud k en
+        position k.
+
+    Raises:
+        ValueError: Si les nœuds échantillons ne sont pas 0..n-1 (colonne k de
+            la matrice = nœud k).
+    """
+    if (tree_sequence.samples() != np.arange(tree_sequence.num_samples)).any():
+        raise ValueError(
+            "Les noeuds échantillons doivent être 0..n-1 (colonne k de la matrice = noeud k)."
+        )
+    return _haplotype_ids_from_matrix(tree_sequence.genotype_matrix())
+
+
+def _haplotype_ids_from_matrix(matrix: np.ndarray) -> np.ndarray:
+    """Numérote les colonnes d'une matrice : même id si et seulement si égales.
+
+    Chaque colonne est lue comme un nombre écrit en base K (un chiffre par
+    site), par blocs de sites assez courts pour tenir dans un entier 64 bits ;
+    les ids des blocs sont ensuite combinés. Exact quel que soit le nombre de
+    sites, et bien plus rapide que `np.unique(axis=1)` qui trie des colonnes
+    entières. Les numéros n'ont pas de sens, seule l'égalité compte.
+
+    Args:
+        matrix: Matrice de génotypes (n_sites, n_nodes), éventuellement sans site.
+
+    Returns:
+        Un tableau d'entiers de longueur n_nodes.
+    """
+    n_sites, n_nodes = matrix.shape
+    if n_sites == 0:
+        return np.zeros(n_nodes, dtype=np.intp)
+    # Décalage par le minimum, en int64 (voir _count_distinct_haplotypes).
+    shifted = matrix.astype(np.int64) - int(matrix.min())
+    K = int(shifted.max()) + 1
+    if K == 1:
+        return np.zeros(n_nodes, dtype=np.intp)
+    # Plus grand nombre de sites m tel que K ** m tienne dans un entier 64 bits :
+    # calculé en entiers Python, qui ne débordent pas (en numpy ils déborderaient
+    # en silence).
+    sites_per_block = 1
+    while K ** (sites_per_block + 1) <= 2**62:
+        sites_per_block += 1
+    ids = None
+    for start in range(0, n_sites, sites_per_block):
+        block = shifted[start : start + sites_per_block]
+        weights = np.array([K**i for i in range(block.shape[0])], dtype=np.int64)
+        _, block_ids = np.unique(weights @ block, return_inverse=True)
+        if ids is None:
+            ids = block_ids
+        else:
+            combined = ids * (int(block_ids.max()) + 1) + block_ids
+            _, ids = np.unique(combined, return_inverse=True)
+    return ids
+
+
+def _haplotype_ids_by_sample(
+    tree_sequence: tskit.TreeSequence,
+    *,
+    layout: list[tuple[str, np.ndarray]] | None = None,
+    ids: np.ndarray | None = None,
+) -> dict[str, np.ndarray]:
+    """Construit un dict {nom_echantillon: [haplotype_ids]}.
+
+    Args:
+        tree_sequence: Un TreeSequence muté du groupe (un locus [S]).
+        layout: [(nom_echantillon, np.ndarray[indices de noeuds]), ...] : si fourni, remplace le découpage par population, utilisé par le chemin sériel où un échantillon n'est plus sa propre population.
+        ids: Ids d'haplotype par nœud du locus (_haplotype_ids_per_node), ou None
+            pour les calculer ici ; permet de ne numéroter qu'une fois par locus.
+
+    Returns:
+        Un dict {nom_echantillon: [haplotype_ids]}.
+
+    Raises:
+        ValueError: Si les nœuds échantillons ne sont pas 0..n-1.
+    """
+    if layout is None:
+        layout = compute_population_layout(tree_sequence)
+    if ids is None:
+        ids = _haplotype_ids_per_node(tree_sequence)
+    return {samp_name: ids[node_ids] for samp_name, node_ids in layout}
+
+
+def _haplotype_ids_by_sample_and_individuals(
+    tree_sequence: tskit.TreeSequence,
+    *,
+    layout: list[tuple[str, np.ndarray]] | None = None,
+    ids: np.ndarray | None = None,
+) -> dict[str, list[tuple[int, int] | tuple[int]]]:
+    """Calcule les ids d'haplotype de chaque individu, par échantillon.
+
+    Comme _genotypes_by_sample_and_individuals, on garde la VRAIE ploïdie : un
+    tuple à 1 élément pour un individu haploïde, à 2 éléments pour un diploïde.
+    Ici l'allèle est un id d'haplotype (voir _haplotype_ids_per_node) et non
+    une taille de microsatellite.
+
+    Args:
+        tree_sequence: Un TreeSequence muté (un locus [S]).
+        layout: [(nom_echantillon, np.ndarray[indices de noeuds]), ...] : si fourni, remplace le découpage par population, utilisé par le chemin sériel où un échantillon n'est plus sa propre population.
+        ids: Ids d'haplotype par nœud du locus (_haplotype_ids_per_node), ou None
+            pour les calculer ici ; permet de ne numéroter qu'une fois par locus.
+
+    Returns:
+        Dict {nom_echantillon: [(id_1, id_2) ou (id_1,), ...]}, un tuple par
+        individu.
+
+    Raises:
+        ValueError: Si les nœuds échantillons ne sont pas 0..n-1.
+    """
+    if layout is None:
+        layout = compute_population_layout(tree_sequence)
+    if ids is None:
+        ids = _haplotype_ids_per_node(tree_sequence)
+    individuals_by_sample = _individuals_by_sample(tree_sequence, layout=layout)
+    individuals_nodes = tree_sequence.individuals_nodes
+    result = {}
+    for name, indices in individuals_by_sample.items():
+        nodes = individuals_nodes[indices]
+        first = ids[nodes[:, 0]].tolist()
+        if nodes.shape[1] == 1:
+            # Aucun individu n'a de second nœud : tous haploïdes.
+            result[name] = [(a,) for a in first]
+            continue
+        # -1 marque l'absence de second nœud (haploïde) : la valeur lue pour ces
+        # individus (ids[-1], sans erreur) est écartée par le masque.
+        second = ids[nodes[:, 1]].tolist()
+        haploid = (nodes[:, 1] == -1).tolist()
+        result[name] = [
+            (a,) if is_haploid else (a, b)
+            for a, b, is_haploid in zip(first, second, haploid, strict=True)
+        ]
+    return result
+
+
+def _haplotype_counts_by_sample(
+    tree_sequence: tskit.TreeSequence,
+    *,
+    layout: list[tuple[str, np.ndarray]] | None = None,
+    ids: np.ndarray | None = None,
+) -> dict[str, list[tuple[int, int]]]:
+    """Construit un dict {nom_echantillon: [(haplotype_id, compte),...]}.
+
+    Args:
+        tree_sequence: Un TreeSequence muté du groupe (un locus [S]).
+        layout: [(nom_echantillon, np.ndarray[indices de noeuds]), ...] : si fourni, remplace le découpage par population, utilisé par le chemin sériel où un échantillon n'est plus sa propre population.
+        ids: Ids d'haplotype par nœud du locus (_haplotype_ids_per_node), ou None
+            pour les calculer ici ; permet de ne numéroter qu'une fois par locus.
+
+    Returns:
+        Un dict {nom_echantillon: [(haplotype_id, compte),...]}.
+    """
+    if layout is None:
+        layout = compute_population_layout(tree_sequence)
+    if ids is None:
+        ids = _haplotype_ids_per_node(tree_sequence)
+    result = {}
+    for samp_name, node_ids in layout:
+        haplotype_counts = np.bincount(ids[node_ids])
+        result[samp_name] = [
+            (int(hap_id), int(count))
+            for hap_id, count in enumerate(haplotype_counts)
+            if count > 0
+        ]
+    return result
+
+
+def _parents_are_polymorphic(
+    mutual_data: list[
+        tuple[dict[str, list[tuple[int, int]]], dict[str, list[tuple[int, ...]]]]
+    ],
+    parent1: str,
+    parent2: str,
+) -> bool:
+    """Dit si, sur au moins un locus, les deux parents réunis ne portent pas
+    tous le même haplotype.
+
+    Reproduit la garde de `cal_aml3p` (sumstat.cpp:2100-2106) : DIYABC compte
+    les loci où `cal_nss2pl(parent1, parent2)` trouve un site non constant
+    dans les séquences des deux parents mises ensemble, et la statistique vaut
+    0,5 s'il n'y en a aucun. Un site non constant existe si et seulement si
+    les séquences ne sont pas toutes identiques, c'est-à-dire si les deux
+    parents réunis portent au moins deux ids d'haplotype distincts.
+
+    Args:
+        mutual_data: Liste de tuples (length_by_sample, genotypes_by_sample),
+            un par locus ; length_by_sample est {échantillon: [(id, compte), ...]}
+            (voir _haplotype_counts_by_sample).
+        parent1: Nom du premier échantillon parental.
+        parent2: Nom du second échantillon parental.
+
+    Returns:
+        True si au moins un locus a deux ids distincts ou plus chez les deux
+        parents réunis, False sinon (la statistique SML vaut alors 0,5).
+    """
+    for length_by_sample, _ in mutual_data:
+        haplotype_ids = {hap_id for hap_id, _ in length_by_sample.get(parent1, [])}
+        haplotype_ids |= {hap_id for hap_id, _ in length_by_sample.get(parent2, [])}
+        if len(haplotype_ids) > 1:
+            return True
+    return False
+
+
+def compute_SML(
+    tree_sequences: list[tskit.TreeSequence],
+    sample_names: list[str],
+    seed: int = 0,
+    *,
+    layouts: list[list[tuple[str, np.ndarray]]] | None = None,
+    length_by_sample_per_locus: list[dict[str, list[tuple[int, int]]]] | None = None,
+    genotypes_by_sample_per_locus: list[dict[str, list[tuple[int, ...]]]] | None = None,
+) -> dict[str, float]:
+    """Calcule le coefficient d'admixture de maximum de vraisemblance sur
+    séquences (SML, `cal_aml3p`) pour chaque triplet d'échantillons.
+
+    C'est AML avec un haplotype pour allèle : on réutilise la chaîne
+    `_compute_AML_one_triplet`, nourrie d'ids d'haplotype au lieu de tailles de
+    microsatellite. Deux différences avec AML, toutes deux dans `cal_aml3p` :
+    la garde (0,5 quand les deux parents réunis sont identiques sur tous les
+    loci, voir `_parents_are_polymorphic`) et le traitement des hétérozygotes
+    à fréquence nulle (déjà dans `_log_likelihood_admixture`).
+
+    Args:
+        tree_sequences: Les TreeSequences mutées du groupe (un locus [S] chacune).
+        sample_names: Liste des noms d'échantillon.
+        seed: Seed pour le cas où la vraisemblance est plate (tirage uniforme).
+        layouts: Liste des layouts, un par locus, ou None si l'appelant n'en fournit pas.
+        length_by_sample_per_locus: Liste de dicts {nom_echantillon: [(id_haplotype, compte), ...]},
+            un par locus, ou None pour les calculer ici.
+        genotypes_by_sample_per_locus: Liste de dicts {nom_echantillon: [(id, ...), ...]},
+            un tuple par individu, ou None pour les calculer ici.
+
+    Returns:
+        Dict {"i.j.k": SML} pour chaque triplet d'échantillons (focal i,
+        parents j et k).
+    """
+    layouts_for_ids = layouts if layouts is not None else [None] * len(tree_sequences)
+    if length_by_sample_per_locus is None or genotypes_by_sample_per_locus is None:
+        # Une seule numérotation par locus, partagée par les deux lectures.
+        ids_per_locus = [_haplotype_ids_per_node(ts) for ts in tree_sequences]
+    if length_by_sample_per_locus is None:
+        length_by_sample_per_locus = [
+            _haplotype_counts_by_sample(ts, layout=layout, ids=ids)
+            for ts, layout, ids in zip(
+                tree_sequences, layouts_for_ids, ids_per_locus, strict=True
+            )
+        ]
+    if genotypes_by_sample_per_locus is None:
+        genotypes_by_sample_per_locus = [
+            _haplotype_ids_by_sample_and_individuals(ts, layout=layout, ids=ids)
+            for ts, layout, ids in zip(
+                tree_sequences, layouts_for_ids, ids_per_locus, strict=True
+            )
+        ]
+    mutual_data = _extract_mutual_data(
+        tree_sequences,
+        layouts=layouts,
+        length_by_sample_per_locus=length_by_sample_per_locus,
+        genotypes_by_sample_per_locus=genotypes_by_sample_per_locus,
+    )
+    results = {}
+    frequency_cache = {}
+    vectorize_parent_cache = {}
+    for i, t in enumerate(_half_arrangements(len(sample_names), 3)):
+        h, p1, p2 = t[0], t[1], t[2]
+        key = f"{h + 1}.{p1 + 1}.{p2 + 1}"
+        focal, parent1, parent2 = sample_names[h], sample_names[p1], sample_names[p2]
+        if not _parents_are_polymorphic(mutual_data, parent1, parent2):
+            results[key] = 0.5
+            continue
+        results[key] = _compute_AML_one_triplet(
+            mutual_data,
+            focal,
+            parent1,
+            parent2,
+            _locus_seed(seed, _LIKELIHOOD_SEED_OFFSET, i),
+            frequency_cache=frequency_cache,
+            vectorize_parent_cache=vectorize_parent_cache,
+        )
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Statistiques pour les Microsatellites (microsat)
 # ---------------------------------------------------------------------------
 
-# Helper nécessaire pour le reste des stattistiques
+# Helper nécessaire pour le reste des statistiques
 
 
 def _decode_locus(
@@ -4487,8 +4787,14 @@ def _log_likelihood_admixture(
     ):
         freq_x = a * data.heterozygous_f1_x + (1 - a) * data.heterozygous_f2_x
         freq_y = a * data.heterozygous_f1_y + (1 - a) * data.heterozygous_f2_y
-        mask = freq_x * freq_y > 0
-        lik += np.log(2 * freq_x[mask] * freq_y[mask]).sum()
+        # pente_lik (sumstat.cpp:1252-1260), génotype par génotype : les deux
+        # fréquences > 0 donnent log(2 fx fy) ; sinon chaque fréquence > 0
+        # contribue son propre log, une fréquence nulle ne contribue rien.
+        both = freq_x * freq_y > 0
+        lik += np.log(2 * freq_x[both] * freq_y[both]).sum()
+        only_x = ~both & (freq_x > 0)
+        only_y = ~both & (freq_y > 0)
+        lik += np.log(freq_x[only_x]).sum() + np.log(freq_y[only_y]).sum()
 
     return float(lik)
 
@@ -4747,6 +5053,9 @@ _DNA_PAIRWISE_STATS = {
 }
 
 
+_DNA_TRIPLET_STATS = {"SML": compute_SML}
+
+
 def compute_all_statistics_dna(
     header_text: str,
     tree_sequences_by_locus: dict[str, tskit.TreeSequence],
@@ -4846,6 +5155,21 @@ def compute_all_statistics_dna(
                     f"{stat_name}_{group_number}_{pair_key}"
                     if multi_group
                     else f"{stat_name}_{pair_key}"
+                )
+                results[key] = value
+
+        for stat_name, stat_fn in _DNA_TRIPLET_STATS.items():
+            for triplet_key, value in stat_fn(
+                tree_sequences,
+                sample_names,
+                # une graine par groupe, pour ne pas partager le tirage du cas plat
+                _locus_seed(seed, _GROUP_STAT_SEED_OFFSET, int(group_number)),
+                layouts=layouts,
+            ).items():
+                key = (
+                    f"{stat_name}_{group_number}_{triplet_key}"
+                    if multi_group
+                    else f"{stat_name}_{triplet_key}"
                 )
                 results[key] = value
 
