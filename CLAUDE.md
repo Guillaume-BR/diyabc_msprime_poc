@@ -22,12 +22,13 @@ structurally and statistically equivalent to the real DIYABC's output.
 | SNP PoolSeq | complete | `toy_example4` |
 | Heritage `<A>/<H>/<X>/<Y>/<M>` (SNP) | complete; real sex ratio followed, `<A>` rescaled (22/10) | `human`, `toy_example5`; per type and mixed on `toy_example5_with_maf` against DIYABC freshly converted (sex ratio 0.3): 0/50 flagged for `<A>`, `<X>`, `<Y>` and the mix |
 | MicroSat | complete, 11 stats + `AML` | `toy_example2_ms_dna_K2P`, `toy_example1_ms_modified` |
-| DNA sequences | complete, 13 stats; `JK`/`K2P`/`TN` all covered | `toy_example2_ms_dna_{JK,K2P,TN}` (5 loci/group, 2 runs each), `toy_example2_ms_dna_50loci_K2P` (50/group, 2 runs) — the **G2 `MPD`/`VPD` residual is a DIYABC bug, located to the line** (its `MPD` denominator drops loci the simulation left monomorphic), see Open work |
+| DNA sequences | complete, 13 stats + `SML` (triplets, only with ≥ 3 samples); `JK`/`K2P`/`TN` all covered | `toy_example2_ms_dna_{JK,K2P,TN}` (5 loci/group, 2 runs each), `toy_example2_ms_dna_50loci_K2P` (50/group, 2 runs) — the **G2 `MPD`/`VPD` residual is a DIYABC bug, located to the line** (its `MPD` denominator drops loci the simulation left monomorphic), see Open work |
 | DNA sequences `<X>`/`<Y>` | implemented | synthetic fixture only — the real binary SIGSEGVs on this case |
 | Serial/temporal sampling (MicroSat) | complete | `toy_example1_ms` (1 population, 4 sampling times) |
 | Serial/temporal sampling (SNP IndSeq) | complete | `human_seriel` (1 population, 4 sampling times, 130 stats, 0/130 significant) |
 | Serial/temporal sampling (SNP PoolSeq) | complete | `toy_example4_seriel` (100 loci, `<MRC=5>`, 4/133 vs ~6.7 expected) |
 | Mixed MicroSat + DNA in one header | complete | `toy_example2_ms_dna_TN` (73 columns, 2 replays × 2 scenarios) |
+| Serial MicroSat + DNA, 4 samples (`AML`, `SML`) | complete, 224 columns (24 `SML`) | `toy_example2_ms_dna_50loci_TN_seriel`: 2 independent DIYABC reftables × 2 scenarios, 1 `SML` flag out of 96, 0 `AML` flag (02/11) |
 
 **Validation status (06/10): every dataset in the "Validated against" column above is
 validated with the final code**
@@ -581,6 +582,17 @@ locus/particle.
   (see Closed investigations, 21/10). **Same file, second effect: with a `.snp.bin` present DIYABC also
   forces the sex ratio to 0.5** (`data.cpp:1649`), so a reference generated that way follows the 0.5
   coefficients whatever the `<NM=...>`; only a fresh conversion keeps the real ratio (Open work, 22/10).
+- **`-R ALL` ignores the `group summary statistics` block and rewrites `headerRF.txt` at start-up; its trailer
+  must stay consistent, and it replicates itself when it is not.** `readHeaderAllStat` regenerates the whole
+  statistic list of the data type (2 samples: 58 columns; 4 samples: 224, with `AML` and `SML` triplets), so editing
+  the statistics out of a header does nothing, and a benchmark against a Python side that lacks one of them compares
+  unequal loads (`stats_filter="ALL"` means "all *implemented*": no error). It also reads the trailer as input,
+  `nparamhist = words − 1 − nstat − nparamut` (`header.cpp:797`); a trailer with extra words makes it take
+  statistic names for historical parameters, copy them into the trailer it rewrites, and so produce the same defect
+  at every run (measured: 261 words instead of 237, the first 24 statistic names doubled, then
+  `rewrite_real_reftable_txt` dies on `zip(..., strict=True)`). **Check `wc -w` of the trailer (1 + hist + mut +
+  nstat) before AND after a run.** Also silent: `-R ALL` without `-r` gives `reftable.log` = `END` and a 28-byte
+  `reftableRF.bin` (`nrecneeded=0`); `-r N` without `-g N` simulates 100; `-R` without `ALL` hangs.
 - **An independent replay needs a NEW DIYABC reftable, initialised in its own step.**
   `./diyabc -p ./ -n "t:16;s:<seed>;f:"` only writes `RNG_state_0000.bin` and exits; the `-R ALL ...`
   run is a second command. Three msprime seed sets against ONE DIYABC reftable are one replica: that
@@ -940,6 +952,23 @@ under the date given.
   Claiming "the coefficients equal DIYABC's" from our reading of the file and from the `sexratio=` line of the
   DIYABC log was the error: the value that counts is the one applied after `loadfromfile`.
 
+- **DNA serial "x2 against x7" (02/11) — not a defect of the serial path: unequal loads, then DIYABC's cost.**
+  `-R ALL` made DIYABC compute 224 statistics (24 `SML`) while we produced 200. At equal load: DIYABC 20.5 s,
+  msprime 50.7 s (2.5x), 44.3 s after the `SML` optimisation (≈ 2.2x); DIYABC ×13 between 2 and 4 samples, us ×4
+  (our floor is the ~100 `sim_mutations` calls per particle). DIYABC's own variance on this dataset is ±12 %.
+  `SML` ≈ 28 % of DIYABC's time (`gdb` stub, 2 runs); `AML` nil. Falsified: discrete coalescent (`Npresent ~
+  UN[5000,10000]` leaves DIYABC at 20 s), parasitic measurement. The 4-population non-serial control was never built.
+- **`_log_likelihood_admixture` heterozygote with one zero frequency (23/10) — real infidelity, fixed.** The C++
+  adds `log(fx)` or `log(fy)` for the non-zero one (`pente_lik`, shared by `cal_Aml3p` and `cal_aml3p`); we added
+  0. 344 of 720 `AML` values change on `ms_modified`, nothing else. Replays on `toy_example1_ms_seriel`: the `AML`
+  flags of 13/10 vanish (smallest `AML` p 0.001 → 0.056); only `AML_2_3.1.2` keeps a stable sign (+2.3 to +3.8 %,
+  p 0.028-0.162 over three seed offsets) on ONE DIYABC reftable, absent on the other: undecided without a third
+  reftable. Beware: the replay script's default `SEED_OFFSET` is 200 000, not 0.
+- **`SML` (02/11) — implemented and validated.** `cal_aml3p` is `AML` with one haplotype per allele (`cal_freq`),
+  so `_compute_AML_one_triplet` is reused unchanged on haplotype ids; the only addition is the guard of
+  `sumstat.cpp:2100-2106` (statistic = 0.5 when no locus shows two distinct haplotypes among the two parents
+  together). Details, tests, validation table: `notes/exploration.md`, 23/10-02/11.
+
 ## Domain knowledge
 
 ### SNP
@@ -1078,6 +1107,16 @@ their type (`simulate_shared_ancestry_loci`, `particuleC.cpp:2422-2435`
 - **Column naming**: whether a stat's column gets a `_<group>_` segment
   (`multi_group`) depends on the number of distinct groups in the **whole**
   header, any type — not the number of groups of the stat's own type.
+
+- **`SML`** (`compute_SML`, triplets focal/parent1/parent2 from `_half_arrangements(n, 3)`, columns
+  `SML_<group>_i.j.k`). Haplotype ids come from `_haplotype_ids_per_node`: one id per sample node, **one numbering
+  for the whole locus** (numbering per sample would break the comparison of frequencies between samples), equal id
+  iff equal column of `genotype_matrix()`; the numbers themselves mean nothing, compare equality only, never write
+  an expected id in a test. It requires the sample nodes to be `0..n−1` (raises otherwise). Numbering is done in
+  base K by blocks of sites (`_haplotype_ids_from_matrix`, exact, no slow fallback), once per locus and passed to
+  the three readers through `ids=`. The seed of the flat-likelihood draw is per group
+  (`_GROUP_STAT_SEED_OFFSET`); `compute_all_statistics_dna` needs `seed` from the caller (the two direct calls in
+  `pipeline.py` did not pass it until 02/11).
 
 ### Serial/temporal sampling
 
@@ -1284,7 +1323,7 @@ case: the variance is not measured.**
 | PoolSeq MRC > 0 | `toy_example4` | 100 | 86.7 s | 40.3 s | 0.47x | 99.4 / 0.6 % |
 | PoolSeq serial | `toy_example4_seriel` | 1000 | 524.9 s | 219.8 s | 0.42x | 99.8 / 0.2 % |
 | DNA | `toy_example2_ms_dna_50loci_TN` | 110 | 1.6 s | **12.3 s** (13.4 s on 14/10; 104.1 s on 07/10) | **7.57x** | 63.7 / 36.3 % |
-| DNA serial | `..._50loci_TN_seriel` | 110 | **15.4 s — 1.6 s on 07/10, 10x longer, unexplained; do not read the ratio until it is** | **30.8 s** (104.1 s on 07/10) | 1.99x (≈ 19x against the old 1.6 s) | 35.2 / 64.8 % |
+| DNA serial (mixed, 224 stats incl. 24 `SML`) | `..._50loci_TN_seriel` | 110 | 20.5 s (16-20.5 s over 4 runs; the 1.6 s of 07/10 had 58 statistics, `-R ALL` gives 224 from 4 samples) | **44.3 s** (50.7 s before the 02/11 `SML` optimisation; 30.8 s was without `SML`: unequal load) | **≈ 2.2x** (2.4-3.1x before, DIYABC variance ±12 %) | not re-measured |
 | MicroSat | `toy_example1_ms_modified` | 50 | 2.1 s | **9.7 s** (20.4 s on 12-14/10; 228.7 s before) | **4.59x** (8.9x before) | 49.9 / 50.1 % |
 | MicroSat serial | `toy_example1_ms_seriel` | 50 | 2.2 s | **10.3 s** (23.6 s on 12-14/10; 256.7 s on 07/10) | **4.66x** (9.8x before) | 47.2 / 52.8 % |
 
@@ -1339,8 +1378,9 @@ isolated (candidates: `record_provenance=False` on every `sim_ancestry` /
     `_prepare_triplet_for_admixture` only filters; `_vectorize_triplet` turns a
     triplet's frequencies into arrays (haploid / homozygous / heterozygous) so
     `_log_likelihood_admixture` evaluates each `a` on whole arrays. A heterozygote with
-    ONE zero frequency contributes 0 as a whole genotype, not a partial log (kept from
-    the loop).
+    ONE zero frequency contributes the log of the other frequency (`pente_lik`,
+    `sumstat.cpp:1252-1260`; corrected 23/10, the note that said "0 as a whole genotype"
+    was wrong, see Closed investigations).
   - **SNI matrices**: `_gsm_matrix_numpy` replaces `msprime.TPM(p=ε, m, lo=0, hi)`,
     whose `general_microsat_rate_matrix` is a pure-Python O(n²) loop (152 100
     `gamma_microsat` calls per particle). Tested against msprime on 161 `(hi, m)` pairs,

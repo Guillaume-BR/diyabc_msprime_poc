@@ -5328,3 +5328,220 @@ des temps de workers : IndSeq et PoolSeq à plus de 98 % en simulation, MicroSat
 **Clôture IndSeq (22/10)** : plus de gain de vitesse disponible à sortie constante. Le reste est le coalescent de
 msprime (43 % de `human`) et la conversion de tables de son API publique (~23 %). Seule piste ouverte : réutiliser
 un `Simulator` entre lots (−10 %, change le flux, exigerait un rejeu), écartée.
+
+
+## 2026-10-23 → 2026-11-02 — Le « x2 » du DNA sériel, `SML`, et ce que cachait `-R ALL`
+
+Session « Optimisation statistiques DNA », en mode mentor (l'utilisateur écrit, l'assistant explique ; les passages
+« écris-le pour moi » sont signalés). Point de départ : pourquoi le DNA sériel est à 2x de DIYABC alors que le DNA
+non sériel est à 7,6x (benchmark du 22/10 : 15,4 s / 30,8 s contre 1,6 s / 12,3 s).
+
+### 1. Verdict
+
+**Ce n'était pas un défaut du chemin sériel.** Trois faits mis bout à bout :
+
+1. **`-R ALL` ignore le bloc `group summary statistics` du header** et régénère lui-même la liste complète des
+   statistiques du type de données (`header.cpp:1353-1372` : `readHeaderAllStat` à la place de `readHeaderGroupStat` ;
+   `general.cpp:485`, « simulating data sets with all summary statistics »). Avec 2 échantillons « ALL » fait 58
+   statistiques (aucun triplet possible) ; avec 4 échantillons il en fait **224**, dont 12 `AML` (G1) et **24 `SML`**
+   (12 triplets × G2 et G3). Éditer le header pour retirer des statistiques ne sert donc à rien : DIYABC réécrit
+   `headerRF.txt` à chaque lancement (au démarrage, pas à la fin — la réécriture date de la seconde du début du run).
+2. **Nous n'avions pas `SML`.** `stats_filter="ALL"` veut dire « toutes les statistiques *implémentées* » : le replay
+   sériel produisait 200 colonnes contre 224, sans erreur (213 mots sur la première ligne = 1 + 3 + 9 + 200). Le
+   benchmark comparait donc 224 statistiques côté DIYABC à 200 côté msprime. Un `stats_filter="HEADER"` aurait levé.
+3. **Le coût de DIYABC grimpe bien plus vite que le nôtre avec le nombre d'échantillons.** À charge égale (224
+   statistiques des deux côtés) : DIYABC 20,5 s, msprime 50,7 s, **2,5x** ; après optimisation de `SML` (§7) msprime
+   44,3 s, **≈ 2,2x**. DIYABC passe de 1,6 s à 20,5 s entre le non sériel (2 échantillons, 58 stats) et le sériel (×13) ;
+   nous de 12,3 s à 50,7 s (×4). Notre coût est dominé par un plancher indépendant (≈ 100 appels `sim_mutations` par
+   particule, simulation des arbres), qui fait le 7,6x quand DIYABC n'a presque rien à calculer.
+
+La variance de DIYABC sur ce jeu est de ±12 % (16, 18,1, 18,6, 20,5 s sur la même machine) : le ratio réel est entre
+2,4x et 3,1x avant optimisation, une mesure de chaque côté. La variance de msprime n'est pas mesurée.
+
+### 2. Hypothèses falsifiées (ne pas rouvrir)
+
+- **Mesure parasite** : le x2 se reproduit à chaque lancement.
+- **Le coalescent discret de DIYABC (`evalcriterium`) explique ses 15 s** : `Npresent ~ UN[5000,10000]` (segments
+  récents très au-dessus de 2×lignées, donc continus) donne DIYABC 20,0 s contre 16 s, msprime 44,9 s contre ~41 s. Les
+  deux montent ensemble avec θ ; rien ne s'effondre. À noter que ce test et le précédent ont tourné avec les 224
+  statistiques de `-R ALL` (cf. 1.1).
+- **« Retirer `SML` du header » comme test** : sans effet (1.1). Le premier « DIYABC sans `SML` = 16 s » n'a pas eu
+  lieu ; la conclusion « `SML` falsifié » écrite à ce moment-là a été retirée le jour même.
+- **`perf`** : bloqué (`kernel.perf_event_paranoid = 4`, pas de root). **Échantillonnage `gdb` en Python** : un
+  `threading.Timer` ne tire pas pendant `gdb.execute("continue")` (le GIL est tenu), l'inférieur va jusqu'au bout.
+
+### 3. Mesure du coût de `SML` chez DIYABC (binaire fourni, `gdb` batch, 1 thread, 20 particules)
+
+`SML` (ADN) appelle `ParticleC::cal_aml3p` ; `AML` (MicroSat) appelle `cal_Aml3p` (A majuscule), deux fonctions
+distinctes (`statdefs.cpp:110` et `:127`) qui partagent `pente_lik`. Mesure par **court-circuit** : un point d'arrêt
+sur la fonction fait `return (long double)0.5` immédiatement ; la comparaison avec un point d'arrêt qui ne fait que
+compter annule le coût d'arrêt de `gdb`.
+
+| | 20 particules |
+|---|---|
+| référence sans `gdb` | 2,00 s (≈ 100 ms par particule, démarrage compris) |
+| `gdb`, `cal_aml3p` comptée (504 appels) | 2,12 s, 2,12 s |
+| `gdb`, `cal_aml3p` court-circuitée | **1,52 s, 1,53 s** |
+| `gdb`, `cal_Aml3p` court-circuitée (252 appels) | 2,06 s contre 2,06 s : écart nul |
+
+`SML` ≈ **28 %** du temps de DIYABC (≈ 30 ms par particule), `AML` négligeable. Le chrono par appel avec
+`FinishBreakpoint` donne 2,5 ms par `SML` mais contient environ la moitié du surcoût de `gdb` : ne pas le citer.
+
+### 4. Le trailer à 261 mots (sixième occurrence du piège « ligne de queue »)
+
+Le reftable que DIYABC produit avec `-R ALL` avait une première ligne de **261** mots au lieu de 237 : les 24 premiers
+noms de statistiques (`NAL_1_1` … `H2P_1_1.3`) y figuraient deux fois (positions 13-36 et 37-60), alors que les 1000
+lignes de données étaient correctes (235 ou 237 valeurs). `rewrite_real_reftable_txt` plante alors sur
+`zip(stat_names, rest[n_mut:], strict=True)` (« zip() argument 2 is shorter »), et laisse un `first_records_clean`
+tronqué de 3,6 Ko.
+
+Mécanisme : `readHeaderAllStat` calcule `nparamhist = mots du trailer − 1 − nstat − nparamut`
+(`header.cpp:797`). Avec un trailer de 261 mots, `nstat = 224` et `nparamut = 9`, cela donne 27 au lieu de 3 : DIYABC
+prend 24 noms de statistiques pour des paramètres historiques, les recopie dans le trailer qu'il réécrit — **le
+défaut s'auto-entretient à chaque lancement** (le premier lancement avec le fichier fautif en entrée ressort fautif).
+Origine : un header édité à la main (statistiques retirées/réécrites) dont le trailer et la ligne 2 (`N parameters and
+M summary statistics`) ne disaient plus la même chose. Réparation : retirer les 24 noms en trop (237 mots), vérifier
+`wc -w` du trailer **avant** de lancer, et après. Deux autres lancements « qui ne marchent pas » du même jour : un
+`-R` sans `ALL` (le run se bloque, voir CLAUDE.md) et un `-R ALL` **sans `-r`** : `nrecneeded = 0`, `reftable.log` ne
+contient que `END` (pas de nombre) et `reftableRF.bin` fait 28 octets, sans message d'erreur. Et `-r 5` sans `-g`
+simule 100 particules (`OK|100`).
+
+Le notebook `compare_reftables_te2.ipynb` du dossier sériel avait aussi `suffix = "1"` (copié d'ailleurs) alors que le
+dossier n'avait que des fichiers de suffixe 0.
+
+### 5. `_log_likelihood_admixture` n'était pas fidèle (hétérozygote à fréquence nulle)
+
+`pente_lik` (`sumstat.cpp:1252-1260`), partagée par `cal_Aml3p` et `cal_aml3p`, traite chaque hétérozygote `(x, y)`
+de fréquences mélangées `fx`, `fy` :
+
+| cas | contribution |
+|---|---|
+| `fx·fy > 0` | `log(2·fx·fy)` |
+| seulement `fx > 0` | `log(fx)` |
+| seulement `fy > 0` | `log(fy)` |
+| les deux nuls | 0 |
+
+L'ancienne version vectorisée (masque `fx·fy > 0` seul) donnait 0 aux trois dernières lignes ; les notes du 15-16/10
+(« un hétérozygote dont un seul allèle a une fréquence nulle contribue 0 en entier, pas un log partiel ») le
+présentaient comme une fidélité à la boucle d'origine, ce que le C++ contredit. Corrigé (deux masques `only_x`,
+`only_y`, sans boucle : le `if/else` du C++ s'évalue génotype par génotype, donc par masques, pas par un `if` sur le
+lot — une première version avec `if mask.any(): … else:` choisissait un cas pour tout le lot).
+
+Effet mesuré avec `compare_particles_microsat` (référence sur `HEAD` en worktree propre, 30 particules de
+`toy_example1_ms_modified`) : **344 des 720 valeurs `AML` changent**, aucune autre statistique (3 840 identiques) ;
+écart médian 0,004, maximum 0,041 (`AML_1_4.2.3`, graine 23, 0,174 → 0,133) ; 182 négatifs, 162 positifs. Aucun test
+doré ne bouge (leurs fréquences sont toutes > 0).
+
+Rejeux sur `toy_example1_ms_seriel` (deux reftables DIYABC, 1000 particules, 2 scénarios, KS à 6 décimales) :
+
+- avant (fichiers `_before` du 13/10) les flags étaient surtout des `AML` (`AML_2_2.1.3`, `AML_2_3.1.2`,
+  `AML_2_1.3.4`, `AML_2_2.3.4`, p entre 0,001 et 0,033) ; après, **aucune colonne `AML` flaguée** avec les graines du
+  script (plus petite p de la famille 0,056 dans les deux reftables) ;
+- les flags restants (`FST_1_1.2`, `DM2_2_3.4`, `DM2_2_2.3`, `NAL_2_1`) se déplacent d'un `seed_offset` à l'autre
+  (100 000, 200 000, 300 000) : bruit ; 3 flags sur 307 colonnes à 100 000, 2 sur ~307 à 200 000, 4 sur ~307 à 300 000 ;
+- **`AML_2_3.1.2` reste la seule colonne à signe stable** : scénario 2 sur le reftable 1, p = 0,033 / 0,162 / 0,028
+  (offsets 100k / 200k / 300k), écart +3,8 % / +2,3 % / +2,8 % (0,463 pour DIYABC, 0,481 pour nous). Sur le reftable 0
+  elle est passée de p = 0,005 (+2,9 %) à 0,274 (+0,6 %). Un défaut de notre côté se verrait sur les deux reftables ;
+  c'est probablement une réalisation du reftable 1. **Non tranché** : il faudrait un troisième reftable DIYABC.
+- test des signes inchangé (médianes −0,3 à −0,75 %, résidu du nombre de loci, 50 loci).
+
+Erreur de lecture corrigée en cours de route : le script `replay_diyabc_priors_ms.py` du dépôt a `SEED_OFFSET =
+200_000` par défaut ; les deux premiers rejeux étaient donc *déjà* à 200 000, et le « rejeu à 200 000 » n'était que
+leur reproduction exacte (mêmes p, mêmes rdiff). Le vrai troisième jeu de graines est 300 000.
+
+### 6. `SML` : implémentation (`bridge/summary_statistics.py`)
+
+`cal_aml3p` est `AML` avec **un haplotype pour allèle** : `cal_freq` (`sumstat.cpp:2003`) numérote les séquences
+distinctes des trois échantillons (le `N` est un joker), `pente_lik` fait le reste. On réutilise donc
+`_compute_AML_one_triplet` sans la modifier, nourrie d'ids d'haplotype. Pièces :
+
+- `_haplotype_ids_per_node(ts)` : un id par nœud échantillon, **numérotation commune à tout le locus** (sinon les
+  fréquences d'un même haplotype ne se rapprochent pas d'un échantillon à l'autre) ; garde : les nœuds échantillons
+  doivent être `0..n−1` (colonne k de `genotype_matrix()` = nœud k). Locus sans mutation : un seul haplotype (id 0).
+- `_haplotype_ids_by_sample`, `_haplotype_counts_by_sample` (`{échantillon: [(id, compte)]}`, entiers Python),
+  `_haplotype_ids_by_sample_and_individuals` (tuples d'ids par individu, vraie ploïdie, même squelette que
+  `_genotypes_by_sample_and_individuals`).
+- `_parents_are_polymorphic` : **garde de `cal_aml3p` (lignes 2100-2106)**, absente de `cal_Aml3p` : si, sur aucun
+  locus, les deux *parents réunis* ne montrent un site non constant (`cal_nss2pl(parent1, parent2)`), la statistique
+  vaut **0,5** sans tirage. En ids : au moins 2 ids distincts chez les deux parents réunis, sur au moins un locus. Le
+  focal n'intervient pas. (Un premier brouillon exigeait que *chaque* parent soit polymorphe ; deux parents
+  monomorphes mais différents comptent pour le C++.)
+- `compute_SML` (calque de `compute_AML_microsat`) et `_DNA_TRIPLET_STATS = {"SML": compute_SML}` branché dans
+  `compute_all_statistics_dna` avec la graine de groupe `_locus_seed(seed, _GROUP_STAT_SEED_OFFSET, int(group))` (pas de
+  collision avec `AML` : numéros de groupe distincts).
+- **`pipeline.py` ne passait pas `seed` à `compute_all_statistics_dna`** (deux appels directs ; le chemin mixte le
+  passait) : sans cela le tirage du cas plat de `SML` aurait été identique à chaque particule. Corrigé.
+- Avec 2 échantillons `_half_arrangements(2, 3)` est vide : `SML` n'ajoute aucune colonne aux jeux déjà validés.
+- Une ébauche vide de `compute_SML` plus haut dans le fichier faisait un doublon de `def` (Python garde la
+  dernière sans prévenir) : supprimée.
+- Bug rencontré : `individual_nodes` au lieu de `individuals_nodes` ; indexer `individuals_nodes` avec des ids
+  d'haplotype au lieu des indices d'individus de `_individuals_by_sample` ; `ts.haplotypes()` est un générateur de
+  chaînes (non indexable), `genotype_matrix()` + numérotation des colonnes est la bonne lecture.
+
+Tests (hors oracle de la numérotation, jamais en dur : la numérotation n'a pas de sens, seule compte l'égalité) :
+`same_column_same_id`, `numbering_shared_between_samples` (le test qui distingue la bonne version de la mauvaise,
+numérotation par échantillon), `..._and_individuals_keeps_true_ploidy` (relu avec `ts.individuals()` et non avec
+`individuals_nodes` qu'utilise la fonction ; rouge si on retire le masque haploïde), `parents_are_polymorphic_follows_
+cal_aml3p_guard`, `compute_SML_bounds_and_guard` (focal = parent 1 ⇒ 1,0 ; focal = parent 2 ⇒ 0,0 ; parents
+identiques ⇒ 0,5 pour deux graines ; rouge sans la garde), et pour `_log_likelihood_admixture`
+`..._heterozygous_with_one_zero_frequency` (attendu écrit à la main). L'assistant de test
+`_ts_from_genotype_matrix` fabrique un arbre en étoile avec un individu haploïde par nœud.
+
+### 7. Validation de `SML` et optimisation
+
+Deux reftables DIYABC **indépendants** de `toy_example2_ms_dna_50loci_TN_seriel` (graines RNG `20261023` et
+`20261024`, `-R ALL -r 1000 -g 1000 -m -t 16`, 18 s chacun), replay mixte (MicroSat + ADN), priors appariés (p min =
+1,00, écart de moyenne 0 dans les quatre cellules), KS à 6 décimales :
+
+| | run 0 sc 1 | run 0 sc 2 | run 1 sc 1 | run 1 sc 2 |
+|---|---|---|---|---|
+| flags (toutes stats) | 1 / 226 | 1 / 225 | 2 / 226 | 8 / 225 |
+| signes | 112/226, +0,00 % | 176/225 nég., −0,79 % | 138/226 nég., −0,52 % | 112/225, +0,00 % |
+| **SML** : flags / p min | 0 / 0,088 | 0 / 0,210 | 1 / 0,047 | 0 / 0,073 |
+| `AML` (G1) | 0 / 0,103 | 0 / 0,088 | 0 / 0,250 | 0 / 0,073 |
+
+Le seul flag `SML` (`SML_3_2.3.4`, run 1 sc 1, p = 0,047, +4,7 %) est à p = 0,85, 0,73, 0,83 dans les trois autres
+cellules ; aucune colonne `SML` n'est sous p = 0,10 deux fois ; rdiff médians ±0,3 %, sans signe constant. Les
+−0,79 % / −0,52 % sont le résidu du nombre de loci. **Non fait** : un `seed_offset` pour la chaîne mixte (seule la
+chaîne MicroSat l'a) ; les deux reftables n'ont qu'un jeu de graines msprime.
+
+**Profil d'une particule ADN du sériel** (`profile_particle_dna`, graine 1) : 276 ms sans profileur, 376 ms sous
+`cProfile`. Statistiques 69 %, mutations 31 % (dont `sim_mutations` 9 %, taux de sites 6 %). `compute_SML` : 95 ms sur
+376 (25 %), dont **la numérotation des haplotypes : 49 ms pour 200 appels** (deux lectures par locus, chacune
+refaisant `genotype_matrix()` et `np.unique(axis=1)`, ≈ 245 µs l'appel), la bissection 33 ms (24 triplets).
+
+**Optimisation** (sortie identique, `compare_particles_dna` : 0 différence sur 4 440 valeurs du sériel dont les 24
+`SML`, et sur 1 260 du non sériel) :
+
+1. `_haplotype_ids_from_matrix` : numérotation en **base K par blocs de sites**. Chaque colonne devient un nombre en
+   base K (un chiffre par site) ; le bloc a au plus *m* sites avec *m* le plus grand tel que `K ** m ≤ 2**62`
+   (calculé en entiers Python) ; les ids des blocs sont combinés par `ids * (max + 1) + block_ids` puis renumérotés.
+   Exact pour un nombre de sites quelconque, **sans repli lent** (contrairement à `_count_distinct_haplotypes`, qui
+   retombe sur `np.unique(axis=1)` au-delà de `K ** n_sites > 2**62` : au θ du sériel, `Npast` jusqu'à 50 000, ce
+   repli serait fréquent). Aucun dépassement possible : un bloc est borné par `2**62`, la combinaison par le carré du
+   nombre de nœuds.
+2. Une numérotation par locus, passée aux trois lectures (`ids=`, `None` : calcul local, donc les appels isolés et les
+   tests existants ne changent pas). Test à espion : 2 loci ⇒ 2 numérotations.
+
+Particule ADN du sériel, 30 particules, avant/après alternés deux fois : **médiane 335 / 329 ms → 254 / 249 ms
+(−24 %)**, minimum 212 / 232 → 184 / 182 ms (−15 %) ; la machine dérive d'une série à l'autre (283 ms à la première
+mesure), d'où l'alternance. Replay mixte de 1000 particules : **50,69 s → 44,29 s** (−12,6 %), soit ≈ 2,2x DIYABC
+(20,5 s). `SML` coûte à DIYABC ≈ 30 ms par particule, à nous ≈ 70 ms réels avant optimisation (≈ 2,5x par cœur, le
+même facteur que l'ensemble du jeu : pas un point faible propre à `SML`). Hors `SML` plus rien ne domine (`HST` 24 ms,
+`NH2` 21, `MPB` 21, `_pairwise_hamming_distances_between` 34 ms cumulés sur 1200 appels, sous `cProfile`).
+Tests : `..._multi_block_matches_unique` (1, 7, 31, 32 et 100 sites ; rouge au cas 32 quand on casse la combinaison des
+blocs, le cas 100 ne la détecte pas : le dernier bloc seul y suffit à tout distinguer) et le test à espion.
+
+### 8. Ce qui reste ouvert
+
+- **Le témoin « 4 populations non sériel » n'a pas été construit.** `reference/toy_example2_ms_dna_50loci_K2P_4pop`
+  contient un `.mss` corrompu (des `POP` collés au milieu d'une ligne, 7 blocs de tailles incohérentes) et un header
+  hérité d'un autre jeu (varNe/goulots, `N ~ UN[1000,100000]`, statistiques encore sur les échantillons 1 et 2), qui ne
+  sert pas de témoin. La conclusion du §1 repose sur l'écart de coût entre 2 et 4 échantillons, pas sur ce témoin.
+- Un troisième reftable DIYABC de `toy_example1_ms_seriel` pour trancher `AML_2_3.1.2` (§5).
+- Un `seed_offset` pour les chaînes SNP, ADN et mixte.
+- Les échantillons 3 et 4 de `TN_seriel` sont des copies de 1 et 2 (fait par l'utilisateur) : les parents identiques y
+  sont fréquents, la garde 0,5 s'y exerce, mais jamais atteinte sur les 10 particules regardées.
+- Incident : `bridge/summary_statistics.py` a été mis à la corbeille à 16:19:57 le 23/10 pendant la session (cause non
+  établie) ; restauré depuis `~/.local/share/Trash/files/`. `CLAUDE.md` avait aussi été à la corbeille le 22/10 ; il est
+  de nouveau dans le dépôt et suivi par git sans modification. Penser à committer.
