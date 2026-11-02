@@ -16,6 +16,7 @@ générations diploïdes -- cohérent avec les bornes des priors de temps
 
 import itertools
 import random
+import sys
 from collections.abc import Iterator
 from typing import NamedTuple
 
@@ -2390,8 +2391,124 @@ def build_rate_map_per_locus(
     return rate_map_per_locus, group_priors_values
 
 
+class LightTables(NamedTuple):
+    """Tables d'une généalogie non mutée, sans objet `TreeSequence`.
+
+    Instantané de `Simulator.tables.asdict()` : le simulateur réutilise ses
+    tables au réplicat suivant, il faut donc les copier avant `reset()`.
+    Consommées par `_mutate_tree`, qui ne reconstruit un `TreeSequence` qu'une
+    fois, après les mutations.
+    """
+
+    tables: dict
+
+
+def _light_a_trees(
+    samples: dict[str, int] | list[msprime.SampleSet],
+    demography: msprime.Demography,
+    sequence_length: int,
+    seed: int,
+    ploidy: int,
+    num_replicates: int,
+) -> list[LightTables]:
+    """Simule `num_replicates` généalogies et les rend en `LightTables`.
+
+    Même flux aléatoire que `msprime.sim_ancestry(num_replicates=...,
+    record_provenance=False)` (ce sont les mêmes appels que
+    `Simulator.run_replicates`), sans construire de `TreeSequence`
+    (`TableCollection.fromdict` + `tree_sequence()`, ≈ 45 µs par arbre) que
+    `sim_mutations` défait aussitôt (`ts.tables`, `asdict`, ≈ 45 µs).
+    Nécessite msprime == `_VERSION_MS_PRIME_LIGHT_REPLICATES`.
+
+    Args:
+        samples: Les échantillons, comme pour `msprime.sim_ancestry`.
+        demography: La démographie du locus (déjà rescalée si besoin).
+        sequence_length: La longueur des locus.
+        seed: La graine du lot de généalogies.
+        ploidy: La ploïdie.
+        num_replicates: Le nombre de généalogies.
+
+    Returns:
+        La liste des `LightTables`, dans l'ordre des réplicats.
+
+    Raises:
+        RuntimeError: Si le simulateur a des intervalles manquants (la
+            suppression qu'en ferait `sim_ancestry` n'est pas reproduite).
+    """
+    sim = msprime.ancestry._parse_sim_ancestry(
+        samples=samples,
+        demography=demography,
+        sequence_length=sequence_length,
+        random_seed=seed,
+        ploidy=ploidy,
+    )
+    trees = []
+    for _ in range(num_replicates):
+        sim.run()
+        if len(sim.missing_intervals) > 0:
+            raise RuntimeError(
+                "Intervalles manquants dans la simulation : chemin léger non géré."
+            )
+        trees.append(LightTables(sim.tables.asdict()))
+        sim.reset()
+    return trees
+
+
+def _mutate_tree(
+    tree: tskit.TreeSequence | LightTables,
+    *,
+    rate: float | msprime.RateMap,
+    model: msprime.MutationModel,
+    random_seed: int,
+) -> tskit.TreeSequence:
+    """Place des mutations sur une généalogie (`msprime.sim_mutations`, sans
+    provenance).
+
+    Pour un `TreeSequence`, c'est exactement `msprime.sim_mutations`. Pour des
+    `LightTables`, c'est la même séquence d'appels que cette fonction
+    (`_msprime.sim_mutations` sur des tables légères), sans les conversions
+    `TreeSequence` -> tables qu'elle impose : mêmes tables en sortie, vérifié
+    par `test_mutate_light_tables_equal_public_path`.
+
+    Args:
+        tree: La généalogie non mutée.
+        rate: Un taux par site et par génération, ou une `msprime.RateMap`.
+        model: Le modèle de mutation.
+        random_seed: La graine du tirage de mutation.
+
+    Returns:
+        La TreeSequence mutée.
+    """
+    if not isinstance(tree, LightTables):
+        return msprime.sim_mutations(
+            tree,
+            rate=rate,
+            model=model,
+            random_seed=random_seed,
+            record_provenance=False,
+        )
+    rate_map = (
+        rate
+        if isinstance(rate, msprime.RateMap)
+        else msprime.RateMap.uniform(tree.tables["sequence_length"], float(rate))
+    )
+    lightweight_tables = _msprime.LightweightTableCollection()
+    lightweight_tables.fromdict(tree.tables)
+    _msprime.sim_mutations(
+        tables=lightweight_tables,
+        random_generator=_msprime.RandomGenerator(int(random_seed)),
+        rate_map=rate_map.asdict(),
+        model=msprime.mutations.mutation_model_factory(model),
+        discrete_genome=True,
+        keep=True,
+        start_time=-sys.float_info.max,
+        end_time=sys.float_info.max,
+    )
+    return tskit.TableCollection.fromdict(lightweight_tables.asdict()).tree_sequence()
+
+
 def simulate_dna_mutations(
-    tree_sequence: tskit.TreeSequence,
+    tree_sequence: tskit.TreeSequence | LightTables,
     transition_matrix: np.ndarray,
     frequencies: dict[str, float],
     rate_map: msprime.RateMap,
@@ -2423,15 +2540,7 @@ def simulate_dna_mutations(
         transition_matrix=transition_matrix,
     )
 
-    mutated_ts = msprime.sim_mutations(
-        tree_sequence,
-        rate=rate_map,
-        model=model,
-        random_seed=seed,
-        record_provenance=False,
-    )
-
-    return mutated_ts
+    return _mutate_tree(tree_sequence, rate=rate_map, model=model, random_seed=seed)
 
 
 def ms_dna_ancestry_parameters_for_heritage(
@@ -2522,7 +2631,8 @@ def _simulate_ancestries_for_loci(
     seed: int,
     samples_default: list[msprime.SampleSet] | None,
     mss_file_path: str,
-) -> dict[str, tskit.TreeSequence]:
+    light_a_replicates: bool = False,
+) -> dict[str, tskit.TreeSequence | LightTables]:
 
     position_of = {locus.name: position for position, locus in enumerate(list_loci)}
     grouped_loci = _grouping_loci_by_group_and_heritage(list_loci, family)
@@ -2605,15 +2715,22 @@ def _simulate_ancestries_for_loci(
                     _SHARED_A_ANCESTRY_SEED_OFFSET,
                     _FAMILY_SEED_OFFSET[family] + batch_A_counter,
                 )
-                replicates = msprime.sim_ancestry(
-                    samples=samples,
-                    demography=loci_demography,
-                    sequence_length=length,
-                    random_seed=seed_offset,
-                    ploidy=ploidy,
-                    num_replicates=len(loci),
-                    record_provenance=False,
-                )
+                if light_a_replicates and (
+                    msprime.__version__ == _VERSION_MS_PRIME_LIGHT_REPLICATES
+                ):
+                    replicates = _light_a_trees(
+                        samples, loci_demography, length, seed_offset, ploidy, len(loci)
+                    )
+                else:
+                    replicates = msprime.sim_ancestry(
+                        samples=samples,
+                        demography=loci_demography,
+                        sequence_length=length,
+                        random_seed=seed_offset,
+                        ploidy=ploidy,
+                        num_replicates=len(loci),
+                        record_provenance=False,
+                    )
 
                 for locus, tree_sequence in zip(loci, replicates, strict=True):
                     tree_sequences[locus.name] = tree_sequence
@@ -2708,6 +2825,7 @@ def dna_mutation_simulation_per_locus(
         seed=seed,
         samples_default=samples_default,
         mss_file_path=mss_file_path,
+        light_a_replicates=True,
     )
 
     mutated_tree_sequences = {}
@@ -3095,6 +3213,7 @@ def dna_mutation_simulation_per_locus_from_values(
         seed=seed,
         samples_default=samples_default,
         mss_file_path=mss_file_path,
+        light_a_replicates=True,
     )
 
     mutated_tree_sequences = {}
@@ -3599,17 +3718,17 @@ def microsat_mutation_simulation_per_locus(
         seed=seed,
         samples_default=samples_default,
         mss_file_path=mss_file_path,
+        light_a_replicates=True,
     )
 
     for i, locus in enumerate(list_loci):
         if locus.ms_or_seq != "M":
             continue
-        mutated_ts = msprime.sim_mutations(
-            tree_sequence=tree_sequences[locus.name],
+        mutated_ts = _mutate_tree(
+            tree_sequences[locus.name],
             rate=params_per_locus[locus.name][0],
-            random_seed=_locus_seed(seed, _MUTATION_SEED_OFFSET, i),
             model=matrix_per_locus[locus.name],
-            record_provenance=False,
+            random_seed=_locus_seed(seed, _MUTATION_SEED_OFFSET, i),
         )
         mutated_tree_sequences[locus.name] = mutated_ts
     return mutated_tree_sequences, group_priors_values
@@ -3843,17 +3962,17 @@ def microsat_mutation_simulation_per_locus_from_values(
         seed=seed,
         samples_default=samples_default,
         mss_file_path=mss_file_path,
+        light_a_replicates=True,
     )
 
     for i, locus in enumerate(list_loci):
         if locus.ms_or_seq != "M":
             continue
-        mutated_ts = msprime.sim_mutations(
-            tree_sequence=tree_sequences[locus.name],
+        mutated_ts = _mutate_tree(
+            tree_sequences[locus.name],
             rate=params_per_locus[locus.name][0],
-            random_seed=_locus_seed(seed, _MUTATION_SEED_OFFSET, i),
             model=matrix_per_locus[locus.name],
-            record_provenance=False,
+            random_seed=_locus_seed(seed, _MUTATION_SEED_OFFSET, i),
         )
         mutated_tree_sequences[locus.name] = mutated_ts
     return mutated_tree_sequences

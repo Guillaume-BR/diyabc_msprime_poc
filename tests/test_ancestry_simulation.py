@@ -23,6 +23,7 @@ from msprime.ancestry import ExitReason
 import bridge.ancestry_simulation as as_module
 from bridge.ancestry_simulation import (
     LightReplicate,
+    LightTables,
     _derived_count,
     _derived_mask,
     _distribution_from_position,
@@ -30,6 +31,7 @@ from bridge.ancestry_simulation import (
     _grouping_loci_by_group_and_heritage,
     _gsm_matrix_numpy,
     _mix_sni_gsm_rows,
+    _mutate_tree,
     _place_gsm_row_on_dense_grid,
     _reindex_reads_by_msprime_name,
     _simulate_ancestries_for_loci,
@@ -2008,6 +2010,66 @@ def test_independent_family_trees(header_text_te2):
             np.sort(_dna_ancestries[loci_name_dna[i]].tables.nodes.time),
             np.sort(_ms_ancestries[loci_name_ms[i]].tables.nodes.time),
         )
+
+
+def _te2_demography():
+    demography = msprime.Demography()
+    for name in ("pop1", "pop2", "anc"):
+        demography.add_population(name=name, initial_size=1000)
+    demography.add_population_split(time=500, derived=["pop1", "pop2"], ancestral="anc")
+    return demography
+
+
+def _te2_ancestries(header_text_te2, *, light):
+    return _simulate_ancestries_for_loci(
+        parse_loci_description(header_text_te2),
+        family="S",
+        demography=_te2_demography(),
+        sex_ratio=0.5,
+        seed=42,
+        samples_default={"pop1": 5, "pop2": 5},
+        mss_file_path="blabla",
+        light_a_replicates=light,
+    )
+
+
+def test_mutate_light_tables_equal_public_path(header_text_te2):
+    """Les `LightTables` des loci <A> donnent les mêmes arbres puis les mêmes
+    mutations que le chemin public (`sim_ancestry` + `sim_mutations`) : mêmes
+    tables, au bit près. Les loci <M> (arbre partagé) restent des TreeSequence."""
+    plain = _te2_ancestries(header_text_te2, light=False)
+    light = _te2_ancestries(header_text_te2, light=True)
+    assert plain.keys() == light.keys()
+    n_light = sum(isinstance(tree, LightTables) for tree in light.values())
+    assert 0 < n_light < len(light)  # des loci <A> légers ET des loci <M> normaux
+
+    model = msprime.JC69()
+    rate_map = msprime.RateMap(position=[0, 40, 100], rate=[2e-2, 5e-3])
+    for k, name in enumerate(light):
+        if isinstance(light[name], LightTables):
+            unmutated = tskit.TableCollection.fromdict(light[name].tables)
+            assert unmutated.tree_sequence().tables.equals(plain[name].tables)
+        for rate in (1e-2, rate_map):  # taux scalaire (MicroSat) et RateMap (ADN)
+            expected = msprime.sim_mutations(
+                plain[name],
+                rate=rate,
+                model=model,
+                random_seed=k + 1,
+                record_provenance=False,
+            )
+            got = _mutate_tree(light[name], rate=rate, model=model, random_seed=k + 1)
+            assert got.tables.equals(expected.tables)
+            assert expected.num_sites > 0
+
+
+def test_light_a_replicates_falls_back_on_other_msprime_version(
+    header_text_te2, monkeypatch
+):
+    """Hors de la version d'msprime validée pour l'API privée, on retombe sur le
+    chemin public : que des TreeSequence."""
+    monkeypatch.setattr(msprime, "__version__", "0.0.0")
+    trees = _te2_ancestries(header_text_te2, light=True)
+    assert not any(isinstance(tree, LightTables) for tree in trees.values())
 
 
 def test_batch_A_counter():
