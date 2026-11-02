@@ -754,343 +754,13 @@ def simulate_particle_reads_from_values(
     )
 
 
-# --------------------------------------------------------------
-# Pour des séquences ADN
-# --------------------------------------------------------------
+# -------------------------------------------------------------
+# Helpers pour factoriser le code commun aux deux familles (ADN et MS)
+# -------------------------------------------------------------
+
+## Pour un tirage original
 
 
-def compute_summary_statistics_dna(
-    context: DnaReplayContext,
-    scenario_index: int,
-    *,
-    seed: int,
-    stats_filter: str = "ALL",
-) -> tuple[dict[str, float], dict[str, float]]:
-    """Calcule les 13 statistiques résumées ADN (compute_all_statistics_dna)
-    sur des données SIMULÉES par msprime -- équivalent ADN de
-    compute_summary_statistics_snp, pour les datasets qui
-    déclarent des loci séquence (`[S]`, groupes `G2`/`G3`... de header.txt)
-    plutôt que des SNP.
-
-    Tire les paramètres historiques (N1, ta, ts...) ET les priors de
-    groupe (k1/k2/mus_rate par groupe ADN, en interne à
-    dna_mutation_simulation_per_locus) depuis `seed` -- voir
-    compute_summary_statistics_dna_from_values pour la variante qui
-    rejoue des valeurs déjà connues plutôt que d'en tirer de nouvelles
-    (paired comparison avec un vrai reftable DIYABC).
-
-    `values` (le second élément du tuple retourné) ne contient QUE les
-    paramètres historiques, pas les priors de groupe -- dna_mutation_
-    simulation_per_locus ne renvoie nulle part les valeurs de k1/k2/
-    mus_rate qu'elle a tirées en interne, donc ce `values` seul ne
-    suffirait pas à rejouer exactement cette même particule (contrairement
-    au chemin SNP, où `values` capture tout ce qui a été tiré).
-
-    Args:
-        reference_directory: dossier contenant header.txt/headerRF.txt
-            et le fichier .mss observé (son nom lu sur la première ligne
-            du header).
-        scenario_index: le scénario à utiliser pour construire la
-            démographie (pas de tirage pondéré multi-scénario ici,
-            contrairement à reftable_loop.run_reftable_simulation_snp).
-        seed: graine de la particule -- dérive toutes les graines
-            internes (tirage des paramètres historiques, des priors de
-            groupe, des généalogies et mutations par locus).
-        stats_filter: "ALL" (toutes les stats implémentées) ou "HEADER"
-            (seulement celles déclarées dans header.txt, voir
-            compute_summary_statistics_snp pour le détail).
-
-    Returns:
-        (summary_stats, values) -- summary_stats est le dict {nom_
-        colonne_diyabc: valeur} de compute_all_statistics_dna (ex.
-        "NSS_2_1"), values est {nom_paramètre_historique: valeur}.
-    """
-    header_text = context.header_text
-
-    demography, values = build_random_demography_for_scenario_index(
-        header_text, scenario_index, seed
-    )
-
-    scenarios = parse_header_scenarios(context.header_text)
-    scenario = next(s for s in scenarios if s.index == scenario_index)
-    sample_sets = build_sample_sets_from_scenario(
-        scenario, values, context.samples_default
-    )
-
-    mutated, group_priors_values = dna_mutation_simulation_per_locus(
-        context, demography, seed, sample_sets=sample_sets
-    )
-
-    locus_by_name = {locus.name: locus for locus in context.list_loci}
-    layouts_by_locus = {
-        name: compute_sample_layout(
-            ts, counts_by_sample_for_locus(context, locus_by_name[name])
-        )
-        for name, ts in mutated.items()
-    }
-
-    sample_names = list(context.samples_default.keys())
-    summary_stats = compute_all_statistics_dna(
-        header_text,
-        mutated,
-        sample_names,
-        seed=seed,
-        layouts_by_locus=layouts_by_locus,
-    )
-    summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
-
-    return summary_stats, values, group_priors_values
-
-
-# Calcul des stats ADN à partir de valeurs déjà connues : rejeu de tirages DIYABC
-
-
-def compute_summary_statistics_dna_from_values(
-    context: DnaReplayContext,
-    scenario_index: int,
-    values: dict[str, float],
-    group_priors_values: dict[str, float],
-    *,
-    seed: int,
-    stats_filter: str = "ALL",
-) -> dict[str, float]:
-    """Variante de compute_summary_statistics_dna qui ne tire AUCUNE valeur de
-    prior.
-
-    Reprend telles quelles des valeurs de paramètres déjà connues,
-    typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
-    reftable_loop.replay_reftable_simulation_snp) -- permet de comparer
-    DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
-    biais possible de deux tirages indépendants.
-
-    Args:
-        context: Le contexte de rejeu pour les séquences ADN.
-        scenario_index: L'index 1-based du scénario à utiliser.
-        values: Les valeurs de paramètres historiques déjà connues,
-            {nom: valeur}.
-        group_priors_values: Dict {nom_param: valeur} pour tous les
-            groupes ADN déclarés dans header.txt. Ce sont les valeurs
-            que dna_mutation_simulation_per_locus aurait tirées en
-            interne si on avait appelé la variante "random"
-            (compute_summary_statistics_dna) -- elles ne sont pas
-            capturées par le dict `values` retourné par cette fonction
-            (voir compute_summary_statistics_dna).
-        seed: La graine du tirage par-locus (second niveau, généalogie,
-            mutation).
-        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics.
-    Returns:
-           Le dict summary_statistics (pas de `values` en retour,
-           puisqu'ils sont déjà connus de l'appelant).
-    """
-    header_text = context.header_text
-
-    demography = build_demography_for_scenario_index_from_values(
-        header_text, scenario_index, values
-    )
-
-    scenarios = parse_header_scenarios(context.header_text)
-    scenario = next(s for s in scenarios if s.index == scenario_index)
-    sample_sets = build_sample_sets_from_scenario(
-        scenario, values, context.samples_default
-    )
-
-    mutated = dna_mutation_simulation_per_locus_from_values(
-        context,
-        demography,
-        group_priors_values=group_priors_values,
-        seed=seed,
-        sample_sets=sample_sets,
-    )
-
-    locus_by_name = {locus.name: locus for locus in context.list_loci}
-    layouts_by_locus = {
-        name: compute_sample_layout(
-            ts, counts_by_sample_for_locus(context, locus_by_name[name])
-        )
-        for name, ts in mutated.items()
-    }
-    sample_names = list(context.samples_default.keys())
-    summary_stats = compute_all_statistics_dna(
-        header_text,
-        mutated,
-        sample_names,
-        seed=seed,
-        layouts_by_locus=layouts_by_locus,
-    )
-    summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
-
-    return summary_stats
-
-
-# ------------------------------------------------------------------
-# Pour les microsats
-# ------------------------------------------------------------------
-
-
-def compute_summary_statistics_microsat(
-    context: MicrosatReplayContext,
-    scenario_index: int,
-    *,
-    seed: int,
-    stats_filter: str = "ALL",
-) -> tuple[dict[str, float], dict[str, float], dict[str, dict[str, float]]]:
-    """Calcule les statistiques résumées microsat
-    (compute_all_statistics_microsat) sur des données SIMULÉES par msprime --
-    équivalent microsat de compute_summary_statistics_snp,
-    pour les datasets qui déclarent des loci microsat (`[M]`, groupes
-    `G4`/`G5`... de header.txt) plutôt que des SNP.
-
-    Tire les paramètres historiques (N1, ta, ts...) ET les priors de
-    groupe (mus_rate,Pgeom,SNI_rate) par groupe microsat, en interne à
-    microsat_mutation_simulation_per_locus) depuis `seed` -- voir
-    compute_summary_statistics_microsat_from_values pour la variante qui
-    rejoue des valeurs déjà connues plutôt que d'en tirer de nouvelles
-    (paired comparison avec un vrai reftable DIYABC).
-
-    `values` (le second élément du tuple retourné) ne contient QUE les
-    valeurs des priors historiques, pas les priors de groupe -- microsat_mutation_
-    simulation_per_locus ne renvoie nulle part les valeurs de mut_rate,Pgeom,sni_rate
-    qu'elle a tirées en interne, donc ce `values` seul ne
-    suffirait pas à rejouer exactement cette même particule (contrairement
-    au chemin SNP, où `values` capture tout ce qui a été tiré).
-
-    Args:
-        reference_directory: dossier contenant header.txt/headerRF.txt
-            et le fichier .mss observé (son nom lu sur la première ligne
-            du header).
-        scenario_index: le scénario à utiliser pour construire la
-            démographie (pas de tirage pondéré multi-scénario ici,
-            contrairement à reftable_loop.run_reftable_simulation_snp).
-        seed: La graine du tirage par-locus (second niveau, généalogie,
-            mutation).
-        stats_filter: "ALL" (toutes les stats implémentées) ou "HEADER"
-            (seulement celles déclarées dans header.txt, voir
-            compute_summary_statistics_snp pour le détail).
-    Returns:
-        (summary_stats, values, group_values) :
-        - summary_stats est le dict {nom_colonne_diyabc: valeur} de compute_all_statistics_microsat (ex.
-        "NSS_2_1"),
-        - values est {nom_paramètre_historique: valeur} et
-        - group_priors_values est le dictionnaire {nom_groupe: {nom_param_groupe: valeur}}
-        des valeurs de priors de groupe microsat tirées en interne.
-    """
-    header_text = context.header_text
-
-    demography, values = build_random_demography_for_scenario_index(
-        header_text, scenario_index, seed
-    )
-
-    scenarios = parse_header_scenarios(context.header_text)
-    scenario = next(s for s in scenarios if s.index == scenario_index)
-    sample_sets = build_sample_sets_from_scenario(
-        scenario, values, context.samples_default
-    )
-
-    mutated, group_priors_values = microsat_mutation_simulation_per_locus(
-        context, demography, seed, sample_sets=sample_sets
-    )
-
-    locus_by_name = {locus.name: locus for locus in context.list_loci}
-    layouts_by_locus = {
-        name: compute_sample_layout(
-            ts, counts_by_sample_for_locus(context, locus_by_name[name])
-        )
-        for name, ts in mutated.items()
-    }
-
-    sample_names = list(context.samples_default.keys())
-    summary_stats = compute_all_statistics_microsat(
-        header_text,
-        mutated,
-        sample_names,
-        seed=seed,
-        layouts_by_locus=layouts_by_locus,
-    )
-    summary_stats = _filter_statistics(summary_stats, header_text, stats_filter)
-
-    return summary_stats, values, group_priors_values
-
-
-# rejeu de tirages DIYABC pour microsats : on ne tire plus rien, on rejoue les valeurs déjà connues
-
-
-def compute_summary_statistics_microsat_from_values(
-    context: MicrosatReplayContext,
-    scenario_index: int,
-    values: dict[str, float],
-    group_priors_values: dict[str, dict[str, float]],
-    *,
-    seed: int,
-    stats_filter: str = "ALL",
-) -> dict[str, float]:
-    """Variante de compute_summary_statistics_microsat qui ne tire AUCUNE
-    valeur de prior.
-
-    Reprend telles quelles des valeurs de paramètres déjà connues,
-    typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
-    reftable_loop.replay_reftable_simulation_snp) -- permet de comparer
-    DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
-    biais possible de deux tirages indépendants.
-
-    Args:
-        reference_directory: Le dossier contenant header.txt et le
-            fichier .mss observé.
-        scenario_index: L'index 1-based du scénario à utiliser.
-        values: Les valeurs de paramètres historiques déjà connues,
-            {nom: valeur}.
-        group_priors_values: Dict {nom_param: valeur} pour tous les
-            groupes microsat déclarés dans header.txt. Ce sont les
-            valeurs que microsat_mutation_simulation_per_locus aurait
-            tirées en interne si on avait appelé la variante "random"
-            (compute_summary_statistics_microsat) -- elles ne sont pas
-            capturées par le dict `values` retourné par cette fonction
-            (voir compute_summary_statistics_microsat).
-        seed: La graine du tirage par-locus (second niveau, généalogie,
-            mutation).
-        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics_snp.
-
-    Returns:
-        Le dict summary_statistics (pas de `values` en retour,
-        puisqu'ils sont déjà connus de l'appelant).
-    """
-    demography = build_demography_for_scenario_index_from_values(
-        context.header_text, scenario_index, values
-    )
-
-    scenarios = parse_header_scenarios(context.header_text)
-    scenario = next(s for s in scenarios if s.index == scenario_index)
-    sample_sets = build_sample_sets_from_scenario(
-        scenario, values, context.samples_default
-    )
-
-    mutated = microsat_mutation_simulation_per_locus_from_values(
-        context, demography, group_priors_values, seed, sample_sets=sample_sets
-    )
-
-    locus_by_name = {locus.name: locus for locus in context.list_loci}
-    layouts_by_locus = {
-        name: compute_sample_layout(
-            ts, counts_by_sample_for_locus(context, locus_by_name[name])
-        )
-        for name, ts in mutated.items()
-    }
-
-    sample_names = list(context.samples_default.keys())
-    summary_stats = compute_all_statistics_microsat(
-        context.header_text,
-        mutated,
-        sample_names,
-        seed=seed,
-        layouts_by_locus=layouts_by_locus,
-    )
-    summary_stats = _filter_statistics(summary_stats, context.header_text, stats_filter)
-
-    return summary_stats
-
-
-# ---------------------------------------------------------------------------------------
-# Microsat et DNA combined
-# ---------------------------------------------------------------------------------------
 def _draw_common_data(
     context: DnaReplayContext | MicrosatReplayContext, scenario_index: int, seed: int
 ) -> tuple[msprime.Demography, list[msprime.SampleSet], dict[str, float]]:
@@ -1100,7 +770,7 @@ def _draw_common_data(
     Args:
         - context: Le contexte de rejeu pour les séquences ADN ou microsats.
         - scenario_index: L'index 1-based du scénario à utiliser.
-        - seed: La graine du tirage par-locus (second niveau, généalogie, mutation).
+        - seed: La graine du tirage par locus (second niveau, généalogie, mutation).
     Returns:
         Un tuple contenant :
         - demography: La démographie construite à partir des valeurs de paramètres.
@@ -1160,16 +830,108 @@ def _simulate_and_compute_statistics(
         - Le dictionnaire des statistiques résumées.
         - Le dictionnaire des valeurs de paramètres pour chaque groupe.
     """
-    if type_of_data.lower() not in ["dna", "microsat"]:
+    if type_of_data.lower() not in _STATS_BY_TYPE:
         raise ValueError(
             f"Type de données {type_of_data} non pris en charge. "
-            "Seuls 'dna' et 'microsat' sont pris en charge insensiblement à la casse."
+            f"Seuls {sorted(_STATS_BY_TYPE)} sont pris en charge insensiblement à la casse."
         )
 
     func_mutation = _MUTATION_BY_TYPE.get(type_of_data.lower())
 
     mutated, group_priors_values = func_mutation(
         context, demography, seed, sample_sets=sample_sets
+    )
+
+    locus_by_name = {locus.name: locus for locus in context.list_loci}
+    layouts_by_locus = {
+        name: compute_sample_layout(
+            ts, counts_by_sample_for_locus(context, locus_by_name[name])
+        )
+        for name, ts in mutated.items()
+    }
+
+    sample_names = list(context.samples_default.keys())
+
+    func_stats = _STATS_BY_TYPE[type_of_data.lower()]
+    summary_stats = func_stats(
+        context.header_text,
+        mutated,
+        sample_names,
+        layouts_by_locus=layouts_by_locus,
+        seed=seed,
+    )
+
+    return summary_stats, group_priors_values
+
+
+## Pour un rejeu : "from_values" (valeurs déjà connues, pas de tirage aléatoire)
+
+
+# A partir des valeurs déjà connues, on peut rejouer exactement la même particule (même tirage de paramètres historiques et de priors de groupe) pour les deux types de données ADN et microsat.
+def _draw_common_data_from_values(
+    context: DnaReplayContext | MicrosatReplayContext,
+    scenario_index: int,
+    values: dict[str, float],
+) -> tuple[msprime.Demography, list[msprime.SampleSet]]:
+    """Helper pour extraire les données communes nécessaires à la simulation et
+    au calcul des statistiques pour les scénarios ADN et microsat.
+
+    Args:
+        - context: Le contexte de rejeu pour les séquences ADN ou microsats.
+        - scenario_index: L'index 1-based du scénario à utiliser.
+        - values: Le dictionnaire des valeurs de paramètres.
+    Returns:
+        Un tuple contenant :
+        - demography: La démographie construite à partir des valeurs de paramètres.
+        - sample_sets: La liste des SampleSet construits à partir du scénario et des valeurs de paramètres.
+    """
+    header_text = context.header_text
+
+    demography = build_demography_for_scenario_index_from_values(
+        header_text, scenario_index, values
+    )
+
+    scenarios = parse_header_scenarios(header_text)
+    scenario = next(s for s in scenarios if s.index == scenario_index)
+    sample_sets = build_sample_sets_from_scenario(
+        scenario, values, context.samples_default
+    )
+    return demography, sample_sets
+
+
+def _simulate_and_compute_statistics_from_values(
+    context: DnaReplayContext | MicrosatReplayContext,
+    demography: msprime.Demography,
+    sample_sets: list[msprime.SampleSet],
+    *,
+    type_of_data: str,
+    group_priors_values: dict[str, float] | dict[str, dict[str, float]],
+    seed: int,
+) -> dict[str, float]:
+    """Helper permettant de calculer les statistiques résumées pour un type de
+    données donné (ADN ou microsat) à partir de valeurs déjà connues.
+
+    Args:
+        - context: Le contexte de rejeu pour les séquences ADN ou microsats.
+        - demography: La démographie construite à partir des valeurs de paramètres.
+        - sample_sets: La liste des SampleSet construits à partir du scénario et des valeurs de paramètres.
+        - type_of_data: Le type de données ("dna" ou "microsat").
+        - group_priors_values: Le dictionnaire des valeurs de paramètres pour chaque groupe.
+        - seed: La graine du tirage par-locus (second niveau, généalogie, mutation).
+    Returns:
+        Le dictionnaire des statistiques résumées.
+    """
+
+    if type_of_data.lower() not in _STATS_BY_TYPE:
+        raise ValueError(
+            f"Type de données {type_of_data} non pris en charge. "
+            f"Seuls {sorted(_STATS_BY_TYPE)} sont pris en charge insensiblement à la casse."
+        )
+
+    func_mutation_from_values = _MUTATION_FROM_VALUES_BY_TYPE.get(type_of_data.lower())
+
+    mutated = func_mutation_from_values(
+        context, demography, group_priors_values, seed, sample_sets=sample_sets
     )
 
     locus_by_name = {locus.name: locus for locus in context.list_loci}
@@ -1191,7 +953,269 @@ def _simulate_and_compute_statistics(
         seed=seed,
     )
 
-    return summary_stats, group_priors_values
+    return summary_stats
+
+
+# --------------------------------------------------------------
+# Pour des séquences ADN
+# --------------------------------------------------------------
+
+
+def compute_summary_statistics_dna(
+    context: DnaReplayContext,
+    scenario_index: int,
+    *,
+    seed: int,
+    stats_filter: str = "ALL",
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Calcule les 13 statistiques résumées ADN (compute_all_statistics_dna)
+    sur des données SIMULÉES par msprime -- équivalent ADN de
+    compute_summary_statistics_snp, pour les datasets qui
+    déclarent des loci séquence (`[S]`, groupes `G2`/`G3`... de header.txt)
+    plutôt que des SNP.
+
+    Tire les paramètres historiques (N1, ta, ts...) ET les priors de
+    groupe (k1/k2/mus_rate par groupe ADN, en interne à
+    dna_mutation_simulation_per_locus) depuis `seed` -- voir
+    compute_summary_statistics_dna_from_values pour la variante qui
+    rejoue des valeurs déjà connues plutôt que d'en tirer de nouvelles
+    (paired comparison avec un vrai reftable DIYABC).
+
+    `values` (le second élément du tuple retourné) ne contient QUE les
+    paramètres historiques, pas les priors de groupe -- dna_mutation_
+    simulation_per_locus ne renvoie nulle part les valeurs de k1/k2/
+    mus_rate qu'elle a tirées en interne, donc ce `values` seul ne
+    suffirait pas à rejouer exactement cette même particule (contrairement
+    au chemin SNP, où `values` capture tout ce qui a été tiré).
+
+    Args:
+        reference_directory: dossier contenant header.txt/headerRF.txt
+            et le fichier .mss observé (son nom lu sur la première ligne
+            du header).
+        scenario_index: le scénario à utiliser pour construire la
+            démographie (pas de tirage pondéré multi-scénario ici,
+            contrairement à reftable_loop.run_reftable_simulation_snp).
+        seed: graine de la particule -- dérive toutes les graines
+            internes (tirage des paramètres historiques, des priors de
+            groupe, des généalogies et mutations par locus).
+        stats_filter: "ALL" (toutes les stats implémentées) ou "HEADER"
+            (seulement celles déclarées dans header.txt, voir
+            compute_summary_statistics_snp pour le détail).
+
+    Returns:
+        (summary_stats, values) -- summary_stats est le dict {nom_
+        colonne_diyabc: valeur} de compute_all_statistics_dna (ex.
+        "NSS_2_1"), values est {nom_paramètre_historique: valeur}.
+    """
+
+    demography, sample_sets, values = _draw_common_data(context, scenario_index, seed)
+
+    summary_stats, group_priors_values = _simulate_and_compute_statistics(
+        context, demography, sample_sets, type_of_data="dna", seed=seed
+    )
+
+    summary_stats = _filter_statistics(summary_stats, context.header_text, stats_filter)
+
+    return summary_stats, values, group_priors_values
+
+
+# Calcul des stats ADN à partir de valeurs déjà connues : rejeu de tirages DIYABC
+
+
+def compute_summary_statistics_dna_from_values(
+    context: DnaReplayContext,
+    scenario_index: int,
+    values: dict[str, float],
+    group_priors_values: dict[str, float],
+    *,
+    seed: int,
+    stats_filter: str = "ALL",
+) -> dict[str, float]:
+    """Variante de compute_summary_statistics_dna qui ne tire AUCUNE valeur de
+    prior.
+
+    Reprend telles quelles des valeurs de paramètres déjà connues,
+    typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
+    reftable_loop.replay_reftable_simulation_snp) -- permet de comparer
+    DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
+    biais possible de deux tirages indépendants.
+
+    Args:
+        context: Le contexte de rejeu pour les séquences ADN.
+        scenario_index: L'index 1-based du scénario à utiliser.
+        values: Les valeurs de paramètres historiques déjà connues,
+            {nom: valeur}.
+        group_priors_values: Dict {nom_param: valeur} pour tous les
+            groupes ADN déclarés dans header.txt. Ce sont les valeurs
+            que dna_mutation_simulation_per_locus aurait tirées en
+            interne si on avait appelé la variante "random"
+            (compute_summary_statistics_dna) -- elles ne sont pas
+            capturées par le dict `values` retourné par cette fonction
+            (voir compute_summary_statistics_dna).
+        seed: La graine du tirage par-locus (second niveau, généalogie,
+            mutation).
+        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics.
+    Returns:
+           Le dict summary_statistics (pas de `values` en retour,
+           puisqu'ils sont déjà connus de l'appelant).
+    """
+
+    demography, sample_sets = _draw_common_data_from_values(
+        context,
+        scenario_index,
+        values,
+    )
+
+    summary_stats = _simulate_and_compute_statistics_from_values(
+        context,
+        demography,
+        sample_sets,
+        type_of_data="dna",
+        group_priors_values=group_priors_values,
+        seed=seed,
+    )
+
+    summary_stats = _filter_statistics(summary_stats, context.header_text, stats_filter)
+
+    return summary_stats
+
+
+# ------------------------------------------------------------------
+# Pour les microsats
+# ------------------------------------------------------------------
+
+
+def compute_summary_statistics_microsat(
+    context: MicrosatReplayContext,
+    scenario_index: int,
+    *,
+    seed: int,
+    stats_filter: str = "ALL",
+) -> tuple[dict[str, float], dict[str, float], dict[str, dict[str, float]]]:
+    """Calcule les statistiques résumées microsat
+    (compute_all_statistics_microsat) sur des données SIMULÉES par msprime --
+    équivalent microsat de compute_summary_statistics_snp,
+    pour les datasets qui déclarent des loci microsat (`[M]`, groupes
+    `G4`/`G5`... de header.txt) plutôt que des SNP.
+
+    Tire les paramètres historiques (N1, ta, ts...) ET les priors de
+    groupe (mus_rate,Pgeom,SNI_rate) par groupe microsat, en interne à
+    microsat_mutation_simulation_per_locus) depuis `seed` -- voir
+    compute_summary_statistics_microsat_from_values pour la variante qui
+    rejoue des valeurs déjà connues plutôt que d'en tirer de nouvelles
+    (paired comparison avec un vrai reftable DIYABC).
+
+    `values` (le second élément du tuple retourné) ne contient QUE les
+    valeurs des priors historiques, pas les priors de groupe -- microsat_mutation_
+    simulation_per_locus ne renvoie nulle part les valeurs de mut_rate,Pgeom,sni_rate
+    qu'elle a tirées en interne, donc ce `values` seul ne
+    suffirait pas à rejouer exactement cette même particule (contrairement
+    au chemin SNP, où `values` capture tout ce qui a été tiré).
+
+    Args:
+        reference_directory: dossier contenant header.txt/headerRF.txt
+            et le fichier .mss observé (son nom lu sur la première ligne
+            du header).
+        scenario_index: le scénario à utiliser pour construire la
+            démographie (pas de tirage pondéré multi-scénario ici,
+            contrairement à reftable_loop.run_reftable_simulation_snp).
+        seed: La graine du tirage par-locus (second niveau, généalogie,
+            mutation).
+        stats_filter: "ALL" (toutes les stats implémentées) ou "HEADER"
+            (seulement celles déclarées dans header.txt, voir
+            compute_summary_statistics_snp pour le détail).
+    Returns:
+        (summary_stats, values, group_values) :
+        - summary_stats est le dict {nom_colonne_diyabc: valeur} de compute_all_statistics_microsat (ex.
+        "NSS_2_1"),
+        - values est {nom_paramètre_historique: valeur} et
+        - group_priors_values est le dictionnaire {nom_groupe: {nom_param_groupe: valeur}}
+        des valeurs de priors de groupe microsat tirées en interne.
+    """
+
+    demography, sample_sets, values = _draw_common_data(
+        context,
+        scenario_index,
+        seed,
+    )
+
+    summary_stats, group_priors_values = _simulate_and_compute_statistics(
+        context,
+        demography,
+        sample_sets,
+        type_of_data="microsat",
+        seed=seed,
+    )
+
+    summary_stats = _filter_statistics(summary_stats, context.header_text, stats_filter)
+
+    return summary_stats, values, group_priors_values
+
+
+# rejeu de tirages DIYABC pour microsats : on ne tire plus rien, on rejoue les valeurs déjà connues
+
+
+def compute_summary_statistics_microsat_from_values(
+    context: MicrosatReplayContext,
+    scenario_index: int,
+    values: dict[str, float],
+    group_priors_values: dict[str, dict[str, float]],
+    *,
+    seed: int,
+    stats_filter: str = "ALL",
+) -> dict[str, float]:
+    """Variante de compute_summary_statistics_microsat qui ne tire AUCUNE
+    valeur de prior.
+
+    Reprend telles quelles des valeurs de paramètres déjà connues,
+    typiquement les tirages RÉELS d'un reftable DIYABC existant (voir
+    reftable_loop.replay_reftable_simulation_snp) -- permet de comparer
+    DIYABC et msprime sur EXACTEMENT les mêmes tirages de priors, sans le
+    biais possible de deux tirages indépendants.
+
+    Args:
+        reference_directory: Le dossier contenant header.txt et le
+            fichier .mss observé.
+        scenario_index: L'index 1-based du scénario à utiliser.
+        values: Les valeurs de paramètres historiques déjà connues,
+            {nom: valeur}.
+        group_priors_values: Dict {nom_param: valeur} pour tous les
+            groupes microsat déclarés dans header.txt. Ce sont les
+            valeurs que microsat_mutation_simulation_per_locus aurait
+            tirées en interne si on avait appelé la variante "random"
+            (compute_summary_statistics_microsat) -- elles ne sont pas
+            capturées par le dict `values` retourné par cette fonction
+            (voir compute_summary_statistics_microsat).
+        seed: La graine du tirage par-locus (second niveau, généalogie,
+            mutation).
+        stats_filter: "ALL" ou "HEADER", voir compute_summary_statistics_snp.
+
+    Returns:
+        Le dict summary_statistics (pas de `values` en retour,
+        puisqu'ils sont déjà connus de l'appelant).
+    """
+
+    demography, sample_sets = _draw_common_data_from_values(
+        context, scenario_index, values
+    )
+
+    summary_stats = _simulate_and_compute_statistics_from_values(
+        context,
+        demography,
+        sample_sets,
+        type_of_data="microsat",
+        group_priors_values=group_priors_values,
+        seed=seed,
+    )
+
+    summary_stats = _filter_statistics(summary_stats, context.header_text, stats_filter)
+
+    return summary_stats
+
+
+# ---------------------------------------------------------------------------------------
+# Microsat et DNA combined
+# ---------------------------------------------------------------------------------------
 
 
 def compute_summary_statistics_mixed(
@@ -1268,95 +1292,6 @@ def compute_summary_statistics_mixed(
     )
 
     return combined_summary_stats, values, group_priors_values_dna
-
-
-# A partir des valeurs déjà connues, on peut rejouer exactement la même particule (même tirage de paramètres historiques et de priors de groupe) pour les deux types de données ADN et microsat.
-def _draw_common_data_from_values(
-    context: DnaReplayContext | MicrosatReplayContext,
-    scenario_index: int,
-    values: dict[str, float],
-) -> tuple[msprime.Demography, list[msprime.SampleSet]]:
-    """Helper pour extraire les données communes nécessaires à la simulation et
-    au calcul des statistiques pour les scénarios ADN et microsat.
-
-    Args:
-        - context: Le contexte de rejeu pour les séquences ADN ou microsats.
-        - scenario_index: L'index 1-based du scénario à utiliser.
-        - values: Le dictionnaire des valeurs de paramètres.
-    Returns:
-        Un tuple contenant :
-        - demography: La démographie construite à partir des valeurs de paramètres.
-        - sample_sets: La liste des SampleSet construits à partir du scénario et des valeurs de paramètres.
-    """
-    header_text = context.header_text
-
-    demography = build_demography_for_scenario_index_from_values(
-        header_text, scenario_index, values
-    )
-
-    scenarios = parse_header_scenarios(header_text)
-    scenario = next(s for s in scenarios if s.index == scenario_index)
-    sample_sets = build_sample_sets_from_scenario(
-        scenario, values, context.samples_default
-    )
-    return demography, sample_sets
-
-
-def _simulate_and_compute_statistics_from_values(
-    context: DnaReplayContext | MicrosatReplayContext,
-    demography: msprime.Demography,
-    sample_sets: list[msprime.SampleSet],
-    *,
-    type_of_data: str,
-    group_priors_values: dict[str, float],
-    seed: int,
-) -> dict[str, float]:
-    """Helper permettant de calculer les statistiques résumées pour un type de
-    données donné (ADN ou microsat) à partir de valeurs déjà connues.
-
-    Args:
-        - context: Le contexte de rejeu pour les séquences ADN ou microsats.
-        - demography: La démographie construite à partir des valeurs de paramètres.
-        - sample_sets: La liste des SampleSet construits à partir du scénario et des valeurs de paramètres.
-        - type_of_data: Le type de données ("dna" ou "microsat").
-        - group_priors_values: Le dictionnaire des valeurs de paramètres pour chaque groupe.
-        - seed: La graine du tirage par-locus (second niveau, généalogie, mutation).
-    Returns:
-        Le dictionnaire des statistiques résumées.
-    """
-
-    if type_of_data.lower() not in ["dna", "microsat"]:
-        raise ValueError(
-            f"Type de données {type_of_data} non pris en charge. "
-            "Seuls 'dna' et 'microsat' sont pris en charge insensiblement à la casse."
-        )
-
-    func_mutation_from_values = _MUTATION_FROM_VALUES_BY_TYPE.get(type_of_data.lower())
-
-    mutated = func_mutation_from_values(
-        context, demography, group_priors_values, seed, sample_sets=sample_sets
-    )
-
-    locus_by_name = {locus.name: locus for locus in context.list_loci}
-    layouts_by_locus = {
-        name: compute_sample_layout(
-            ts, counts_by_sample_for_locus(context, locus_by_name[name])
-        )
-        for name, ts in mutated.items()
-    }
-
-    sample_names = list(context.samples_default.keys())
-
-    func_stats = _STATS_BY_TYPE.get(type_of_data.lower())
-    summary_stats = func_stats(
-        context.header_text,
-        mutated,
-        sample_names,
-        layouts_by_locus=layouts_by_locus,
-        seed=seed,
-    )
-
-    return summary_stats
 
 
 def compute_summary_statistics_mixed_from_values(
