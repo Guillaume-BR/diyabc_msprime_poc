@@ -2139,7 +2139,7 @@ def run_reftable_simulation_mixed(
     return [results_by_index[i] for i in range(nrec)]
 
 
-# Version par rejou de tirages réels de DIYABC pour les particules microsat+DNA (comparaison appariée)
+# Version par rejeu de tirages réels de DIYABC pour les particules microsat+DNA (comparaison appariée)
 
 
 def _run_single_particle_mixed_from_values(
@@ -2151,6 +2151,7 @@ def _run_single_particle_mixed_from_values(
     group_priors_values: dict[str, float],
     *,
     stats_filter: str,
+    seed_offset: int = 0,
 ) -> ParticleResult:
     """Variante de _run_single_particle_mixed qui NE TIRE AUCUN paramètre.
 
@@ -2174,7 +2175,7 @@ def _run_single_particle_mixed_from_values(
     Returns:
         Le ParticleResult de cette particule.
     """
-    seed = particle_index + 1
+    seed = particle_index + 1 + seed_offset
     summary_statistics = compute_summary_statistics_mixed_from_values(
         context_dna=context_dna,
         context_microsat=context_microsat,
@@ -2201,6 +2202,7 @@ def replay_reftable_simulation_mixed(
     real_reftable_path: str | Path,
     stats_filter: str = "ALL",
     max_workers: int | None = None,
+    seed_offset: int = 0,
 ) -> list[ParticleResult]:
     """Rejoue, particule par particule, les tirages RÉELS de DIYABC (équivalent
     microsat+DNA de replay_reftable_simulation_snp).
@@ -2284,6 +2286,7 @@ def replay_reftable_simulation_mixed(
                 values,
                 group_priors_values,
                 stats_filter=stats_filter,
+                seed_offset=seed_offset,
             ): particle_index
             for particle_index, (
                 scenario_index,
