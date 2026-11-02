@@ -540,8 +540,7 @@ def simulate_particle_genotypes_from_values(
     # Même construction que le jumeau simulate_particle_genotypes : sans elle, un
     # jeu SÉRIEL (1 population échantillonnée à plusieurs dates) reçoit les noms
     # pop1..popN des blocs POP du .snp et msprime lève « Population with name
-    # 'pop2' not found ». Perdue au commit 392d193 (25/09), jamais détectée : aucun
-    # test ne rejouait de jeu IndSeq sériel.
+    # 'pop2' not found ».
     if counts_per_sample is None:
         counts_per_sample = {
             f"pop{i}": n for i, n in enumerate(context.counts_per_sample.values(), 1)
