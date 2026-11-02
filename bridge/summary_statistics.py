@@ -2858,6 +2858,8 @@ def compute_SML(
         Dict {"i.j.k": SML} pour chaque triplet d'échantillons (focal i,
         parents j et k).
     """
+    if len(sample_names) < 3:
+        return {}  # aucun triplet : inutile de numéroter les haplotypes de chaque locus
     layouts_for_ids = layouts if layouts is not None else [None] * len(tree_sequences)
     if length_by_sample_per_locus is None or genotypes_by_sample_per_locus is None:
         # Une seule numérotation par locus, partagée par les deux lectures.
