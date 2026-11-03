@@ -239,28 +239,47 @@ def test_sample_site_rates():
     result = sample_site_rates(p_fixe, gams, dnalength, rng)
     assert len(result) == dnalength
     nb_sites_fixes = 2
-    assert all(rate == 0.0 for rate in result[:nb_sites_fixes])
+    zero = result == 0.0
+    assert zero.sum() == nb_sites_fixes  # deux sites invariants, où que ce soit
     assert all(
-        abs(rate - 1 / (dnalength - nb_sites_fixes)) < 1e-6
-        for rate in result[nb_sites_fixes:]
+        abs(rate - 1 / (dnalength - nb_sites_fixes)) < 1e-6 for rate in result[~zero]
     )
 
 
 def test_sample_site_rates_follows_gamma_of_mean_one():
     """Les poids de sites suivent une loi gamma de forme `gams` et de moyenne 1
-    (comme MwcGen::ggamma3), à la normalisation par la somme près ; les sites
-    invariants sont les premiers."""
+    (comme MwcGen::ggamma3), à la normalisation par la somme près ; le bon
+    nombre de sites sont invariants."""
     gams, dnalength, p_fixe = 0.5, 20_000, 10
     rng = np.random.default_rng(7)
     mutsit = sample_site_rates(p_fixe, gams, dnalength, rng)
 
     nb_sites_fixes = dnalength - 18_000
-    assert np.all(mutsit[:nb_sites_fixes] == 0.0)
+    assert np.count_nonzero(mutsit == 0.0) == nb_sites_fixes
     assert np.isclose(mutsit.sum(), 1.0)
-    variable = mutsit[nb_sites_fixes:] * len(mutsit[nb_sites_fixes:])  # moyenne 1
+    variable = mutsit[mutsit > 0.0]
+    variable = variable * len(variable)  # moyenne 1
     # Gamma(forme=gams, échelle=1/gams) : moyenne 1, variance 1/gams.
     assert abs(variable.mean() - 1.0) < 1e-9
     assert abs(variable.var() - 1.0 / gams) < 0.15
     assert (
         scipy_stats.kstest(variable, "gamma", args=(gams, 0, 1.0 / gams)).pvalue > 1e-3
     )
+
+
+def test_sample_site_rates_invariant_sites_are_a_uniform_subset():
+    """Les sites invariants sont `nb_sites_fixes` sites distincts tirés
+    uniformément, pas les premiers (écart assumé à DIYABC, voir la docstring de
+    `sample_site_rates`) : chaque site est invariant avec probabilité
+    `p_fixe / 100`, et le site 0 ne l'est pas toujours."""
+    dnalength, p_fixe, n_draws = 20, 25, 4000
+    rng = np.random.default_rng(11)
+    counts = np.zeros(dnalength)
+    for _ in range(n_draws):
+        zero = sample_site_rates(p_fixe, 0.5, dnalength, rng) == 0.0
+        assert zero.sum() == 5  # cinq sites distincts
+        counts += zero
+    frequency = counts / n_draws
+    # Écart-type binomial ≈ 0,007 : 0,04 est large, mais une version « les premiers
+    # sites » donnerait 1,0 pour les cinq premiers et 0,0 pour les autres.
+    assert np.all(np.abs(frequency - 0.25) < 0.04)
