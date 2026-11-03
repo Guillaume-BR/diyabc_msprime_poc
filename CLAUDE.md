@@ -28,7 +28,7 @@ structurally and statistically equivalent to the real DIYABC's output.
 | Serial/temporal sampling (SNP IndSeq) | complete | `human_seriel` (1 population, 4 sampling times, 130 stats, 0/130 significant) |
 | Serial/temporal sampling (SNP PoolSeq) | complete | `toy_example4_seriel` (100 loci, `<MRC=5>`, 4/133 vs ~6.7 expected) |
 | Mixed MicroSat + DNA in one header | complete | `toy_example2_ms_dna_TN` (73 columns, 2 replays × 2 scenarios) |
-| Serial MicroSat + DNA, 4 samples (`AML`, `SML`) | complete, 224 columns (24 `SML`) | `toy_example2_ms_dna_50loci_TN_seriel`: 2 independent DIYABC reftables × 2 scenarios, 1 `SML` flag out of 96, 0 `AML` flag (02/11) |
+| Serial MicroSat + DNA, 4 samples (`AML`, `SML`) | complete, 224 columns (24 `SML`) | `toy_example2_ms_dna_50loci_TN_seriel`: 3 independent DIYABC reftables, several `seed_offset`s, 12 cells: 4 `SML` flags out of 288 columns, none repeated; MicroSat G1 `LIK`/`MGW`/`N2P` of scenario 2 recur (10 loci, probably the loci-count residual, undecided) (02/11) |
 
 **Validation status (06/10): every dataset in the "Validated against" column above is
 validated with the final code**
@@ -565,9 +565,11 @@ locus/particle.
   `seed_offset: int = 0`, added to the raw particle seed (the one seed that stays raw);
   `scripts/replay_diyabc_priors_ms.py` exposes it as `SEED_OFFSET`. Re-run a
   suspicious replay with an offset (100 000, 200 000) before investigating a flagged
-  column: a flag that moves is noise (`DTA_2_2`, `ML3p_2.3.4`, `AML_2_3.1.2`). Only the
-  MicroSat chain has the parameter; the other replay entry points still use
-  `particle_index + 1` (add it the same way when needed).
+  column: a flag that moves is noise (`DTA_2_2`, `ML3p_2.3.4`, `AML_2_3.1.2`). Since 02/11 the four
+  chains (`replay_reftable_simulation_snp`, `_dna`, `_microsat`, `_mixed`) take it, and each
+  `scripts/replay_diyabc_priors_*.py` exposes it as `SEED_OFFSET`. **Mind the script default: 200 000, not 0**
+  (a replay run "with the base seeds" before 02/11 on the DNA/mixed/SNP chains was offset 0; on the MicroSat chain
+  it was already 200 000).
 
 - **A leftover `.snp.bin` / `.snpbin.txt` stops DIYABC from converting the `.snp`, so it writes no
   `maf.txt`, and it then runs WITHOUT the MAF filter and without any message.** The MAF is not in the
@@ -599,6 +601,13 @@ locus/particle.
   mistake produced a "persistent −3.5 %" that a second reftable did not reproduce. And the comparison
   notebook fixes `scenario = 1` (a third of the rows, p-values ~30x higher): compare all rows through
   `rewrite_real_reftable_txt`.
+- **Same for the light `<A>` mutation path (02/11).** `_light_a_trees` / `_mutate_tree` / `LightTables` in
+  `ancestry_simulation.py` drive the simulator and `_msprime.sim_mutations` directly for the `<A>` loci of DNA and
+  MicroSat (tree and mutation tables never leave their lightweight form until the final `TreeSequence`); behind the
+  same version guard, with `test_mutate_light_tables_equal_public_path` (trees AND mutated tables equal to
+  `sim_ancestry` + `sim_mutations`) and `test_light_a_replicates_falls_back_on_other_msprime_version`. Never route a
+  shared-tree locus (`<M>`, `<Y>`) through it without copying its tables per locus: the lightweight tables are
+  consumed by the mutation call.
 - **The private msprime API behind the light replicates stays guarded and tested.** Keep the version
   guard, `test_compare_light_replicates_with_reference` (arrays equal to `simulate_independent_loci`)
   and `test_light_replicates_resume_after_interrupted_runs` (forces `_LIGHT_EVENT_CHUNK` to 20 and 1:
@@ -964,6 +973,15 @@ under the date given.
   flags of 13/10 vanish (smallest `AML` p 0.001 → 0.056); only `AML_2_3.1.2` keeps a stable sign (+2.3 to +3.8 %,
   p 0.028-0.162 over three seed offsets) on ONE DIYABC reftable, absent on the other: undecided without a third
   reftable. Beware: the replay script's default `SEED_OFFSET` is 200 000, not 0.
+- **Site rates drawn with numpy (02/11) — same law, new stream, validated by replay.** `sample_site_rates` takes a
+  `np.random.Generator` (one `default_rng(_locus_seed(seed, _SITE_RATE_SEED_OFFSET, 0))` per particle) and
+  `build_rate_map` works on arrays: `build_rate_map_per_locus` 12.2 → 6.0 ms, DNA particle ≈ −5 %. **Every DNA
+  statistic changed at equal seed**: 15 golden tests were regenerated after an independent check with tskit
+  (NSS, NHA, MPD, DTA, PSS, NS2, NH2, MPB), and anything produced before 02/11 (reftables, stored comparisons) is no
+  longer comparable at the bit level. Replay, 4 datasets × 2 scenarios: KS flags against DIYABC unchanged, new-vs-old
+  mean of the relative differences on the DNA columns +0.016 % (sd 0.077 % between cells, t = 0.6). Trap: tskit's
+  `segregating_sites(mode="site")` counts each derived allele of a multi-allelic site (8 where `cal_nss` counts 7
+  sites): do not use it to check `NSS`/`NS2`/`DTA`.
 - **`SML` (02/11) — implemented and validated.** `cal_aml3p` is `AML` with one haplotype per allele (`cal_freq`),
   so `_compute_AML_one_triplet` is reused unchanged on haplotype ids; the only addition is the guard of
   `sumstat.cpp:2100-2106` (statistic = 0.5 when no locus shows two distinct haplotypes among the two parents
@@ -1249,7 +1267,8 @@ id simply yields `0`.
 
 Every `_from_values` function is a **sibling** of its drawing counterpart,
 never a modification of it — the originals are validated against real
-reftables and must not be touched. Only the **group-level** (tier 1) draw is
+reftables and must not be touched. (Since 02/11 the DNA and MicroSat siblings call shared
+helpers in `pipeline.py`, one for drawing and one for replay; see "Design decisions".) Only the **group-level** (tier 1) draw is
 replaced with the real DIYABC value; the per-locus (tier 2) dispersion around
 that mean is never replaced, because DIYABC doesn't record it in the reftable.
 `group_prior_column_names` is scenario-**independent** (`nparamut` is constant
@@ -1288,11 +1307,17 @@ because DIYABC's own output depends on them.
 
 ## Design decisions
 
-- **Sibling duplication over parameterization.** The SNP → DNA → MicroSat
-  function families are deliberately kept as near-identical siblings rather
-  than factored into one parameterized function. Reaffirmed twice with the
-  user; the rule is "never modify an already-validated original". Don't
-  refactor these without asking.
+- **Sibling duplication over parameterization — with one exception since 02/11.** The SNP → DNA → MicroSat
+  function families are kept as near-identical siblings rather than factored into one parameterized function.
+  Reaffirmed twice with the user; the rule is "never modify an already-validated original". Don't refactor these
+  without asking. **Exception, decided by the user on 02/11: in `pipeline.py` the DNA and MicroSat paths share four
+  helpers** (`_draw_common_data`, `_simulate_and_compute_statistics`, and their `_from_values` counterparts),
+  dispatched on `type_of_data` through `_MUTATION_BY_TYPE`, `_MUTATION_FROM_VALUES_BY_TYPE` and `_STATS_BY_TYPE`;
+  `compute_summary_statistics_{dna,microsat,mixed}{,_from_values}` are now thin callers. It was proven neutral by
+  exact identity (`compare_particles_dna` / `_microsat`: 0 differences; the three replays DNA, MicroSat and mixed at
+  1000 particles: byte-identical to `HEAD`). **What stays duplicated on purpose:** drawing and replay never share a
+  helper (a `from_values` flag once hid three divergences at once), the SNP/PoolSeq paths, and everything in
+  `reftable_loop.py`. A new data family goes through the same dispatch dicts, not through a copy.
 - **No dedup across stat groups** in `stats_group_parser.py` — it is still
   unclear whether two groups could legitimately declare the same column name
   for two different underlying statistics, and collapsing via `set` would
@@ -1322,7 +1347,7 @@ case: the variance is not measured.**
 | PoolSeq Hudson | `toy_example4_hudson` | 100 | 26.2 s | 19.2 s | 0.73x | 98.6 / 1.4 % |
 | PoolSeq MRC > 0 | `toy_example4` | 100 | 86.7 s | 40.3 s | 0.47x | 99.4 / 0.6 % |
 | PoolSeq serial | `toy_example4_seriel` | 1000 | 524.9 s | 219.8 s | 0.42x | 99.8 / 0.2 % |
-| DNA | `toy_example2_ms_dna_50loci_TN` | 110 | 1.6 s | **12.3 s** (13.4 s on 14/10; 104.1 s on 07/10) | **7.57x** | 63.7 / 36.3 % |
+| DNA (mixed MicroSat + DNA, 58 stats) | `toy_example2_ms_dna_50loci_TN` | 110 | 2.05 s (1.6 s on 22/10, same machine, other day) | **18.3 s** mixed replay on 02/11 (DNA-only replay: 13.86 s, 100 loci and 42 stats: **not the same load**; 12.3 s on 22/10 was DNA-only against DIYABC's full 110 loci / 58 stats, so the old 7.57x flattered us) | **≈ 8.9x** at equal load before the 02/11 light `<A>` mutations, **≈ 7.1x** after (mixed replay 18.3 → 14.5 s; DNA-only 6.8x before; ±1 with DIYABC's ±12 % variance) | not re-measured |
 | DNA serial (mixed, 224 stats incl. 24 `SML`) | `..._50loci_TN_seriel` | 110 | 20.5 s (16-20.5 s over 4 runs; the 1.6 s of 07/10 had 58 statistics, `-R ALL` gives 224 from 4 samples) | **44.3 s** (50.7 s before the 02/11 `SML` optimisation; 30.8 s was without `SML`: unequal load) | **≈ 2.2x** (2.4-3.1x before, DIYABC variance ±12 %) | not re-measured |
 | MicroSat | `toy_example1_ms_modified` | 50 | 2.1 s | **9.7 s** (20.4 s on 12-14/10; 228.7 s before) | **4.59x** (8.9x before) | 49.9 / 50.1 % |
 | MicroSat serial | `toy_example1_ms_seriel` | 50 | 2.2 s | **10.3 s** (23.6 s on 12-14/10; 256.7 s on 07/10) | **4.66x** (9.8x before) | 47.2 / 52.8 % |
@@ -1482,12 +1507,13 @@ isolated (candidates: `record_provenance=False` on every `sim_ancestry` /
     `int64`** (a float output flips every downstream type). Zero sites → zeros of length
     `n(n−1)/2`, not an empty vector.
   - **What remains (90 ms per particle):** `sim_mutations` 36 % (100 calls x 0.3 ms: ~0.18 ms
-    fixed msprime cost plus ~0.115 ms for the 100-interval `RateMap`; cannot be
+    fixed msprime cost plus ~0.115 ms of table conversions Python↔C (measured 02/11; the `RateMap` itself costs 0.6 µs to convert); cannot be
     batched, each locus has its own matrix, rate map and seed), statistics 34 % (13
     statistics, none above ~3 ms, plus ~9 ms of shared preparation), site rates 13 %
-    (10 000 `random.gammavariate` calls; numpy would change the stream, so a replay
-    revalidation for at most -9 ms), `sim_ancestry` 12 %, matrices 2 %. **Verdict: DNA is
-    done.** The remaining ratio to DIYABC (~7-8x) is the one-library-call-per-locus
+    (done 02/11 with `Generator.gamma`: 5.8 → 0.8 ms, the stream changed and was revalidated by replay, see
+    the Closed investigations entry), `sim_ancestry` 12 %, matrices 2 %. **Verdict (02/11):
+    statistics at the numpy call-overhead floor, see `notes/exploration.md` §11; DNA is done unless the architectural
+    batching of loci is taken on.** The remaining ratio to DIYABC (~7-8x) is the one-library-call-per-locus
     model, not a local defect.
 
 **Open leads, one session each**: (1) MicroSat, **timing work paused on 19/10**. A
@@ -1631,9 +1657,6 @@ the worktree exists for that.
   **not reproduced** on the regenerated reference; it is consistent with the old reftable being in the
   first-run mode while our `<A>` was not rescaled (ours would sit low), but the old reftable's mode is not
   recorded, so that is a hypothesis, not a verdict.
-- **The SNP replay has no `seed_offset`** (only the MicroSat chain does); the 21/10 tests patched
-  `compute_summary_statistics_snp_from_values` from outside to add it. Add it to
-  `replay_reftable_simulation_snp` the way MicroSat has it.
 - **Serial sampling is not wired for `<X>`/`<Y>` — now guarded, not fixed.**
   The per-locus dispatch still overrides the serial `SampleSet`s, on both the
   SNP and MicroSat/DNA sides. Since 28/09 the combination is refused up front by

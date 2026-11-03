@@ -5502,8 +5502,8 @@ Deux reftables DIYABC **indépendants** de `toy_example2_ms_dna_50loci_TN_seriel
 
 Le seul flag `SML` (`SML_3_2.3.4`, run 1 sc 1, p = 0,047, +4,7 %) est à p = 0,85, 0,73, 0,83 dans les trois autres
 cellules ; aucune colonne `SML` n'est sous p = 0,10 deux fois ; rdiff médians ±0,3 %, sans signe constant. Les
-−0,79 % / −0,52 % sont le résidu du nombre de loci. **Non fait** : un `seed_offset` pour la chaîne mixte (seule la
-chaîne MicroSat l'a) ; les deux reftables n'ont qu'un jeu de graines msprime.
+−0,79 % / −0,52 % sont le résidu du nombre de loci. Ce replay a été fait avant que la chaîne mixte n'ait
+un `seed_offset` (graines `particle_index + 1`, décalage 0) ; le paramètre existe depuis (voir §9).
 
 **Profil d'une particule ADN du sériel** (`profile_particle_dna`, graine 1) : 276 ms sans profileur, 376 ms sous
 `cProfile`. Statistiques 69 %, mutations 31 % (dont `sim_mutations` 9 %, taux de sites 6 %). `compute_SML` : 95 ms sur
@@ -5539,9 +5539,233 @@ blocs, le cas 100 ne la détecte pas : le dernier bloc seul y suffit à tout dis
   hérité d'un autre jeu (varNe/goulots, `N ~ UN[1000,100000]`, statistiques encore sur les échantillons 1 et 2), qui ne
   sert pas de témoin. La conclusion du §1 repose sur l'écart de coût entre 2 et 4 échantillons, pas sur ce témoin.
 - Un troisième reftable DIYABC de `toy_example1_ms_seriel` pour trancher `AML_2_3.1.2` (§5).
-- Un `seed_offset` pour les chaînes SNP, ADN et mixte.
 - Les échantillons 3 et 4 de `TN_seriel` sont des copies de 1 et 2 (fait par l'utilisateur) : les parents identiques y
   sont fréquents, la garde 0,5 s'y exerce, mais jamais atteinte sur les 10 particules regardées.
 - Incident : `bridge/summary_statistics.py` a été mis à la corbeille à 16:19:57 le 23/10 pendant la session (cause non
   établie) ; restauré depuis `~/.local/share/Trash/files/`. `CLAUDE.md` avait aussi été à la corbeille le 22/10 ; il est
   de nouveau dans le dépôt et suivi par git sans modification. Penser à committer.
+
+### 9. `seed_offset` sur les quatre chaînes, et un troisième reftable (02/11)
+
+Les quatre chaînes de replay (`snp`, `dna`, `microsat`, `mixed`) ont maintenant un `seed_offset`, exposé par chaque
+`scripts/replay_diyabc_priors_*.py` sous le nom `SEED_OFFSET` ; **la valeur par défaut des scripts est 200 000, pas 0**
+(les replays mixtes du 23/10 étaient à 0, la chaîne MicroSat à 200 000 depuis octobre). L'utilisateur a aussi
+relancé DIYABC le 02/11 à 10:04 dans `toy_example2_ms_dna_50loci_TN_seriel` : un **troisième reftable** a pris le nom du
+« run 0 » (`first_records_of_the_reference_table_0.txt` écrasé, `first_records_clean_0.txt` resté celui du 23/10 : un
+premier calcul comparait l'ancien fichier propre au replay du nouveau, priors non appariés, p min = 0,07 : à jeter).
+Le tableau du §7 « run 0 » décrit donc un reftable dont les fichiers bruts n'existent plus.
+
+Après regénération propre du fichier nettoyé (priors p min = 1,00 dans toutes les cellules) :
+
+| reftable DIYABC | graines msprime | flags `SML` sur 2 × 24 colonnes | `SML` p min |
+|---|---|---|---|
+| 3 (02/11) | offset 100 000 | 0 | 0,087 |
+| 3 | offset 200 000 | 1 (`SML_2_3.1.4`, p = 0,046, −0,9 %) | 0,046 |
+| 3 | offset 300 000 | 0 | 0,076 |
+| 3 | replay de l'utilisateur (offset inconnu, différent de 100k/200k/300k) | 1 (`SML_3_2.1.3`, p = 0,018, +4,8 %) | 0,018 |
+| 2 (23/10) | offset 0 | 1 (`SML_3_2.3.4`, p = 0,047) | 0,047 |
+| 2 | offset 200 000 | 1 (`SML_2_3.2.4`, p = 0,037, +1,2 %) | 0,037 |
+
+**12 cellules, 288 colonnes `SML` : 4 flags (1,4 % contre 5 % attendus), aucune colonne `SML` flaguée deux fois**,
+rdiff médians entre −0,4 % et +0,5 %, sans signe constant. `SML` est confirmée sur trois reftables indépendants et
+plusieurs jeux de graines. `AML` : 0 flag, sauf un par cellule sur deux cellules du reftable 3 (p ≈ 0,04).
+
+**À noter, hors `SML`** : dans le scénario 2, des colonnes MicroSat de G1 (10 loci) reviennent d'un jeu de graines à
+l'autre **sur les deux reftables** : `LIK_1_4.3` (flaguée aux deux reftables), `MGW_1_2` (idem), `LIK_1_4.1`,
+`MGW_1_1`/`_3`/`_4`, `LIK_1_1.4`, `N2P_1_1.3`, `N2P_1_2.3` ; p entre 0,005 et 0,044, écarts de −1 à −3 %. Ce n'est pas
+`SML`, ni un défaut de bruit msprime (la colonne persiste avec les graines) ; elles sont fortement corrélées (les
+4 `MGW` partagent les mêmes données), donc peu d'unités indépendantes, et le groupe n'a que 10 loci : c'est le régime
+où le résidu lié au nombre de loci est le plus fort (CLAUDE.md, « Systematic negative bias »). **Non tranché** ; si
+on y revient, regarder d'abord le test des signes restreint à G1 et un jeu MicroSat sériel à plus de loci.
+
+### 10. Factorisation DNA / MicroSat dans `pipeline.py` (02/11)
+
+L'utilisateur a factorisé `pipeline.py` : `_draw_common_data` et `_simulate_and_compute_statistics` (tirage), leurs
+variantes `_from_values` (rejeu), dispatchées sur `type_of_data` par trois dictionnaires (`_MUTATION_BY_TYPE`,
+`_MUTATION_FROM_VALUES_BY_TYPE`, `_STATS_BY_TYPE`). Les fonctions publiques `compute_summary_statistics_*` (dna,
+microsat, mixed, et leurs `_from_values`) ne sont plus que des appelants. La règle « sibling duplication » de
+CLAUDE.md a été amendée en conséquence (l'exception est limitée à `pipeline.py` pour l'ADN et le MicroSat ; tirage et
+rejeu ne partagent jamais un helper).
+
+Contrôles faits sur le code du `HEAD` (worktree propre) contre l'arbre de travail, avant puis après les retouches de
+forme (code mort retiré, validation de `type_of_data` contre les dictionnaires, annotation `dict[str, float] |
+dict[str, dict[str, float]]`) : tirage ADN sériel et non sériel et MicroSat `ms_modified` / `ms_seriel` identiques
+valeur par valeur (20 particules chacun) ; rejeux MicroSat (offset 100 000), ADN (200 000) et mixte (200 000), 1000
+particules, **identiques octet par octet**. Le diff ne touchait ni les SNP ni le PoolSeq. Restent dans `pipeline.py`
+trois blocs commentés qui existaient déjà dans le `HEAD` (lignes 59-72, 540-544, 605-613).
+
+### 11. DNA non sériel : `SML` tournait pour rien, répartition des 85 ms, statistiques au plancher (02/11)
+
+Demande de départ : le DNA non sériel reste à ×7-8 de DIYABC (benchmark du 22/10 : 12,3 s contre 1,6 s), voir ce qui
+peut s'améliorer.
+
+**Défaut corrigé (de nous).** `compute_SML` (§6) construisait les ids d'haplotype de chacun des 100 loci même quand
+`_half_arrangements(n, 3)` est vide, c'est-à-dire avec moins de 3 échantillons. Sur ce jeu (2 échantillons) c'était
+≈ 16 ms sur 178 sous `cProfile` (≈ 9 %) pour aucun résultat. Corrigé par un retour anticipé
+(`if len(sample_names) < 3: return {}`) : particule ADN non sérielle **93 → 85 ms** en médiane (40 particules, avant et
+après alternés deux fois), sortie **identique** (`compare_particles_dna` sur `TN` et `TN_seriel`, 20 particules).
+Conséquence : le benchmark non sériel du 22/10 (12,3 s) précédait `SML` ; entre l'ajout de `SML` et ce correctif il a
+été environ 10 % plus lent sans que personne le voie. **À refaire** pour obtenir le chiffre courant du cas non sériel.
+
+**Répartition d'une particule ADN non sérielle** (`TN`, moyenne de 40 particules, chronométrage de grandes étapes par
+`perf_counter`, pas `cProfile`) : 86,7 ms.
+
+| poste | temps | part |
+|---|---|---|
+| `msprime.sim_mutations`, 100 appels (un par locus) | 30,6 ms | 35 % |
+| statistiques (`compute_all_statistics_dna`) | 30,2 ms | 35 % |
+| taux de sites + rate maps (`build_rate_map_per_locus`) | 10,8 ms | 12 % |
+| arbres (`_simulate_ancestries_for_loci`) | 10,5 ms | 12 % |
+| reste (démographie, layouts) | 4,6 ms | 5 % |
+
+**Anatomie d'un appel à `msprime.sim_mutations`** (500 appels réels, composants rejoués sur des `TreeSequence` neuves,
+car `ts.tables` est mis en cache) : 325 µs au total ; la partie C `_msprime.sim_mutations` fait 183 µs (56 %) ; le reste
+est de la conversion de tables : `ts.tables` 21, `asdict` 24, `LightweightTableCollection.fromdict` 16, `asdict` du
+retour 11, `TableCollection.fromdict` 25, `tree_sequence()` 19 µs. `MatrixMutationModel(...)` : 2 µs l'appel ;
+`msprime.RateMap(...)` : 39 µs l'appel (3,9 ms par particule). Les ~0,115 ms que CLAUDE.md attribuait à la `RateMap` de 100 intervalles
+à l'intérieur de `sim_mutations` sont en réalité les conversions de tables (116 µs mesurés) ; la conversion de la
+`RateMap` en dict ne coûte que 0,6 µs.
+
+**Statistiques : au plancher du coût d'appel numpy.** 28 ms par particule sur 20 particules réelles, répartis à plat :
+`_pairwise_distances_per_locus` 3,1 ms, `_minor_counts_per_locus` 3,3, `PSS` 2,65, `HST` 2,6, `DTA` 2,6, `NHA` 2,5, `MPB`
+2,45, `NH2` 1,7, matrices de génotypes 1,5, `VPD` 1,4, `NSS` 1,35, `NS2` 0,9, `VNS` 0,8, `MPD` 0,6, `MNS` 0,35, `MP2` 0,24 ;
+aucune statistique au-dessus de 3 ms. Chacune coûte 5 à 13 µs par couple (locus, échantillon), soit 5 à 10 appels numpy
+sur des matrices d'environ 20 × 40.
+
+Deux essais sans gain, **retirés** (sortie identique, mais sous le seuil de détection) :
+
+1. `_minor_allele_counts_at_segregating_sites` avec un seul `np.bincount` sur (site, état) au lieu d'une boucle sur les
+   états : 14,8 contre 17,7 µs puis 16,5 contre 16,8 µs par matrice (2 000 matrices réelles, deux séries), soit moins de
+   0,6 ms par particule. Il aurait fallu en plus une branche de repli pour les données manquantes (états négatifs), que `bincount` refuse.
+2. `PSS` : masques des sites ségrégeants calculés une fois par locus et par échantillon (au lieu de deux par échantillon
+   cible, 900 appels de `_segregating_sites_mask` par particule). Non sériel 85,7 → 82,7 et 84,0 ms ; sériel 253 → 262 et
+   244 → 246 ms : dans le bruit (±5 % entre séries de 40 particules).
+
+Règle réaffirmée : sous ~1 ms par particule on n'ajoute rien, et un gain de moins de ~5 % n'est pas détectable sur une
+série de 40 particules. Pour mémoire, les doublons de calcul qui restent (non traités) : le masque des sites ségrégeants
+est recalculé par `NSS` (200), `DTA` (200), `PSS` (400) et `NS2` (100) ; les distances entre échantillons de `MPB` et de
+`HST` ne sont pas partagées ; les matrices poolées `np.hstack` de `NH2`, `NS2` et `MP2` sont refaites trois fois par paire.
+Chacun vaut au plus 1 à 3 ms.
+
+**Le seul levier sérieux sur les statistiques est architectural** : traiter les 100 loci d'un coup (matrices empilées,
+sommes par segment avec `reduceat`, produits matriciels par lot avec remplissage), au lieu de 100 itérations Python par
+statistique. Estimation grossière : 28 → 10-15 ms, mais cela réécrit les 13 statistiques et leurs préparations, avec un
+risque sur l'ordre des sommes en virgule flottante (que le projet a toujours refusé).
+
+**Plancher et pistes restantes** (par particule, 85 ms) : les parties C de msprime font ≈ 28 ms (mutations 18, arbres
+10) ; une particule complète de DIYABC (58 statistiques, MicroSat compris) coûte ≈ 25 ms de CPU. Pistes chiffrées, non
+faites : mutations par l'API de bas niveau `_msprime.sim_mutations` sur des tables légères (≈ −6 ms, API privée, garde de
+version et tests comme les réplicats légers des SNP) ; taux de sites avec numpy (≈ −6 ms, change le flux aléatoire, rejeu
+complet contre DIYABC) ; `RateMap` moins coûteuse (≈ −2 à −3 ms). En cumulant tout, ≈ 60 ms par particule, soit ×5,5 au
+lieu de ×7,6.
+
+Méthode, à garder : (1) l'identité (`compare_particles_dna`) est prise **avant** de modifier, sur `HEAD` ou sur l'arbre
+de travail ; (2) l'avant/après se mesure **alterné** et deux fois, car la machine dérive de 5 à 10 % d'une série à
+l'autre (la médiane de la même particule est passée de 283 à 335 ms entre deux séries sans changement de code) ;
+(3) un micro-benchmark se fait sur des **arguments réels capturés** par un espion, pas sur une matrice synthétique.
+
+### 12. Le ratio du DNA non sériel, à charge égale (02/11)
+
+Replay « juste DNA » (script `replay_diyabc_priors_dna.py`, 100 loci ADN, 42 statistiques) : DIYABC 2,05 s,
+msprime 13,86 s, 6,8x. **Ce n'est pas la même charge** : le header de DIYABC compte 58 statistiques (73 mots au
+trailer : 1 + 5 + 9 + 58), dont 16 MicroSat (G1, 10 loci), et simule 110 loci. Replay **mixte** du même jeu
+(`replay_diyabc_priors_mixed.py` pointé sur `toy_example2_ms_dna_50loci_TN`, offset 200 000, 1000 particules, machine
+sans autre charge) : **18,3 s**, soit **≈ 8,9x**. Le MicroSat ajoute 4,4 s.
+
+Le benchmark du 22/10 (« DNA » : 1,6 s contre 12,3 s, 7,57x) comparait déjà DIYABC complet à un replay ADN seul : son
+rapport était trop flatteur, le point de départ à charge égale est ≈ 8,9x. DIYABC (1,6 → 2,05 s, +28 %) et msprime
+(12,3 → 13,86 s, +13 %) sont tous deux plus lents qu'en octobre : la machine dérive d'un jour à l'autre ; normalisé par
+DIYABC, le replay ADN seul est à 6,8x contre 7,6x, soit −11 %, cohérent avec les −9 % mesurés sur la particule (§11).
+Une mesure de chaque côté, variance de DIYABC ±12 % : lire le ratio à ±1.
+
+**Règle de comparaison** (déjà apprise pour le sériel, §1) : avant de citer un ratio à DIYABC, compter les colonnes
+des deux côtés **et** les loci simulés. Un replay ADN seul n'est comparable à DIYABC que sur un header sans MicroSat.
+
+### 13. Mutations par tables légères pour les loci `<A>` (02/11)
+
+**Idée.** `msprime.sim_ancestry(num_replicates=n)` fabrique chaque `TreeSequence` par
+`tables.asdict()` → `TableCollection.fromdict` → `tree_sequence()` (`Simulator.run_replicates`), puis
+`msprime.sim_mutations` fait le chemin inverse (`ts.tables` → `asdict` → `LightweightTableCollection.fromdict`) avant
+l'appel C, et le chemin retour (`asdict` → `fromdict` → `tree_sequence()`). Le simulateur détient déjà ses tables en
+objet léger (`sim.tables`). Ne garder que `sim.tables.asdict()` à l'aller et reconstruire **un seul** `TreeSequence`,
+après les mutations, supprime quatre conversions (`fromdict` 25 µs, `tree_sequence()` 19, `ts.tables` 21, `asdict` 24).
+
+**Prototype (100 loci réels, arguments de `sim_mutations` capturés).** Les 100 `TreeSequence` mutées ont des tables
+**égales** (`tables.equals`) ; arbres + mutations : **535 → ≈ 390 µs par locus** (−27 %), plus que les 89 µs
+estimés sur papier (les conversions coûtent plus que la somme de leurs mesures isolées).
+
+**Implémentation** (`bridge/ancestry_simulation.py`) :
+- `LightTables(NamedTuple)` : instantané de `sim.tables.asdict()` (le simulateur réutilise ses tables, à copier avant
+  `reset()`) ; `_light_a_trees(...)` simule `n` arbres avec les mêmes appels que `run_replicates`
+  (`msprime.ancestry._parse_sim_ancestry`, `sim.run()`, `sim.tables.asdict()`, `sim.reset()`), donc **le même flux
+  aléatoire** que `sim_ancestry(num_replicates=n, record_provenance=False)` ; lève si le simulateur a des intervalles
+  manquants (la suppression que ferait `sim_ancestry` n'est pas reproduite) ;
+- `_mutate_tree(tree, *, rate, model, random_seed)` : pour une `TreeSequence`, exactement `msprime.sim_mutations(...,
+  record_provenance=False)` ; pour des `LightTables`, la même suite d'appels que `sim_mutations`
+  (`_msprime.LightweightTableCollection.fromdict`, `_msprime.sim_mutations` avec `RandomGenerator`, `rate_map.asdict()`,
+  `mutation_model_factory`) puis un seul `TableCollection.fromdict(...).tree_sequence()`. Taux scalaire (MicroSat) :
+  `RateMap.uniform(sequence_length, rate)` comme `sim_mutations` ;
+- `_simulate_ancestries_for_loci(..., light_a_replicates=False)` : seul le lot `<A>` rend des `LightTables`, et
+  seulement si `msprime.__version__ == _VERSION_MS_PRIME_LIGHT_REPLICATES` (sinon repli sur le chemin public).
+  `<M>`, `<X>`, `<Y>` et `<H>` restent des `TreeSequence` (arbre partagé entre loci pour `<M>`/`<Y>` : il faudrait
+  copier les tables par locus) ;
+- les **quatre** boucles de mutation (ADN et MicroSat, tirage et `_from_values`) passent `light_a_replicates=True` et
+  appellent `_mutate_tree` ; `simulate_dna_mutations` passe aussi par `_mutate_tree`.
+
+**Vérifications.** Tirage : `compare_particles_dna` (`TN`, `TN_seriel`) et `compare_particles_microsat` (`ms_modified`,
+`ms_seriel`), 20 particules chacun, **0 différence** ; rejeux MicroSat, ADN, mixte (1000 particules, `HEAD` contre arbre de
+travail) **identiques octet par octet** ; sortie du replay mixte non sériel identique avant/après. Tests ajoutés :
+`test_mutate_light_tables_equal_public_path` (arbres non mutés **et** mutés égaux au chemin public sur les loci de
+`te2`, taux scalaire et `RateMap`, `<A>` légers et `<M>` normaux) et
+`test_light_a_replicates_falls_back_on_other_msprime_version`. Sabotages vérifiés rouges : graine décalée dans
+`_light_a_trees`, `sim.reset()` oublié, garde de version retirée.
+
+**Gains.** Particule ADN non sérielle (40 particules, avant/après alternés deux fois) : 93,9 → 82,6 et 88,2 → 77,0 ms
+(−12 %). Sériel : médiane inchangée dans le bruit (264 → 270, 249 → 254 ms), minimum 191 → 163 et 168 → 162 ms
+(les statistiques et le plus grand θ dominent). Replay mixte non sériel, 1000 particules : **18,3 → 14,5 s**
+(14,54 et 14,51 s), soit **≈ 7,1x** DIYABC (2,05 s) au lieu de 8,9x.
+
+API privée de msprime désormais utilisée : `msprime.ancestry._parse_sim_ancestry`, `Simulator.run/reset/tables/
+missing_intervals`, `_msprime.LightweightTableCollection`, `_msprime.RandomGenerator`, `_msprime.sim_mutations`,
+`msprime.mutations.mutation_model_factory`. Les validations de `sim_mutations` que le chemin léger saute :
+`time_units` non calibré, `start_time`/`end_time` (non utilisés ici).
+
+### 14. Taux de sites en numpy : le flux change, la loi non (02/11)
+
+**Mesure de départ** (`build_rate_map_per_locus`, 12,2 ms par particule ADN, 40 particules) : `sample_site_rates` 5,82 ms
+(100 appels, dont 33,5 µs pour 100 `gammavariate` contre 4,2 µs pour un `Generator.gamma(size=100)`), `build_rate_map`
+4,97 ms (dont ≈ 3,9 ms de construction des `msprime.RateMap`), tirages de groupe 1,77 ms. Le `rng` des taux de sites est
+dédié (`_SITE_RATE_SEED_OFFSET`) : changer son flux ne déplace que ces tirages.
+
+**Changement.** `sample_site_rates` prend un `np.random.Generator`, tire `gamma(shape=gams, scale=1/gams, size=n)` (la loi
+est celle de `MwcGen::ggamma3` et de l'ancien `gammavariate(gams, 1/gams)`), met à zéro les `nb_sites_fixes` premiers
+sites (bug `sitefix` conservé) et renvoie un tableau normalisé à somme 1 (`ZeroDivisionError` explicite si tous les sites
+sont invariants). `build_rate_map` accepte ce tableau et calcule `mus_rate * dnalength * mutsit` en numpy (même ordre de
+multiplication que la compréhension de liste). Les deux constructeurs de rate maps créent un
+`np.random.default_rng(_locus_seed(seed, _SITE_RATE_SEED_OFFSET, 0))` par particule. **Effet : les taux de sites d'une graine
+donnée ont changé, donc toute statistique ADN à graine fixe a bougé** : 15 tests dorés régénérés (§ ci-dessous), les
+reftables et comparaisons ADN antérieurs au 02/11 ne sont plus comparables à l'octet près.
+
+**Validation par rejeu** (script `replay_diyabc_priors_mixed`, offset 200 000, 1000 particules, `HEAD` contre arbre de travail,
+priors appariés p min = 1,00) sur 4 jeux : `TN` non sériel et `TN_seriel`, reftables DIYABC 0 et 1 chacun, 2 scénarios, soit 8
+cellules. Contre DIYABC, flags KS (p < 0,05) ancien → nouveau : 0→0, 0→1, 0→0, 0→0 (non sériel) et 3→2, 6→8, 0→0, 20→20
+(sériel ; les 20 sont les colonnes MicroSat G1, inchangées). Médianes de signe quasi identiques d'une version à l'autre.
+Nouveau contre ancien, colonnes ADN seules (G2, G3), écart relatif des moyennes : médiane par cellule de −0,10 % à +0,14 %,
+**moyenne sur les 8 cellules +0,016 %** (écart-type 0,077 %, t = 0,6), toutes familles à moins de 0,12 % en moyenne sauf
+`DTA` (+3,7 % ± 6,7 %, statistique à moyenne proche de zéro). Pas de biais cohérent entre cellules. (Le test des signes
+global « nouveau contre ancien » est à ignorer tel quel : la moitié des colonnes, le MicroSat, est strictement identique.)
+
+**Tests.** `test_sample_site_rates` passe au `Generator` ; `test_sample_site_rates_follows_gamma_of_mean_one` (20 000
+sites : sites fixes en tête, somme 1, moyenne 1, variance `1/gams`, `kstest` contre `gamma(gams, scale=1/gams)`).
+**Régénération des 15 dorés** (`test_summary_statistics.py` et `test_pipeline.py`) : valeurs réécrites depuis la sortie, après
+vérification **indépendante** par tskit (`ts.variants()` pour compter les sites à ≥ 2 états, `ts.diversity`,
+`ts.divergence`, `ts.haplotypes()`, formule de Tajima recalculée) de NSS, NHA, MPD, DTA, PSS, NS2, NH2 et MPB, G2 et G3.
+Piège rencontré : `ts.segregating_sites(mode="site")` de tskit compte chaque allèle dérivé d'un site multi-allélique (8 là
+où `cal_nss` compte 7 sites) ; ne pas l'utiliser pour contrôler `NSS`/`NS2`/`DTA`. VPD, MNS, VNS, MP2 et HST n'ont pas de
+contrôle indépendant (formules inchangées sur les mêmes matrices).
+
+**Gain.** `sample_site_rates` 5,82 → 0,79 ms, `build_rate_map` 4,97 → 3,78 ms : `build_rate_map_per_locus` 12,2 → 6,0 ms.
+Particule ADN non sérielle, avant/après alternés deux fois : médiane 86,6 → 82,3 et 88,8 → 84,1 ms (−5 %), minimum −9 à
+−11 %. Replay mixte non sériel, alterné trois fois : 16,3 / 16,2 / 17,8 s contre 15,0 / 16,3 / 16,4 s (≈ −5 %, bruit du même
+ordre : la machine dérive de ±10 % d'une série à l'autre, le même replay est passé de 14,5 à 15,1 puis 16 s dans l'heure).
+
