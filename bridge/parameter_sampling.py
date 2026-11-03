@@ -332,15 +332,18 @@ def sample_site_rates(
     """Tire mutsit : le taux de mutation relatif par site pour un locus
     séquence.
 
-    Reproduit header.cpp:707-738 (y compris le "bug" sitefix -- les
-    sites fixes sont toujours les premiers de la séquence, pas un
-    sous-ensemble aléatoire). Les poids sont tirés selon une loi gamma de
-    forme `gams` et de moyenne 1, comme `MwcGen::ggamma3`.
+    Reproduit header.cpp:707-748 : poids gamma de forme `gams` et de moyenne 1
+    (`MwcGen::ggamma3`), puis `dnalength - nsv` sites invariants. **Écart assumé
+    à DIYABC (03/11)** : DIYABC met à zéro les `nb_sites_fixes` PREMIERS sites
+    (bug du compteur de boucle, voir le commentaire plus bas) ; ici les sites
+    invariants sont un sous-ensemble uniforme de sites distincts, ce que
+    `sitefix` voulait faire. Les poids gamma étant indépendants de la position
+    et aucune statistique n'utilisant la position, la loi des sorties est la
+    même ; la version fidèle est gardée en commentaire.
 
-    Depuis le 02/11 le tirage passe par `numpy.random.Generator.gamma` (un
-    appel vectorisé par locus) au lieu de `random.Random.gammavariate` par
-    site : même loi, autre flux de nombres aléatoires, donc les taux de sites
-    d'une graine donnée ont changé.
+    Le tirage passe par `numpy.random.Generator` (un appel vectorisé par locus
+    pour les poids, un `choice` pour les sites invariants) au lieu de
+    `random.Random` : même loi, autre flux de nombres aléatoires.
 
     Args:
         p_fixe: Pourcentage (0-100, pas une fraction 0-1) de sites invariants (`GroupPrior.p_fixe`).
@@ -364,32 +367,18 @@ def sample_site_rates(
     else:
         mutsit = rng.gamma(shape=gams, scale=1.0 / gams, size=dnalength)
 
-    # header.cpp:727-738 -- "sitefix" tire des indices aléatoires distincts,
-    # MAIS la ligne qui fixe le site utilise l'indice de boucle "i", pas
-    # "sitefix[i]" -- donc en pratique, ce sont TOUJOURS les nb_sites_fixes
-    # PREMIERS sites (0, 1, 2...) qui sont mis à taux nul, jamais un sous-
-    # ensemble aléatoire. On reproduit ce comportement tel quel (fidélité à
-    # DIYABC), pas ce que le code semblait vouloir faire.
-    # On garde en réserve et on l'active si besoin.
-    # sitefix = [0] * (dnalength - nb_sites_variables)
-    # for i in range(len(sitefix)):
-    #    if i == 0:
-    #        sitefix[i]  = rng.randint(1, dnalength)
-    #    else:
-    #        nouveau = False
-    #        while not nouveau:
-    #            sitefix[i] = rng.randint(1, dnalength)
-    #            nouveau = True
-    #            j = 0
-    #            while j < i and nouveau:
-    #                if sitefix[i] == sitefix[j]:
-    #                    nouveau = False
-    #                j += 1
-    #   mutsit[sitefix[i]] = 0.0
-    # (Version d'origine, écrite pour `random.Random` : avec le `np.random.Generator`
-    # de cette fonction, `rng.randint(1, dnalength)` s'écrit
-    # `int(rng.integers(1, dnalength + 1))`.)
-    mutsit[:nb_sites_fixes] = 0.0
+    # header.cpp:722-748 -- "sitefix" tire des indices aléatoires distincts
+    # (`rand0(dnalength)`, de 0 à dnalength - 1, par rejet), MAIS la ligne qui
+    # fixe le site utilise l'indice de boucle "i", pas "sitefix[i]" -- donc en
+    # pratique DIYABC met TOUJOURS à taux nul les nb_sites_fixes PREMIERS sites
+    # (0, 1, 2...), jamais un sous-ensemble aléatoire.
+    #
+    # Version FIDÈLE à DIYABC, gardée en commentaire (les n premiers sites) :
+    #   mutsit[:nb_sites_fixes] = 0.0
+    #
+    # Version « voulue » (activée) : `nb_sites_fixes` sites distincts, uniformes
+    # (équivalent du tirage par rejet de header.cpp, sans boucle).
+    mutsit[rng.choice(dnalength, size=nb_sites_fixes, replace=False)] = 0.0
 
     total = float(mutsit.sum())
     if total == 0.0:
