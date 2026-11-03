@@ -5769,3 +5769,73 @@ Particule ADN non sérielle, avant/après alternés deux fois : médiane 86,6 �
 −11 %. Replay mixte non sériel, alterné trois fois : 16,3 / 16,2 / 17,8 s contre 15,0 / 16,3 / 16,4 s (≈ −5 %, bruit du même
 ordre : la machine dérive de ±10 % d'une série à l'autre, le même replay est passé de 14,5 à 15,1 puis 16 s dans l'heure).
 
+### 15. Bilan du DNA non sériel après les trois changements du 02/11 (03/11)
+
+Rejeu mesuré par l'utilisateur après le retour anticipé de `SML` (§11), les mutations légères des loci `<A>` (§13) et les
+taux de sites en numpy (§14) : DIYABC **2,1 s** ; msprime **11,81 s** en ADN seul (100 loci, 42 statistiques ; 5,6x, pas la
+même charge que DIYABC) et **13,14 s en mixte** (110 loci, 58 statistiques, MicroSat compris), soit **≈ 6,3x à charge
+égale**. Trajectoire du ratio à charge égale : 8,9x (18,3 s, 02/11 avant les changements) → 7,1x après les seules
+mutations légères (14,5 s) → 6,3x. Gain cumulé sur le temps msprime du mixte : 18,3 → 13,14 s (−28 %), à comparer aux
+−24 % attendus de 0,91 × 0,88 × 0,95 mesurés particule par particule : cohérent à la dérive de la machine près.
+
+Réserve : la part du MicroSat est incertaine d'une mesure à l'autre (13,14 − 11,81 = 1,3 s ici ; 4,4 s dans les mesures
+du 02/11, faites sur une machine plus lente et sans enchaînement strict) ; seul un avant/après alterné sur la même
+session départagerait. Les statistiques (KS, signes) sont validées par le rejeu de l'utilisateur comme par §14.
+Pistes restantes, rendement décroissant : statistiques par lots (≈ −15 ms par particule, réécriture des 13), `RateMap`
+moins coûteuse (≈ −2 ms).
+
+### 16. `LightRateMap` : essayé, mesuré, retiré (03/11)
+
+**Idée.** `msprime.RateMap(position=..., rate=...)` coûte 31,4 µs (les deux tableaux numpy 0,8 µs) et la voie légère
+(`_mutate_tree` sur `LightTables`) n'utilise que `rate_map.asdict()` (0,14 µs) : ne pas construire l'objet pour les loci
+`<A>` devait économiser ≈ 3 ms par particule (100 loci). Implémentation essayée : `LightRateMap(NamedTuple position,
+rate)` avec `asdict()` et `to_rate_map()`, option `light=False` de `build_rate_map` et `build_rate_map_per_locus*`,
+`light=True` dans les deux fonctions de mutation ADN, `_mutate_tree` acceptant les trois formes de taux.
+
+**Ce que la mesure a dit.**
+- Étape isolée (40 particules) : `build_rate_map` 3,78 → 0,23 ms, `build_rate_map_per_locus` 5,97 → 1,94 ms.
+- Sorties : identiques au `HEAD` (tirage ADN 0 différence sur 2 jeux ; rejeux ADN et mixte de 1000 particules identiques octet
+  par octet) ; tests d'équivalence sur `LightTables` et sur `TreeSequence` ; un sabotage vu rouge.
+- Particule entière, 8 alternances de 40 particules : 75,7 → 74,2 ms, écart apparié −1,5 ms (écart-type 3,5 ms) : non résolu.
+- **Rejeu complet, 5 alternances `HEAD` / arbre de travail, 1000 particules** : mixte 15,84 s → 16,36 s (**+0,52 s**, écart-type
+  0,75 s, plus lent 4 fois sur 5) ; ADN seul 14,34 s → 14,56 s (+0,22 s, écart-type 0,97 s, 3 fois sur 5). L'utilisateur avait
+  observé le même sens sur ses propres rejeux. Gain attendu : −0,4 s ; gain observé : nul, au mieux, et plutôt le contraire.
+
+**Verdict : retiré** (correctif sauvegardé hors dépôt, 271 lignes). Une optimisation dont le gain par étape ne se retrouve pas
+sur le rejeu réel ne justifie ni une classe ni un drapeau de plus ; la cause de l'absence de gain n'est pas établie
+(hypothèses non testées : le coût déplacé vers `asdict()` côté C, des tableaux plus gros à copier à chaque appel, la
+dérive de la machine). **Leçon, à garder** : l'étape isolée et la particule en processus unique ne suffisent pas ; le seul
+juge est le rejeu complet à 16 travailleurs, alterné avec la version de référence, au moins 5 fois.
+
+### 17. Sites invariants tirés au hasard avec `rng.choice` (03/11)
+
+**Demande.** Activer la version « voulue » du tirage des sites invariants de `header.cpp` (sous-ensemble aléatoire de
+sites distincts) au lieu du comportement réel de DIYABC (les `nb_sites_fixes` premiers sites, bug du compteur de boucle).
+
+**Incident du brouillon d'activation** (version de l'utilisateur, sauvegardée dans le dossier temporaire de la session) :
+(1) la boucle bloquait à l'infini : un fragment de texte collé dans un commentaire avait avalé la ligne `nouveau = True`
+(`while not nouveau` ne sortait jamais, dès `i = 1`) ; (2) le bloc, indenté de 8 espaces, tombait dans la branche
+`else:` du tirage gamma : plus de sites invariants quand `gams` est nul ; (3) décalage d'un indice : le C++ tire
+`sitefix[i] = mwc.rand0(dnalength)` (de 0 à `dnalength − 1`, `randomgenerator.cpp:50`) et le commentaire de réserve
+Python d'origine, que j'avais recopié, disait `rng.randint(1, dnalength)` (ne tire jamais le site 0 et sort du tableau
+quand il tire `dnalength`). Mon propre tort : j'avais supprimé ce commentaire de réserve lors du passage à numpy, contre
+la consigne de `CLAUDE.md`, puis recopié sa transcription erronée en le remettant.
+
+**Implémentation.** `mutsit[rng.choice(dnalength, size=nb_sites_fixes, replace=False)] = 0.0` (même loi que la boucle de
+rejet, sans boucle donc sans risque de blocage) ; la ligne fidèle `mutsit[:nb_sites_fixes] = 0.0` reste en commentaire
+avec la description du bug, et la docstring signale l'écart assumé. Comparaison des deux variantes en isolé (2000 tirages,
+`dnalength = 100`, `p_fixe = 10`) : boucle fidèle 24,6 µs, `choice` 18,4 µs ; chaque site est invariant avec
+fréquence 0,083 à 0,113 (attendu 0,100), site 0 à 0,102 / 0,107.
+
+**Tests.** `test_sample_site_rates` et `test_sample_site_rates_follows_gamma_of_mean_one` ne supposent plus que les invariants
+sont en tête (comptage des zéros) ; `test_sample_site_rates_invariant_sites_are_a_uniform_subset` (4000 tirages, 20 sites,
+5 invariants : chaque site invariant avec fréquence 0,25 ± 0,04 ; la version « premiers sites » donnerait 1,0 pour cinq
+sites et 0,0 pour les autres, vu rouge par sabotage). **15 tests dorés régénérés** après vérification indépendante par tskit
+des mêmes familles que le 02/11 (NSS, NHA, MPD, DTA, PSS, NS2, NH2, MPB, G2 et G3).
+
+**Validation par rejeu** (`replay_diyabc_priors_mixed`, offset 200 000, 1000 particules, `HEAD` en « n premiers sites »
+contre arbre de travail en `choice`, 4 jeux × 2 scénarios, priors p min = 1,00) : flags KS contre DIYABC ancien → nouveau 0→1,
+0→0, 0→0, 0→0, 2→2, 8→7, 0→0, 20→20 ; écart moyen nouveau − ancien sur les colonnes ADN **+0,017 %** (écart-type 0,072 %
+entre cellules, t = 0,67), toutes familles à moins de 0,1 % en moyenne sauf `DTA` (+1,2 % ± 7,3 %, moyenne proche de zéro) et
+`HST` (−0,4 % ± 1,8 %). Pas de biais. Neutre statistiquement : la position d'un site ne compte pour aucune statistique.
+

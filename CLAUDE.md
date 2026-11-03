@@ -982,6 +982,11 @@ under the date given.
   mean of the relative differences on the DNA columns +0.016 % (sd 0.077 % between cells, t = 0.6). Trap: tskit's
   `segregating_sites(mode="site")` counts each derived allele of a multi-allelic site (8 where `cal_nss` counts 7
   sites): do not use it to check `NSS`/`NS2`/`DTA`.
+- **`LightRateMap` (03/11) — tried and removed: no gain on the real replay.** Skipping the `msprime.RateMap` object
+  (31 µs a piece) on the light mutation path saved 4 ms per particle in isolation, outputs byte-identical, but
+  the 1000-particle replays, 5 alternations against `HEAD`, came out +0.52 s (mixed) and +0.22 s (DNA) slower, never
+  faster. **Judge an optimisation on the full replay at 16 workers, alternated against the reference, ≥ 5 times**: a step
+  timing and a single-process particle both missed what the replay showed.
 - **`SML` (02/11) — implemented and validated.** `cal_aml3p` is `AML` with one haplotype per allele (`cal_freq`),
   so `_compute_AML_one_triplet` is reused unchanged on haplotype ids; the only addition is the guard of
   `sumstat.cpp:2100-2106` (statistic = 0.5 when no locus shows two distinct haplotypes among the two parents
@@ -1279,7 +1284,7 @@ across scenarios, unlike `nparam`) — do not reuse
 
 These are **not** to be "fixed" — the goal is fidelity to real DIYABC output,
 not an idealized reimplementation. All three are judged unintentional, kept
-because DIYABC's own output depends on them.
+because DIYABC's own output depends on them (except `mutsit`/`sitefix`, see below).
 
 - **`MPD`/`VPD` denominator** (`particuleC.cpp:1777`, `sumstat.cpp::cal_mpd1p` /
   `cal_vpd1p`) — added 02/10. DIYABC's `init_dnaseq` leaves a locus's sequence
@@ -1292,11 +1297,23 @@ because DIYABC's own output depends on them.
   **commented as a deliberate bug with the lines to delete**. Full investigation
   under "G2 `MPD`/`VPD` residual" in Open work.
 
-- **`mutsit` / `sitefix`** (`header.cpp:727-738`): DIYABC draws random distinct
-  site indices to choose the invariant sites, then zeroes `mutsit` using the
-  **loop counter** instead of `sitefix[i]`. In practice the invariant sites are
-  always the *first* `dnalength - nsv` sites. The "intended" version is kept
-  commented out in `sample_site_rates`.
+- **`mutsit` / `sitefix`** (`header.cpp:722-748`): DIYABC draws random distinct
+  site indices (`rand0(dnalength)`, **0-based**, rejection loop) to choose the
+  invariant sites, then zeroes `mutsit` using the **loop counter** instead of
+  `sitefix[i]`. In practice the invariant sites are always the *first*
+  `dnalength - nsv` sites. **NOT reproduced since 03/11 (the one exception to this
+  section, a decision of the user):** `sample_site_rates` zeroes
+  `rng.choice(dnalength, size=nb_sites_fixes, replace=False)` (the intended
+  behaviour, same law as the C++ rejection loop; the user's reason: the added cost is negligible
+  (≈ 18 µs a locus against 0.8 µs) and it is closer to the model DIYABC means to implement, so **keep it, do not
+  "fix" it back**); the faithful "first n sites" line
+  `mutsit[:nb_sites_fixes] = 0.0` is kept in a comment next to it. Statistically neutral (gamma
+  weights do not depend on the position and no statistic uses it): validated by
+  replay, 4 datasets × 2 scenarios, KS flags against DIYABC unchanged, new-vs-old
+  mean relative difference on the DNA columns +0.017 % (sd 0.072 % between cells,
+  t = 0.67). To restore DIYABC's exact behaviour, swap the two lines. Beware the
+  historical transcription: the old commented Python used `rng.randint(1, dnalength)`
+  (1-based, never site 0, `IndexError` at `dnalength`) where the C++ is 0-based.
 - **`DM2` / `cal_dmu2p`**: `moy[]` is recomputed only when both populations
   have samples at a locus, but the line consuming it sits **outside** that
   guard — so on a locus where one population is absent, the stale `moy[]` from
@@ -1347,7 +1364,7 @@ case: the variance is not measured.**
 | PoolSeq Hudson | `toy_example4_hudson` | 100 | 26.2 s | 19.2 s | 0.73x | 98.6 / 1.4 % |
 | PoolSeq MRC > 0 | `toy_example4` | 100 | 86.7 s | 40.3 s | 0.47x | 99.4 / 0.6 % |
 | PoolSeq serial | `toy_example4_seriel` | 1000 | 524.9 s | 219.8 s | 0.42x | 99.8 / 0.2 % |
-| DNA (mixed MicroSat + DNA, 58 stats) | `toy_example2_ms_dna_50loci_TN` | 110 | 2.05 s (1.6 s on 22/10, same machine, other day) | **18.3 s** mixed replay on 02/11 (DNA-only replay: 13.86 s, 100 loci and 42 stats: **not the same load**; 12.3 s on 22/10 was DNA-only against DIYABC's full 110 loci / 58 stats, so the old 7.57x flattered us) | **≈ 8.9x** at equal load before the 02/11 light `<A>` mutations, **≈ 7.1x** after (mixed replay 18.3 → 14.5 s; DNA-only 6.8x before; ±1 with DIYABC's ±12 % variance) | not re-measured |
+| DNA (mixed MicroSat + DNA, 58 stats) | `toy_example2_ms_dna_50loci_TN` | 110 | 2.05 s (1.6 s on 22/10, same machine, other day) | **18.3 s** mixed replay on 02/11 (DNA-only replay: 13.86 s, 100 loci and 42 stats: **not the same load**; 12.3 s on 22/10 was DNA-only against DIYABC's full 110 loci / 58 stats, so the old 7.57x flattered us) | **≈ 8.9x** at equal load before the 02/11 light `<A>` mutations, **≈ 6.3x** after the three 02/11 changes (SML early return, light `<A>` mutations, numpy site rates): mixed replay **13.14 s** against DIYABC 2.1 s, measured by the user on 03/11; DNA-only replay 11.81 s = 5.6x (not the same load). Path: 8.9x (18.3 s) → 7.1x after the light mutations alone (14.5 s) → 6.3x. ±1 with DIYABC's ±12 % variance; the same replay varies by ±10 % within an hour on this machine | not re-measured |
 | DNA serial (mixed, 224 stats incl. 24 `SML`) | `..._50loci_TN_seriel` | 110 | 20.5 s (16-20.5 s over 4 runs; the 1.6 s of 07/10 had 58 statistics, `-R ALL` gives 224 from 4 samples) | **44.3 s** (50.7 s before the 02/11 `SML` optimisation; 30.8 s was without `SML`: unequal load) | **≈ 2.2x** (2.4-3.1x before, DIYABC variance ±12 %) | not re-measured |
 | MicroSat | `toy_example1_ms_modified` | 50 | 2.1 s | **9.7 s** (20.4 s on 12-14/10; 228.7 s before) | **4.59x** (8.9x before) | 49.9 / 50.1 % |
 | MicroSat serial | `toy_example1_ms_seriel` | 50 | 2.2 s | **10.3 s** (23.6 s on 12-14/10; 256.7 s on 07/10) | **4.66x** (9.8x before) | 47.2 / 52.8 % |
