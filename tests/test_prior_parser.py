@@ -51,6 +51,47 @@ def test_parse_group_priors(header_text_te2):
     assert group_priors["G3"][-1].model is True
 
 
+def test_parse_group_priors_model_error(header_text_te2):
+    """Vérifie que parse_group_priors lève une exception si un paramètre de
+    modèle est présent mais que son nom n'est pas indiqué."""
+    # On modifie le header pour supprimer le nom du modèle
+    header_text_modified = header_text_te2.replace("MODEL", "MODLE")
+    with pytest.raises(ValueError, match="Ligne de modèle de la section"):
+        parse_group_priors(header_text_modified)
+
+    header_text_modified2 = header_text_te2.replace("MODEL K2P 10 2.00", "MODEL")
+    assert header_text_modified2 != header_text_te2
+    with pytest.raises(ValueError, match="Ligne de modèle de la section group priors"):
+        parse_group_priors(header_text_modified2)
+
+    header_text_modified2 = header_text_te2.replace("MODEL K2P 10 2.00", "MODEL K2P 10")
+    assert header_text_modified2 != header_text_te2
+    with pytest.raises(ValueError, match="malformée"):
+        parse_group_priors(header_text_modified2)
+
+    header_text_modified3 = header_text_te2.replace(
+        "MODEL K2P 10 2.00", "MODEL K2P x 2.00"
+    )
+    assert header_text_modified3 != header_text_te2
+    with pytest.raises(ValueError, match="malformée"):
+        parse_group_priors(header_text_modified3)
+
+    # on place "MODEL" avant les priors de groupe, ce qui est incorrect
+    lines = header_text_te2.splitlines()
+    i_group = lines.index("group G2 [S]")
+    i_model = next(
+        i for i in range(i_group, len(lines)) if lines[i].startswith("MODEL")
+    )
+    model_line = lines.pop(i_model)  # on retire la ligne MODEL de sa place
+    lines.insert(i_group + 1, model_line)  # et on la met juste après "group G2 [S]"
+    header_model_first = "\n".join(lines)
+    with pytest.raises(
+        ValueError,
+        match="La section 'MODEL' doit être placée après les sections 'group'",
+    ):
+        parse_group_priors(header_model_first)
+
+
 def test_is_constant_prior():
     """Vérifie la règle de filtrage des priors quasi-constants."""
     # Cas normal : large intervalle, jamais constant

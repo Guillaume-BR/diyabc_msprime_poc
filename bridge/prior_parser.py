@@ -169,10 +169,10 @@ def parse_group_priors(header_text: str) -> dict[str, list[GroupPrior]]:
     """Extrait les priors et models des différents group priors de header.txt.
 
     Une ligne est soit une loi de prior, soit un model : si elle ne
-    correspond pas au format d'une loi, elle est supposée être un model,
-    sans validation positive du format 'MODEL ...' -- une ligne réellement
-    malformée serait donc mal interprétée silencieusement plutôt que de
-    lever une erreur claire (gap connu, pas encore corrigé).
+    correspond pas au format d'une loi, elle doit être une ligne
+    'MODEL <nom> <p_fixe> <gams>' (quatre champs, les deux derniers
+    numériques), sinon une erreur est levée. Une ligne 'MODEL' doit aussi
+    suivre au moins un prior de son groupe.
 
     Args:
         header_text: Texte complet de header.txt.
@@ -181,10 +181,12 @@ def parse_group_priors(header_text: str) -> dict[str, list[GroupPrior]]:
         {nom_de_groupe: [GroupPrior, ...], ...}.
 
     Raises:
-        ValueError: Si une ligne 'group ...' est malformée, ou si une
-            ligne de prior/model apparaît avant toute ligne 'group'.
+        ValueError: Si une ligne 'group ...' ou 'MODEL ...' est malformée,
+            si une ligne de prior/model apparaît avant toute ligne 'group',
+            ou si une ligne 'MODEL' précède les priors de son groupe.
     """
     group_priors: dict[str, list[GroupPrior]] = {}
+    last_group_name = None
 
     for line in _extract_priors_group_section(header_text):
         # "group G1 [M]" -> group=G1, ms_or_seq=M
@@ -201,6 +203,7 @@ def parse_group_priors(header_text: str) -> dict[str, list[GroupPrior]]:
             group_name = parts[1]
             ms_or_seq = parts[2][1:-1]  # remove brackets
             group_priors[group_name] = []
+            last_group_name = group_name
             continue
 
         # "MEANMU UN[1e-4,1e-3,5e-4,2]" -> name=MEANMU, law=UN, bounds_str=...
@@ -221,7 +224,6 @@ def parse_group_priors(header_text: str) -> dict[str, list[GroupPrior]]:
                 raise ValueError(
                     f"Ligne de la section group priors avant tout 'group' : {line!r}"
                 )
-            last_group_name = list(group_priors.keys())[-1]
             group_priors[last_group_name].append(
                 GroupPrior(
                     group=last_group_name,
@@ -240,8 +242,27 @@ def parse_group_priors(header_text: str) -> dict[str, list[GroupPrior]]:
             )
             continue
         else:
-            _, name_model = line.split()[0:2]
-            p_fixe, gams = float(line.split()[2]), float(line.split()[3])
+            if last_group_name is None or not group_priors[last_group_name]:
+                raise ValueError(
+                    "La section 'MODEL' doit être placée après les sections 'group' "
+                    f"et leurs priors : {line!r}"
+                )
+            parts = line.split()
+            if len(parts) != 4:
+                raise ValueError(
+                    f"Ligne de modèle de la section group priors malformée : {line!r}"
+                )
+            model, name_model = parts[0:2]
+            if model != "MODEL":
+                raise ValueError(
+                    f"Ligne de modèle de la section group priors non reconnue : {line!r}"
+                )
+            try:
+                p_fixe, gams = float(parts[2]), float(parts[3])
+            except ValueError as err:
+                raise ValueError(
+                    f"Ligne de modèle de la section group priors malformée : {line!r}"
+                ) from err
             group_priors[last_group_name].append(
                 GroupPrior(
                     group=last_group_name,
@@ -259,8 +280,6 @@ def parse_group_priors(header_text: str) -> dict[str, list[GroupPrior]]:
                 )
             )
             continue
-
-        raise ValueError(f"Ligne de la section group priors non reconnue : {line!r}")
 
     return group_priors
 
