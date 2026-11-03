@@ -5839,3 +5839,47 @@ contre arbre de travail en `choice`, 4 jeux × 2 scénarios, priors p min = 1,00
 entre cellules, t = 0,67), toutes familles à moins de 0,1 % en moyenne sauf `DTA` (+1,2 % ± 7,3 %, moyenne proche de zéro) et
 `HST` (−0,4 % ± 1,8 %). Pas de biais. Neutre statistiquement : la position d'un site ne compte pour aucune statistique.
 
+### 18. Jeu à 4 populations non sérielles : `.mss` refusé, trailer incohérent, temps (03/11)
+
+Dossier `reference/toy_example2_ms_dna_50loci_K2P_4pop` (110 loci : 10 MicroSat `<A>`, 50 ADN `<A>`, 50 ADN `<M>`) : 4
+populations de 20 individus échantillonnées à 0, avec admixture (scénario 2) et goulots (`varNe`), tailles `N` jusqu'à
+100 000 : header hérité d'un autre jeu, donc **pas un témoin à charge égale avec le sériel**.
+
+**1. `.mss` refusé (`Unreckognized file format`).** Avant même de lire le header : `DataC::testfile` compte comme locus
+toute ligne entre le titre et le premier `POP` (la ligne vide aussi), puis refuse toute ligne d'individu dont le nombre de
+champs après la virgule diffère. Ici une ligne vide avant `POP` (111 « loci » au lieu de 110, 80 lignes refusées) et 8 lignes
+`1-001`…`1-008` en double au début du bloc 1 (28 individus au lieu de 20). Corrigé avec `sed -i -e '114,121d' -e '112d'`
+(sauvegarde de l'état avant correction dans le dossier temporaire de la session).
+
+**2. Trailer incohérent après `-R ALL`.** Le header d'origine déclarait 21 priors dont `t11 t22 t33 t44`, copiés d'un autre
+jeu et utilisés par aucun scénario. À son premier lancement DIYABC a réécrit la section en `(17,2)` (priors et contraintes
+retirés) mais **gardé les quatre noms dans le trailer** (21 noms historiques, 253 mots) alors que les lignes ne portent que 16
+ou 17 valeurs historiques (248 ou 249 mots). `rewrite_real_reftable_txt` prenait `t11`…`t44` pour des paramètres de mutation
+(nom sans majuscule) puis plantait sur `zip(..., strict=True)` : message sans rapport avec la cause. Garde ajoutée dans
+`_split_mutation_and_stat_names` : un nom avant les statistiques qui n'a pas la forme `<nom>_<groupe>` lève une `ValueError`
+qui nomme les colonnes et explique la cause ; deux tests (direct et de bout en bout) rouges quand la garde est retirée.
+Header corrigé (testé sur une copie, DIYABC `END|20|`, trailer 249 mots sans doublon, `rewrite_real_reftable_txt` passe) :
+retirer les quatre noms du trailer et mettre la ligne 2 à `24 parameters and 224 summary statistics`.
+
+**3. Temps (mesurés par l'utilisateur, 1000 particules).** DIYABC 25 s (26 s dans le log), msprime 46 s : **≈ 1,8x**. Même
+ordre que le sériel (20,5 s / 44,3 s, 2,2x) et très loin des 2,1 s / 13,1 s du jeu à 2 populations : le temps de DIYABC
+suit le **nombre d'échantillons** (6 paires, 24 triplets, 224 statistiques), pas le caractère sériel. Réserve : charges
+différentes (tailles et nombre de `varNe`), donc confirmation de la tendance, pas mesure contrôlée.
+
+**4. Comparaison des statistiques et de `SML`, header corrigé** (reftable DIYABC `END|1000|`, trailer 249 mots sans doublon,
+rejeu msprime mixte ; priors appariés p min = 1,00 dans les deux scénarios ; un seul reftable, un seul jeu de graines) :
+
+| | scénario 1 (526 particules) | scénario 2 (474 particules) |
+|---|---|---|
+| statistiques comparées / flags KS | 233 / **0** | 233 / **0** |
+| test des signes | 98/233 négatifs (p = 0,018), médiane +0,05 % | 145/233 négatifs (p < 0,001), médiane −0,27 % |
+| **SML** (24 colonnes) : flags / p min / médiane rdiff | 0 / 0,285 / +0,14 % | 0 / 0,068 / +0,48 % |
+| `AML` (12 colonnes) : flags / p min / médiane rdiff | 0 / 0,446 / −0,14 % | 0 / 0,474 / −0,30 % |
+
+`SML` et `AML` sont donc validées en **admixture réelle à 4 populations non sérielles** (parents réellement différents du
+focal, contrairement au jeu sériel où les échantillons 3 et 4 sont des copies de 1 et 2), 0 flag sur 233 statistiques dans
+chaque scénario. Le test des signes est significatif au scénario 2 mais l'amplitude est faible (médiane −0,27 %, |rdiff|
+médian de `SML` 0,76 %) : le résidu lié au nombre de loci (50 loci par groupe), de même signe et même ordre que celui des autres
+jeux. **Non fait** : une réplique indépendante (second reftable DIYABC, autre graine), qui est ce qui départagerait un
+effet de réalisation du reftable.
+

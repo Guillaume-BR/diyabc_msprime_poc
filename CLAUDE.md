@@ -29,6 +29,7 @@ structurally and statistically equivalent to the real DIYABC's output.
 | Serial/temporal sampling (SNP PoolSeq) | complete | `toy_example4_seriel` (100 loci, `<MRC=5>`, 4/133 vs ~6.7 expected) |
 | Mixed MicroSat + DNA in one header | complete | `toy_example2_ms_dna_TN` (73 columns, 2 replays × 2 scenarios) |
 | Serial MicroSat + DNA, 4 samples (`AML`, `SML`) | complete, 224 columns (24 `SML`) | `toy_example2_ms_dna_50loci_TN_seriel`: 3 independent DIYABC reftables, several `seed_offset`s, 12 cells: 4 `SML` flags out of 288 columns, none repeated; MicroSat G1 `LIK`/`MGW`/`N2P` of scenario 2 recur (10 loci, probably the loci-count residual, undecided) (02/11) |
+| Non-serial 4 populations with real admixture, MicroSat + DNA (`AML`, `SML`) | complete, 224 columns | `toy_example2_ms_dna_50loci_K2P_4pop`: ONE DIYABC reftable, 2 scenarios, 0 KS flag out of 233 statistics each, `SML` smallest p 0.07, sign test significant in scenario 2 at −0.27 % (loci-count residual); no independent replica yet (03/11) |
 
 **Validation status (06/10): every dataset in the "Validated against" column above is
 validated with the final code**
@@ -593,7 +594,7 @@ locus/particle.
   statistic names for historical parameters, copy them into the trailer it rewrites, and so produce the same defect
   at every run (measured: 261 words instead of 237, the first 24 statistic names doubled, then
   `rewrite_real_reftable_txt` dies on `zip(..., strict=True)`). **Check `wc -w` of the trailer (1 + hist + mut +
-  nstat) before AND after a run.** Also silent: `-R ALL` without `-r` gives `reftable.log` = `END` and a 28-byte
+  nstat) before AND after a run.** Also: `-R ALL` removes from the priors section the historical parameters that no scenario uses (and their order constraints) but **leaves them in the trailer** (measured 03/11: `t11 t22 t33 t44` left over from a header copied from another dataset): the trailer then lists 4 names more than the rows carry values, and `rewrite_real_reftable_txt` now raises an explicit `ValueError` (it used to die on a bare `zip()` error). Do not declare unused priors in a header. Also silent: `-R ALL` without `-r` gives `reftable.log` = `END` and a 28-byte
   `reftableRF.bin` (`nrecneeded=0`); `-r N` without `-g N` simulates 100; `-R` without `ALL` hangs.
 - **An independent replay needs a NEW DIYABC reftable, initialised in its own step.**
   `./diyabc -p ./ -n "t:16;s:<seed>;f:"` only writes `RNG_state_0000.bin` and exits; the `-R ALL ...`
@@ -982,6 +983,12 @@ under the date given.
   mean of the relative differences on the DNA columns +0.016 % (sd 0.077 % between cells, t = 0.6). Trap: tskit's
   `segregating_sites(mode="site")` counts each derived allele of a multi-allelic site (8 where `cal_nss` counts 7
   sites): do not use it to check `NSS`/`NS2`/`DTA`.
+- **A genepop `.mss` is accepted only if every line before the first `POP` is a locus (03/11).** `DataC::testfile`
+  (`data.cpp`) counts as loci ALL the lines between the title and the first line containing `POP` (case-insensitive,
+  so a blank line counts), then refuses any individual line whose number of fields after the comma differs
+  (`Unreckognized file format`, printed right after the dataset title, before the header is read). Seen on a hand-built
+  4-population file: one blank line before `POP` (111 "loci" instead of 110, every individual refused) and 8 duplicated
+  rows at the start of the first block. Check with `testfile`'s own rule before blaming the header.
 - **`LightRateMap` (03/11) — tried and removed: no gain on the real replay.** Skipping the `msprime.RateMap` object
   (31 µs a piece) on the light mutation path saved 4 ms per particle in isolation, outputs byte-identical, but
   the 1000-particle replays, 5 alternations against `HEAD`, came out +0.52 s (mixed) and +0.22 s (DNA) slower, never
