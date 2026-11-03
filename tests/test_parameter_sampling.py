@@ -5,6 +5,9 @@ pondéré du scénario."""
 import dataclasses
 import random
 
+import numpy as np
+from scipy import stats as scipy_stats
+
 from bridge.header_dataclasses import Prior, Scenario
 from bridge.loci_parser import parse_loci_description
 from bridge.parameter_sampling import (
@@ -223,7 +226,7 @@ def test_sample_site_rates():
     p_fixe = 5
     dnalength = 10
     gams = 1.0
-    rng = random.Random(42)
+    rng = np.random.default_rng(42)
     result = sample_site_rates(p_fixe, gams, dnalength, rng)
 
     assert len(result) == dnalength
@@ -240,4 +243,24 @@ def test_sample_site_rates():
     assert all(
         abs(rate - 1 / (dnalength - nb_sites_fixes)) < 1e-6
         for rate in result[nb_sites_fixes:]
+    )
+
+
+def test_sample_site_rates_follows_gamma_of_mean_one():
+    """Les poids de sites suivent une loi gamma de forme `gams` et de moyenne 1
+    (comme MwcGen::ggamma3), à la normalisation par la somme près ; les sites
+    invariants sont les premiers."""
+    gams, dnalength, p_fixe = 0.5, 20_000, 10
+    rng = np.random.default_rng(7)
+    mutsit = sample_site_rates(p_fixe, gams, dnalength, rng)
+
+    nb_sites_fixes = dnalength - 18_000
+    assert np.all(mutsit[:nb_sites_fixes] == 0.0)
+    assert np.isclose(mutsit.sum(), 1.0)
+    variable = mutsit[nb_sites_fixes:] * len(mutsit[nb_sites_fixes:])  # moyenne 1
+    # Gamma(forme=gams, échelle=1/gams) : moyenne 1, variance 1/gams.
+    assert abs(variable.mean() - 1.0) < 1e-9
+    assert abs(variable.var() - 1.0 / gams) < 0.15
+    assert (
+        scipy_stats.kstest(variable, "gamma", args=(gams, 0, 1.0 / gams)).pvalue > 1e-3
     )

@@ -2040,7 +2040,7 @@ def build_transition_matrix_dna(
 
 
 def build_rate_map(
-    mutsit: list[float], mus_rate: float, dnalength: int
+    mutsit: np.ndarray | list[float], mus_rate: float, dnalength: int
 ) -> msprime.RateMap:
     """Construit le profil de taux de mutation par site d'un locus
     (msprime.RateMap).
@@ -2071,8 +2071,8 @@ def build_rate_map(
         )
     # Crée le profil de taux (msprime.RateMap), un taux absolu par site
     rate_map = msprime.RateMap(
-        position=[i for i in range(dnalength + 1)],
-        rate=[mus_rate * dnalength * mutsit[i] for i in range(dnalength)],
+        position=np.arange(dnalength + 1),
+        rate=mus_rate * dnalength * np.asarray(mutsit, dtype=float),
     )
     return rate_map
 
@@ -2377,7 +2377,7 @@ def build_rate_map_per_locus(
     group_priors = parse_group_priors(header_text)
 
     rate_map_per_locus = {}
-    rng = random.Random(_locus_seed(seed, _SITE_RATE_SEED_OFFSET, 0))
+    rng = np.random.default_rng(_locus_seed(seed, _SITE_RATE_SEED_OFFSET, 0))
     for locus in list_loci:
         if locus.ms_or_seq == "S":
             gp_model = next(gp for gp in group_priors[locus.group] if gp.model)
@@ -3129,7 +3129,7 @@ def build_rate_map_per_locus_from_values(
     group_priors = parse_group_priors(header_text)
 
     rate_map_per_locus = {}
-    rng = random.Random(_locus_seed(seed, _SITE_RATE_SEED_OFFSET, 0))
+    rng = np.random.default_rng(_locus_seed(seed, _SITE_RATE_SEED_OFFSET, 0))
     for locus in list_loci:
         if locus.ms_or_seq == "S":
             gp_model = next(gp for gp in group_priors[locus.group] if gp.model)

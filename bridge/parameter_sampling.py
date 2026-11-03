@@ -14,6 +14,8 @@ import dataclasses
 import math
 import random
 
+import numpy as np
+
 from bridge.configuration import _GROUP_PRIOR_SEED_OFFSET, _locus_seed
 from bridge.header_dataclasses import (
     GroupPrior,
@@ -325,14 +327,20 @@ def sampling_group_local_param(
 
 
 def sample_site_rates(
-    p_fixe: float, gams: float, dnalength: int, rng: random.Random
-) -> list[float]:
+    p_fixe: float, gams: float, dnalength: int, rng: np.random.Generator
+) -> np.ndarray:
     """Tire mutsit : le taux de mutation relatif par site pour un locus
     séquence.
 
     Reproduit header.cpp:707-738 (y compris le "bug" sitefix -- les
     sites fixes sont toujours les premiers de la séquence, pas un
-    sous-ensemble aléatoire).
+    sous-ensemble aléatoire). Les poids sont tirés selon une loi gamma de
+    forme `gams` et de moyenne 1, comme `MwcGen::ggamma3`.
+
+    Depuis le 02/11 le tirage passe par `numpy.random.Generator.gamma` (un
+    appel vectorisé par locus) au lieu de `random.Random.gammavariate` par
+    site : même loi, autre flux de nombres aléatoires, donc les taux de sites
+    d'une graine donnée ont changé.
 
     Args:
         p_fixe: Pourcentage (0-100, pas une fraction 0-1) de sites invariants (`GroupPrior.p_fixe`).
@@ -343,15 +351,18 @@ def sample_site_rates(
         rng: Le générateur aléatoire à utiliser.
 
     Returns:
-        La liste `mutsit`, de longueur `dnalength`, normalisée à
+        Le tableau `mutsit`, de longueur `dnalength`, normalisé à
         somme 1.
+
+    Raises:
+        ZeroDivisionError: Si tous les sites sont invariants.
     """
     nb_sites_variables = math.floor(dnalength * (1 - 0.01 * p_fixe) + 0.5)
     nb_sites_fixes = dnalength - nb_sites_variables
     if gams < 1e-12:
-        mutsit = [1.0] * dnalength
+        mutsit = np.ones(dnalength)
     else:
-        mutsit = [rng.gammavariate(gams, 1.0 / gams) for _ in range(dnalength)]
+        mutsit = rng.gamma(shape=gams, scale=1.0 / gams, size=dnalength)
 
     # header.cpp:727-738 -- "sitefix" tire des indices aléatoires distincts,
     # MAIS la ligne qui fixe le site utilise l'indice de boucle "i", pas
@@ -375,10 +386,12 @@ def sample_site_rates(
     #                    nouveau = False
     #                j += 1
     #   mutsit[sitefix[i]] = 0.0
-    for i in range(nb_sites_fixes):
-        mutsit[i] = 0.0
+    # (Version d'origine, écrite pour `random.Random` : avec le `np.random.Generator`
+    # de cette fonction, `rng.randint(1, dnalength)` s'écrit
+    # `int(rng.integers(1, dnalength + 1))`.)
+    mutsit[:nb_sites_fixes] = 0.0
 
-    total = sum(mutsit)
-    mutsit = [x / total for x in mutsit]
-
-    return mutsit
+    total = float(mutsit.sum())
+    if total == 0.0:
+        raise ZeroDivisionError("Tous les sites sont invariants (p_fixe = 100).")
+    return mutsit / total
