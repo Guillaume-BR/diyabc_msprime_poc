@@ -19,11 +19,13 @@ from bridge.prior_parser import is_constant_prior, parse_priors
 from bridge.reftable_loop import (
     _historical_columns_order,
     _kept_param_names_by_scenario,
+    _split_mutation_and_stat_names,
     check_header_trailer_line,
     group_prior_column_names,
     parse_real_reftable_params,
     parse_real_reftable_params_with_group_priors,
     raise_if_serial_with_sex_linked_loci,
+    rewrite_real_reftable_txt,
     run_reftable_simulation_dna,
     run_reftable_simulation_microsat,
     run_reftable_simulation_snp,
@@ -352,6 +354,35 @@ def test_historical_columns_order(microsat_context_te1_modified):
     )
     with pytest.raises(ValueError, match="t41"):
         _historical_columns_order(header_line_error, priors, scenarios)
+
+
+def test_split_mutation_and_stat_names_rejects_undeclared_historical_parameters():
+    """Un paramètre historique du trailer absent des priors (DIYABC `-R ALL` retire
+    des priors ceux qu'aucun scénario n'utilise mais les laisse dans le trailer)
+    se retrouve entre les paramètres historiques connus et les mutations : on
+    lève avec son nom, au lieu de décaler les colonnes."""
+    names = ["µmic_1", "pmic_1", "µseq_2", "k1seq_2", "NAL_1_1", "MPD_2_1"]
+    assert _split_mutation_and_stat_names(names) == (names[:4], names[4:])
+
+    with pytest.raises(ValueError, match="t11.*t22"):
+        _split_mutation_and_stat_names(["t11", "t22", *names])
+
+
+def test_rewrite_real_reftable_txt_explains_trailer_with_undeclared_parameter(
+    tmp_path, microsat_context_te1_modified
+):
+    header_text = microsat_context_te1_modified.header_text
+    priors = parse_priors(header_text)[0]
+    scenarios = parse_header_scenarios(header_text)
+    hist = "N1 N2 N3 N4 ra t32 t21 t421 t41"
+    # `t99` : paramètre historique du trailer que les priors ne déclarent pas.
+    raw = tmp_path / "first_records.txt"
+    raw.write_text(
+        f"scenario {hist} t99 mumic_1 pmic_1 snimic_1 NAL_1_1\n"
+        "1 1 2 3 4 5 6 7 8 9 10 11 12\n"
+    )
+    with pytest.raises(ValueError, match="t99"):
+        rewrite_real_reftable_txt(raw, tmp_path / "clean.txt", priors, scenarios)
 
 
 def test_parse_real_reftable_params_follows_file_header_order(

@@ -813,12 +813,26 @@ def _split_mutation_and_stat_names(names: list[str]) -> tuple[list[str], list[st
 
     Raises:
         ValueError: Si un nom de paramètre apparaît APRÈS le début des
-            statistiques, c.-à-d. si l'hypothèse d'ordre est fausse. On
-            lève plutôt que de décaler silencieusement les formats, même
-            trap que `_historical_columns_order`.
+            statistiques, c.-à-d. si l'hypothèse d'ordre est fausse, ou si un
+            nom avant les statistiques n'a pas la forme d'un paramètre
+            mutationnel (`<nom>_<numéro de groupe>`) -- cas d'un paramètre
+            historique du trailer absent des priors déclarés. On lève
+            plutôt que de décaler silencieusement les formats, même trap que
+            `_historical_columns_order`.
     """
     is_stat = [bool(n) and n[0].isascii() and n[0].isupper() for n in names]
     first_stat = next((i for i, s in enumerate(is_stat) if s), len(names))
+    not_mutation = [n for n in names[:first_stat] if not re.search(r"_\d+$", n)]
+    if not_mutation:
+        raise ValueError(
+            f"Colonnes inattendues avant les statistiques : {not_mutation}. Ce ne "
+            "sont pas des paramètres mutationnels (de la forme `<nom>_<groupe>`) : "
+            "ce sont sans doute des paramètres HISTORIQUES du trailer que les "
+            "priors déclarés ne contiennent pas. DIYABC (`-R ALL`) retire de la "
+            "section des priors les paramètres qu'aucun scénario n'utilise mais "
+            "les laisse dans le trailer : retirer ces noms du trailer (et mettre "
+            "à jour la ligne `N parameters and ...`), puis relancer DIYABC."
+        )
     tail = names[first_stat:]
     intruders = [n for n, s in zip(tail, is_stat[first_stat:], strict=True) if not s]
     if intruders:
