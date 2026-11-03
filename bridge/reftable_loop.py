@@ -149,9 +149,7 @@ _MUTATION_PARAM_TOKEN_RE = re.compile(r"^(µ|mu|k1|k2|p|sni)(seq|mic)_\d+$")
 # DIYABC écrit le préfixe mus_rate soit "µ" (U+00B5, cas des `te2`), soit "mu"
 # en ASCII (cas de `toy_example1_ms`) -- les deux apparaissent dans de la vraie
 # sortie, et le reftable suit toujours son header. On compare donc les jetons
-# sous forme normalisée. `group_prior_column_names` produit la variante "µ" ;
-# c'est une dette connue, un header écrit en "mu" en reçoit des noms de colonnes
-# qui ne correspondent à rien (voir Open work).
+# sous forme normalisée.
 # Les DEUX seules orthographes observées dans de la vraie sortie DIYABC :
 # "µ" = U+00B5 MICRO SIGN (7 headers de reference/) et "mu" en ASCII
 # (toy_example1_ms, 2 headers). Le mu grec U+03BC n'apparaît nulle part et
@@ -161,6 +159,30 @@ _MUTATION_PARAM_TOKEN_RE = re.compile(r"^(µ|mu|k1|k2|p|sni)(seq|mic)_\d+$")
 # en dur et la chaîne de rejeu ne retrouverait jamais la colonne par son nom.
 # Mieux vaut que la garde lève sur ce caractère que de l'absorber.
 _MU_VARIANTS = ("µ", "mu")
+
+
+def _detect_mu(header_text: str) -> str:
+    """Détecte l'orthographe du préfixe mus_rate dans un header DIYABC.
+
+    Args:
+        header_text: Texte complet de header.txt.
+
+    Returns:
+        "µ" ou "mu", selon ce que le header déclare.
+    """
+    lines = header_text.splitlines()
+    trailer = lines[-1].split()
+    mutation_param_tokens = [
+        token for token in trailer if _MUTATION_PARAM_TOKEN_RE.match(token)
+    ]
+    first_mu = next(
+        (token for token in mutation_param_tokens if token.startswith(_MU_VARIANTS)),
+        None,
+    )
+    if first_mu is not None:
+        return "mu" if first_mu.startswith("mu") else "µ"
+    else:
+        return "µ"
 
 
 def _normalize_mu(token: str) -> str:
@@ -1418,6 +1440,7 @@ def _group_prior_columns(header_text: str) -> list[tuple[str, str, str]]:
             Une liste de tuples (nom_colonne, nom_groupe, nom_paramètre).
     """
     group_priors = parse_group_priors(header_text)
+    mu_detected = _detect_mu(header_text)
     columns = []
     for group_name, entries in group_priors.items():
         ms_or_seq = entries[0].ms_or_seq
@@ -1425,7 +1448,7 @@ def _group_prior_columns(header_text: str) -> list[tuple[str, str, str]]:
         group_number = group_name[1:]  # "G2" -> "2"
 
         columns.append(
-            (f"µ{type_suffix}_{group_number}", group_name, "MEANMU")
+            (f"{mu_detected}{type_suffix}_{group_number}", group_name, "MEANMU")
         )  # mus_rate
 
         if ms_or_seq == "S":

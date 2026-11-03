@@ -91,29 +91,6 @@ def header_text() -> str:
 
 
 @pytest.fixture
-def header_text_te5() -> str:
-    return (OBSERVED_SNP_FILE_TE5.parent / "headerRF.txt").read_text()
-
-
-@pytest.fixture
-def header_text_te5_with_maf() -> str:
-    return (OBSERVED_SNP_FILE_TE5_WITH_MAF.parent / "headerRF.txt").read_text()
-
-
-@pytest.fixture
-def header_text_te4() -> str:
-    return (OBSERVED_SNP_FILE_TE4.parent / "headerRF.txt").read_text()
-
-
-@pytest.fixture
-def header_text_te3_scenario1() -> str:
-    """toy_example3, scénario 1 isolé (split+admixture, 8 priors) -- seul
-    dataset de ce projet avec un vrai filtre MAF actif (<MAF=0.05>,
-    contrairement à human/toy_example5 qui sont <MAF=hudson>)."""
-    return (OBSERVED_SNP_FILE_TE3_SCENARIO1.parent / "headerRF.txt").read_text()
-
-
-@pytest.fixture
 def header_text_te1() -> str:
     path_te1 = REFERENCE_DIR / "toy_example1_ms_seriel" / "headerRF.txt"
     return path_te1.read_text()
@@ -138,6 +115,29 @@ def header_text_te2_XY() -> str:
 
 
 @pytest.fixture
+def header_text_te3_scenario1() -> str:
+    """toy_example3, scénario 1 isolé (split+admixture, 8 priors) -- seul
+    dataset de ce projet avec un vrai filtre MAF actif (<MAF=0.05>,
+    contrairement à human/toy_example5 qui sont <MAF=hudson>)."""
+    return (OBSERVED_SNP_FILE_TE3_SCENARIO1.parent / "headerRF.txt").read_text()
+
+
+@pytest.fixture
+def header_text_te4() -> str:
+    return (OBSERVED_SNP_FILE_TE4.parent / "headerRF.txt").read_text()
+
+
+@pytest.fixture
+def header_text_te5() -> str:
+    return (OBSERVED_SNP_FILE_TE5.parent / "headerRF.txt").read_text()
+
+
+@pytest.fixture
+def header_text_te5_with_maf() -> str:
+    return (OBSERVED_SNP_FILE_TE5_WITH_MAF.parent / "headerRF.txt").read_text()
+
+
+@pytest.fixture
 def snp_context_human(header_text) -> SnpReplayContext:
     snp_path = OBSERVED_SNP_FILE_HUMAN
     snp_file_type = detect_snp_file_type(snp_path)
@@ -159,6 +159,81 @@ def snp_context_human(header_text) -> SnpReplayContext:
         mrc_ratio=mrc_ratio,
         reads_observed=reads_observed,
         sexes_per_sample=sexes_per_sample,
+    )
+
+
+@pytest.fixture
+def microsat_context_te1(header_text_te1) -> MicrosatReplayContext:
+    list_loci = parse_loci_description(header_text_te1)
+    microsat_observed = observed_microsatellites(OBSERVED_MSS_FILE_TE1, list_loci)
+    return MicrosatReplayContext(
+        header_text=header_text_te1,
+        mss_path=OBSERVED_MSS_FILE_TE1,
+        list_loci=list_loci,
+        microsat_observed=microsat_observed,
+        bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
+        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE1),
+        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE1),
+    )
+
+
+@pytest.fixture
+def microsat_context_te1_modified(header_text_te1_modified) -> MicrosatReplayContext:
+    list_loci = parse_loci_description(header_text_te1_modified)
+    microsat_observed = observed_microsatellites(OBSERVED_MSS_FILE_TE1, list_loci)
+    return MicrosatReplayContext(
+        header_text=header_text_te1_modified,
+        mss_path=OBSERVED_MSS_FILE_TE1,
+        list_loci=list_loci,
+        microsat_observed=microsat_observed,
+        bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
+        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE1),
+        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE1),
+    )
+
+
+@pytest.fixture
+def dna_context_te2(header_text_te2) -> DnaReplayContext:
+    list_loci = parse_loci_description(header_text_te2)
+    dna_observed = observed_sequences(OBSERVED_MSS_FILE_TE2, list_loci)
+    return DnaReplayContext(
+        header_text=header_text_te2,
+        mss_path=OBSERVED_MSS_FILE_TE2,
+        list_loci=list_loci,
+        dna_observed=dna_observed,
+        frequencies_per_locus=base_frequency_by_locus(dna_observed),
+        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE2),
+        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE2),
+    )
+
+
+@pytest.fixture
+def dna_context_te2_xy(header_text_te2_XY) -> DnaReplayContext:
+    list_loci = parse_loci_description(header_text_te2_XY)
+    dna_observed = observed_sequences(OBSERVED_MSS_FILE_TE2_XY, list_loci)
+    return DnaReplayContext(
+        header_text=header_text_te2_XY,
+        mss_path=OBSERVED_MSS_FILE_TE2_XY,
+        list_loci=list_loci,
+        dna_observed=dna_observed,
+        frequencies_per_locus=base_frequency_by_locus(dna_observed),
+        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE2_XY),
+        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE2_XY),
+    )
+
+
+@pytest.fixture
+def microsat_context_te2_xy(header_text_te2_XY) -> MicrosatReplayContext:
+    list_loci = parse_loci_description(header_text_te2_XY)
+    microsat_observed = observed_microsatellites(OBSERVED_MSS_FILE_TE2_XY, list_loci)
+    return MicrosatReplayContext(
+        header_text=header_text_te2_XY,
+        mss_path=OBSERVED_MSS_FILE_TE2_XY,
+        list_loci=list_loci,
+        microsat_observed=microsat_observed,
+        bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
+        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE2_XY),
+        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE2_XY),
     )
 
 
@@ -211,79 +286,4 @@ def snp_context_te5(header_text_te5) -> SnpReplayContext:
         mrc_ratio=mrc_ratio,
         reads_observed=reads_observed,
         sexes_per_sample=sexes_per_sample,
-    )
-
-
-@pytest.fixture
-def dna_context_te2(header_text_te2) -> DnaReplayContext:
-    list_loci = parse_loci_description(header_text_te2)
-    dna_observed = observed_sequences(OBSERVED_MSS_FILE_TE2, list_loci)
-    return DnaReplayContext(
-        header_text=header_text_te2,
-        mss_path=OBSERVED_MSS_FILE_TE2,
-        list_loci=list_loci,
-        dna_observed=dna_observed,
-        frequencies_per_locus=base_frequency_by_locus(dna_observed),
-        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE2),
-        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE2),
-    )
-
-
-@pytest.fixture
-def dna_context_te2_xy(header_text_te2_XY) -> DnaReplayContext:
-    list_loci = parse_loci_description(header_text_te2_XY)
-    dna_observed = observed_sequences(OBSERVED_MSS_FILE_TE2_XY, list_loci)
-    return DnaReplayContext(
-        header_text=header_text_te2_XY,
-        mss_path=OBSERVED_MSS_FILE_TE2_XY,
-        list_loci=list_loci,
-        dna_observed=dna_observed,
-        frequencies_per_locus=base_frequency_by_locus(dna_observed),
-        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE2_XY),
-        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE2_XY),
-    )
-
-
-@pytest.fixture
-def microsat_context_te2_xy(header_text_te2_XY) -> MicrosatReplayContext:
-    list_loci = parse_loci_description(header_text_te2_XY)
-    microsat_observed = observed_microsatellites(OBSERVED_MSS_FILE_TE2_XY, list_loci)
-    return MicrosatReplayContext(
-        header_text=header_text_te2_XY,
-        mss_path=OBSERVED_MSS_FILE_TE2_XY,
-        list_loci=list_loci,
-        microsat_observed=microsat_observed,
-        bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
-        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE2_XY),
-        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE2_XY),
-    )
-
-
-@pytest.fixture
-def microsat_context_te1(header_text_te1) -> MicrosatReplayContext:
-    list_loci = parse_loci_description(header_text_te1)
-    microsat_observed = observed_microsatellites(OBSERVED_MSS_FILE_TE1, list_loci)
-    return MicrosatReplayContext(
-        header_text=header_text_te1,
-        mss_path=OBSERVED_MSS_FILE_TE1,
-        list_loci=list_loci,
-        microsat_observed=microsat_observed,
-        bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
-        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE1),
-        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE1),
-    )
-
-
-@pytest.fixture
-def microsat_context_te1_modified(header_text_te1_modified) -> MicrosatReplayContext:
-    list_loci = parse_loci_description(header_text_te1_modified)
-    microsat_observed = observed_microsatellites(OBSERVED_MSS_FILE_TE1, list_loci)
-    return MicrosatReplayContext(
-        header_text=header_text_te1_modified,
-        mss_path=OBSERVED_MSS_FILE_TE1,
-        list_loci=list_loci,
-        microsat_observed=microsat_observed,
-        bounds_per_locus=allele_bounds_per_locus(microsat_observed, list_loci),
-        samples_default=observed_count_sample(OBSERVED_MSS_FILE_TE1),
-        sex_ratio=parse_sex_ratio(OBSERVED_MSS_FILE_TE1),
     )

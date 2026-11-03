@@ -17,6 +17,7 @@ from conftest import (
 from bridge.demography_builder import get_parameter_names_used_by_scenario
 from bridge.prior_parser import is_constant_prior, parse_priors
 from bridge.reftable_loop import (
+    _detect_mu,
     _historical_columns_order,
     _kept_param_names_by_scenario,
     _split_mutation_and_stat_names,
@@ -34,6 +35,19 @@ from bridge.reftable_loop import (
     write_reftable_txt,
 )
 from bridge.scenario_parser import is_serial_scenario, parse_header_scenarios
+
+
+def test_detect_mu(header_text_te4, header_text_te2):
+    """Vérifie que _detect_mu retourne bien l'écriture de mu dans le trailer du header.txt"""
+    mu = _detect_mu(header_text_te4)
+    assert mu == "µ"
+
+    mu2 = _detect_mu(header_text_te2)
+    assert mu2 == "µ"
+
+    fake_header = header_text_te2.replace("µ", "mu")
+    mu3 = _detect_mu(fake_header)
+    assert mu3 == "mu"
 
 
 def test_simulate_from_directory(tmp_path, snp_context_human):
@@ -454,6 +468,16 @@ def test_parse_real_reftable_params_with_group_priors(header_text_te2):
     result_scenario_1 = next(result[i] for i in range(len(result)) if result[i][0] == 1)
     result_scenario_2 = next(result[i] for i in range(len(result)) if result[i][0] == 2)
     assert len(result_scenario_1[1]) != len(result_scenario_2[1])
+
+
+def test_group_prior_column_names_follows_trailer_spelling(header_text_te2):
+    lines = header_text_te2.splitlines()
+    lines[-1] = lines[-1].replace("µ", "mu")
+    header_mu = "\n".join(lines)
+
+    names = group_prior_column_names(header_mu)
+
+    assert names[0] == "mumic_1"  # le premier nom attendu, en dur
 
 
 def test_run_reftable_simulation_dna_scenario1(header_text_te2):
