@@ -474,8 +474,8 @@ locus/particle.
   SNP dataset. Note **DIYABC writes the `mus_rate` prefix two ways** — `µ`
   (U+00B5) on the `te2` family, plain ASCII `mu` on `toy_example1_ms` — and the
   reftable always follows its own header, so the guard normalizes both.
-  `group_prior_column_names` hardcodes `µ`: on a `mu`-style header it returns
-  column names that match nothing, which is latent (see Open work).
+  `group_prior_column_names` follows the trailer's own spelling (`_detect_mu`,
+  fallback `µ` when the trailer is absent).
 - **`DRAW UNTIL` exists if and only if `nconditions > 0`.** The
   `historical parameters priors (N,C)` header gives `C` order constraints;
   `readHeaderHistParam` (`header.cpp:274`) consumes the `DRAW UNTIL` line
@@ -589,7 +589,10 @@ locus/particle.
   must stay consistent, and it replicates itself when it is not.** `readHeaderAllStat` regenerates the whole
   statistic list of the data type (2 samples: 58 columns; 4 samples: 224, with `AML` and `SML` triplets), so editing
   the statistics out of a header does nothing, and a benchmark against a Python side that lacks one of them compares
-  unequal loads (`stats_filter="ALL"` means "all *implemented*": no error). It also reads the trailer as input,
+  unequal loads (`stats_filter="ALL"` means "all *implemented*": no error; since 03/11 the four replay scripts
+  `scripts/replay_diyabc_priors_{snp,ms,dna,mixed}.py` set `STATS_FILTER = "HEADER"` and read `headerRF.txt`, which
+  `-R ALL` fills with the full list, so a missing statistic raises `ValueError` on the first particle: 200 columns
+  against 224 can no longer pass unnoticed; a replay not going through these scripts must pass `"HEADER"` itself). It also reads the trailer as input,
   `nparamhist = words − 1 − nstat − nparamut` (`header.cpp:797`); a trailer with extra words makes it take
   statistic names for historical parameters, copy them into the trailer it rewrites, and so produce the same defect
   at every run (measured: 261 words instead of 237, the first 24 statistic names doubled, then
@@ -994,6 +997,27 @@ under the date given.
   the 1000-particle replays, 5 alternations against `HEAD`, came out +0.52 s (mixed) and +0.22 s (DNA) slower, never
   faster. **Judge an optimisation on the full replay at 16 workers, alternated against the reference, ≥ 5 times**: a step
   timing and a single-process particle both missed what the replay showed.
+- **`µ`/`mu` prefix of `group_prior_column_names` (03/11) — fixed.** `_group_prior_columns` wrote `µ` in hard, so a
+  `mu`-style header (`toy_example1_ms_*`) got column names matching nothing in DIYABC's reftable. `_detect_mu` now reads
+  the spelling from the mutation-parameter tokens of the header's trailer line (`mu` if one starts with `mu`, fallback
+  `µ` when the trailer is missing, as in a fresh `header.txt` before the first `-R ALL`). Cosmetic: the `.bin` carries
+  no column names and `parse_real_reftable_params_with_group_priors` reads by position, so a wrong spelling never
+  caused a wrong *read*; the real exposure is a wrong *count*, guarded by `check_header_trailer_line` and
+  `check_real_reftable_matches_header`. Guarded by `test_detect_mu` and
+  `test_group_prior_column_names_follows_trailer_spelling` (expected names written in hard).
+- **`parse_group_priors` took any unknown line for a `MODEL` line (03/11) — fixed.** The `else` branch ignored the
+  first word and read `last_group_name` only from the prior branch, so a misspelt `MODEL`, a missing or non-numeric field
+  gave a raw `IndexError`/`ValueError` or a silent misread, and a `MODEL` right under a `group` line was filed in the
+  PREVIOUS group (no error, the worst case). Now `last_group_name` is set on the `group` line, a `MODEL` line must follow
+  at least one prior of its group, have exactly 4 fields (`MODEL <name> <p_fixe> <gams>`, last two numeric) and start with
+  `MODEL`, otherwise a clear `ValueError` quotes the line. Guarded by `test_parse_group_priors_model_error` (the four cases).
+  Not checked: whether DIYABC tolerates extra words after `gams`, we refuse them.
+- **`_genotypes_by_sample_and_individuals` and the `np.int64` leak (03/11) — audited, none.** The sizes go through
+  `np.array(decoded[0])[decoded[1]]` and `.tolist()` before the tuples are built (monomorphic locus: `(0, 0)` literals),
+  and `_decode_locus` uses `int(a)`, so every element is a Python `int` (since the 15-16/10 array reads).
+  `test_genotypes_by_sample_and_individuals_matches_reference` asserts `type(x) is int` on every element; mutation check
+  on a copy of the module (`.tolist()` → `list(...)`): 8 of the 16 polymorphic cases go red (the 8 monomorphic ones never
+  reach `.tolist()`).
 - **`SML` (02/11) — implemented and validated.** `cal_aml3p` is `AML` with one haplotype per allele (`cal_freq`),
   so `_compute_AML_one_triplet` is reused unchanged on haplotype ids; the only addition is the guard of
   `sumstat.cpp:2100-2106` (statistic = 0.5 when no locus shows two distinct haplotypes among the two parents
@@ -1690,272 +1714,33 @@ the worktree exists for that.
   deliberately deferred: **no dataset would validate it**, and this project
   never declares a path correct without a paired replay against the real
   DIYABC. See "Serial/temporal sampling" under Domain knowledge.
-- **`ML3p_2.3.4` on `toy_example4_seriel`: RESOLVED 05/10 — an artefact of
-  overlapping seeds, not a real residual (verdict at the end of this entry).**
-  Significant in **three** replays (p = 0.0001 / 0.0013 / 0.0002) with a stable
-  −10 to −14% rdiff, and it survives a 10x increase in loci count that wipes out
-  every other flagged column. The persistence criterion was met at the time (the
-  05/10 verdict below shows why that was not enough). `ML2p_2.4` is intermediate: significant in
-  both 100-loci replays, not at 1000, amplitude decaying — the loci-count
-  residual, with a consistently negative sign worth noting. Left unexplored by
-  the user's call (cost vs. stakes) until 05/10.
-  **Localised 30/09: it is the oldest SAMPLE, not a population, and not
-  admixture.** Splitting the whole ML family by index on run 0 scenario 1 gives a
-  perfect separation — every column carrying index **4** diverges, no other one
-  does:
-
-  | clean | rdiff | KS p | | affected | rdiff | KS p |
-  |---|---|---|---|---|---|---|
-  | `ML1p_1` | −0.30% | 1.00 | | `ML1p_4` | −3.58% | 0.107 |
-  | `ML1p_2` | +0.19% | 0.97 | | `ML2p_1.4` | −10.48% | 0.067 |
-  | `ML1p_3` | +0.49% | 1.00 | | `ML2p_2.4` | −9.27% | 0.009 |
-  | `ML2p_1.2` | +0.08% | 1.00 | | `ML2p_3.4` | −3.28% | 0.246 |
-  | `ML2p_1.3` | +0.09% | 1.00 | | `ML3p_1.2.4` | −13.68% | 0.011 |
-  | `ML2p_2.3` | +0.20% | 0.98 | | `ML3p_1.3.4` | −22.06% | 0.029 |
-  | `ML3p_1.2.3` | +0.28% | 1.00 | | `ML3p_2.3.4` | −14.32% | 0.0001 |
-
-  7/7 affected, all negative, against 0.96–1.00 KS p for the other five. **This
-  is not a small-mean artifact**: the KS is scale-invariant, so the separation
-  cannot come from the index-4 columns having smaller means (0.008–0.083 vs
-  0.24–0.44). The earlier hypothesis — a link to `toy_example4`'s observed data
-  being built under scenario 3 with pop4 admixed — **is falsified**: this header
-  declares **one** population sampled at four dates (`0/50/200/500 sample 1`), so
-  there is no population 4. Index 4 is the **oldest sample**, at t = 500.
-  The number of populations in the statistic is irrelevant: `ML3p_1.2.3` is clean
-  at +0.28% while `ML1p_4` is not. So this is a **serial-sampling** lead, not an
-  admixture or ML-combinatorics one, and the discrete coalescent is already
-  falsified for it (see the `Npresent` stratification below).
-  **The discrete coalescent is NOT the cause — falsified 30/09.** Stratifying the
-  paired replay by the drawn `Npresent` (3 runs, including the 1000-loci one)
-  gives the *opposite* gradient to the one that signature produces. `ML3p_2.3.4`
-  relative error:
-
-  | `Npresent` | <150 | 150–350 | 350–600 | 600–1000 |
-  |---|---|---|---|---|
-  | run 0 | **+8.1%** | −45.8% | −30.0% | −32.3% |
-  | run 1 | **−1.7%** | −31.8% | −31.3% | −59.4% |
-  | run 0, 1000 loci | **−3.6%** | −21.8% | −20.7% | −16.3% |
-
-  Every particle here is already in discrete mode (800 gene copies with
-  `Npresent <= 1000`, so `ra >= 0.8`), and within that regime a smaller `N`
-  widens the discrete/continuous gap — yet **that is exactly where the two
-  simulators agree best**. On `toy_example2_ms_dna_50loci_K2P` the `N1`
-  gradient runs the other way (π error −72% at `N1 < 160` down to −3% above 4000)
-  — and that one turned out not to be a coalescent effect at all, see the G2 entry
-  under Open work. `FST2m_2.4` stays within ±4% in every stratum, so the pairing
-  and the stratification are sound.
-  Read the `<150` column as saturation, not accuracy: tiny `N` collapses
-  diversity and drives a likelihood statistic to a boundary value on both sides.
-  The falsification was later confirmed by a second route: `Npresent` is the
-  wrong variable, since sample 4 (t = 500) lives in the **`Npast`** regime
-  whenever `tbn < 500`. Stratifying by `Npast` *conditional* on `tbn < 500`, the
-  residual is **worst where `Npast` is largest** (`ML3p_2.3.4` −70.0% / −56.8% /
-  −32.6% above 20000, against +8.0% / −61.3% / −12.3% in 1600–6000) — whereas
-  discrete mode needs `ra = 800/N >= 0.5`, i.e. `Npast < 1600`, a stratum holding
-  only 6 particles. The residual lives where **both** simulators are continuous.
-
-  **The failing configuration, specified** (3 runs, scenario 1). Splitting by
-  `tbn`, the residual collapses once the size change is older than the oldest
-  sample — `ML3p_2.3.4`:
-
-  | `tbn` | run 0 | run 1 | run 0, 1000 loci |
-  |---|---|---|---|
-  | <200 | −47.1% | −51.9% | −20.0% |
-  | 200–500 | −41.8% | −57.5% | −24.6% |
-  | **>500** | **−2.2%** | **−8.9%** | **−7.3%** |
-
-  So it takes all three of: **(a)** `tbn < 500`, i.e. the oldest sample drawn
-  beyond the `VarNe`, inside `Npast`; **(b)** `Npast` large — with
-  `Npresent <= 1000` and `Npast ~ UN[10,50000]` that is a 20–50x expansion into
-  the past, i.e. a forward-time bottleneck; **(c)** the ML family, since
-  `FST2m_2.4` stays within ±4% in every stratum, so sample 4's allele frequencies
-  are not globally wrong. `ML1p_1` (the present-day sample) is clean in every
-  stratum of every split, at |rdiff| < 1.7% and KS p > 0.85.
-  In one sentence: **a sample taken from an ancestral population much larger than
-  the recent one.** First steps if anyone picks this up: re-read `cal_ml3p` in
-  `sumstat.cpp`, and compare a single particle at fixed `tbn ≈ 100`,
-  `Npast ≈ 40000`, `Npresent ≈ 500` — the allele-frequency spectrum of sample 4
-  is where the two sides must be made to disagree visibly.
-  **Verdict 05/10: the residual does not survive decorrelated seeds.** The three
-  replays that made it "persistent" all used seeds 1..N on the PoolSeq path, whose
-  `with_mrc_filter` seeds were additive (`seed + batch_index * 20` for the tree
-  batches, `seed + attempt + _MRC_REJECTION_SEED_OFFSET` for the reads): the same
-  mechanism as `DTA_2_2`, see Closed investigations. Both sites now go through
-  `_locus_seed` (`_MRC_BATCH_SEED_OFFSET` added to `configuration.py`). Replayed on
-  **two independent DIYABC runs at 1000 loci**, two scenarios each: `ML3p_2.3.4`
-  KS p = **0.996** (run 1, scenario 1) and 0.30 (scenario 2), no ML column among the
-  flags of run 0, and no column carrying the oldest sample flagged in any of the four
-  cells. Flag counts 0 / 6 / 0 / 2 of 120 (about 6 expected by chance), with **no
-  column in common** between the two runs. Read the localisation and the `tbn` /
-  `Npast` / `Npresent` stratifications above as the record of what overlapping
-  seeds produced; they are **not** evidence of a coalescent or `cal_ml3p` defect, and
-  the "first steps if anyone picks this up" are void.
-- **G2 `MPD`/`VPD` residual — CAUSE FOUND, LOCATED TO THE LINE, AND REPRODUCED
-  IN `compute_MPD`/`compute_VPD` (02/10). Replay validation done 05/10.**
-  In one sentence: **`cal_nss1p`'s per-locus denominator is derived from the
-  OBSERVED data, `cal_mpd1p`'s from the SIMULATED data**, and on a locus where
-  the simulation drew no mutation the two disagree.
-
-  **The chain, link by link.**
-  1. `init_dnaseq` (`particuleC.cpp:1777`) starts with `string dna = "";` and
-     ends `if (nmutot > 0) {…} else { if (dnatrue) {…fills dnalength bases…} }`.
-     The reftable path runs with **`dnatrue = false`** (see the `dnatrue` entry
-     under Domain knowledge), so on a locus with **no mutation** the `else`
-     branch does nothing and `dna` stays **empty**.
-  2. `cree_haplo` copies that empty string into all of `haplodna[sa][ind]`.
-  3. **`#define SEQMISSING ""`** (`particuleC.hpp:17`) — the empty string *is*
-     the missing-data marker. The whole locus becomes "missing".
-  4. `cal_mpdpl` gates its pairs on `haplodna[…] != SEQMISSING`, so no pair
-     passes and `ndd = 0`, hence `*nd = 0`.
-  5. `cal_mpd1p` counts the locus only `if (nd > 0)` → **the locus vanishes from
-     the denominator.**
-  6. `cal_nss1p` instead counts it through `OK`, which `cal_nsspl` sets from
-     `samplesize()` — and `samplesize()` reads `dataobs.ssize` plus the
-     **observed** missing-haplotype list, never the simulated sequences. The
-     locus **is** counted, contributing 0 sites.
-
-  So `MPD` = (Σ π over polymorphic loci) / (**number of polymorphic loci**) while
-  `NSS` = (Σ `S`) / (**all loci**). Measured in a debug run: **1168 of 18832
-  simulated loci carry no mutation** (6.2%, and far more inside low-`θ`
-  particles).
-
-  **Why that produces exactly the observed signature.** As `θ → 0`,
-  `MPD → θ/(a_79·θ) = 1/a_79 = 0.202`, a **constant** — which is why the gap
-  looked like a fixed additive +0.06 independent of `θ`: `MPD` does not go to
-  zero as it should, it plateaus. Confirmed: in the lowest `θ` quintile DIYABC's
-  `MPD` mean is **0.1942** against the predicted 0.202. And correcting the
-  denominator by `f = 1 − exp(−a_79·θ)` collapses `MPD` back onto the coalescent
-  prediction (ratio to theory 2.434 → 1.010 / 1.057 / 1.032 / 0.996 across
-  strata) and takes the **`MPD <= 0.75*NSS` violations from 4.6% to 0.1%**. That
-  `f` over-corrects in the lowest quintile only (0.805), because the per-locus µ
-  is Gamma-dispersed (CV 0.71) and a mixture of Poissons has more zeros than a
-  single Poisson of the same mean — an imperfect estimator of `f`, not a flaw in
-  the mechanism.
-
-  **Scope: `MPD` and `VPD`, and nothing else.** Predicted from the code, then
-  confirmed blind on the reftable. Ratio DIYABC/ours by `θ` quintile:
-
-  | `θ` | `MPD` | `VPD` | `NSS` | `PSS` | `NHA` | `MNS` | `MP2` | `MPB` | `HST` |
-  |---|---|---|---|---|---|---|---|---|---|
-  | ≤ 0.20 | **1.951** | **1.907** | 0.973 | 0.980 | 0.992 | 0.952 | 0.951 | 0.955 | 0.989 |
-  | 0.20–0.52 | **1.206** | **1.177** | 0.979 | 0.997 | 0.992 | 0.982 | 0.967 | 0.965 | 0.999 |
-  | 1.0–1.75 | 1.013 | 1.016 | 0.989 | 1.004 | 0.997 | 0.976 | 0.978 | 0.983 | 1.007 |
-  | 1.75–3.88 | 0.995 | 0.974 | 0.986 | 1.001 | 0.992 | 0.985 | 0.981 | 0.987 | 1.020 |
-
-  Only the two whose denominator reads the simulated sequences move;
-  the seven whose `OK` comes from `samplesize()` are flat at ~1 with no `θ`
-  dependence. `cal_vpd1p`'s gate is **`nd > 1`**, not `nd > 0` — one notch
-  stricter, so it also drops loci with a single usable pair.
-  `cal_dta1p` is **not** affected: its early return on `dnavar < 1` leaves
-  `OKK = true`, so monomorphic loci are counted with D = 0, as ours are.
-
-  **Why every earlier verification missed it.** Transcribing
-  `cal_nsspl`/`cal_mpdpl` and running them on the **observed** G2 sequences
-  reproduces `statobsRF.txt` to 6 decimals. That check passed because
-  `statobsRF` is computed with `dnatrue = true`, where a monomorphic locus still
-  gets its full 100 bases and is never "missing". **A verification on observed
-  data does not validate the simulated path** — the two run different branches
-  of `init_dnaseq` and of `cal_numvar`.
-
-  **The frequency spectrum of DIYABC's sequences is correct** — measured directly
-  on the dumped simulated sequences of locus 10, 200 (particle, sample) blocks:
-  23.3% singletons against 24.1% expected, mean minor-allele count 7.77 against
-  6.40, and Kingman-consistent in **every** stratum of `S` including `S = 1`. So
-  the earlier inference of "a spectrum shifted to k ≈ 13–27 instead of 5.5" was
-  **wrong**: that was the denominator artefact read through π, not a genealogy
-  difference. Don't look for one.
-
-  **`DTA` — a retraction and a small open item.** `DTA` was briefly written up as
-  "a second defect of inverse sign" on the strength of a DIYABC/ours ratio of
-  0.12–0.67. **That was the near-zero-mean trap.** The absolute means are 0.0015
-  to 0.0509 against a standard deviation of 0.07–0.14, so the mean sits 20–50x
-  below the spread and the ratio is noise. `cal_dta1p` has the correct
-  denominator. The KS flag on `DTA_2_2` that remained (4 cells of 4, +0.011 to
-  +0.031) was **not** a distributional difference: it was correlated noise from
-  additive per-locus seeds, resolved 05/10 — see "`DTA_2_2` residual (05/10)" under
-  Closed investigations. The `S = 1` guard candidate was never needed (`_tajima_d_per_locus`
-  already returns 0 when the denominator is not positive).
-
-  **Reproduced (02/10)**, as the fidelity rule demands — it needed a denominator,
-  not a simulator. `compute_MPD` and `compute_VPD` now `continue` past any locus
-  with `ts.num_sites == 0`, so such a locus leaves their denominator while
-  `compute_NSS` (which divides by `len(tree_sequences)`) still counts it. The
-  guard is a two-line block at the top of each loop, **preceded by a comment that
-  states the defect and the exact lines to delete to restore the correct
-  behaviour** — the user asked for the previous (correct) logic to stay recoverable.
-  `num_sites == 0` is the right test: it is equivalent to DIYABC's `nmutot == 0`,
-  since the `MatrixMutationModel` we use has a zero diagonal, so every mutation
-  is real and several at one site still count as one site.
-  Effect on the golden tests: `test_mean_pairwise_differences_per_group` and
-  `test_variance_pairwise_differences_per_group` changed on **G2 only**, by
-  exactly **5/4 = 1.25** on both populations — that fixture has 5 G2 loci of which
-  1 carries no mutation — while G3 (5 of 5 polymorphic) stayed bit-identical. That
-  asymmetry is the unit-level proof that the guard keys on the absence of
-  mutation and nothing else (**superseded 05/10**: that fixture changed with the
-  seeds and no longer has a monomorphic locus; the unit-level proof is now
-  `test_mean_pairwise_differences_excludes_loci_without_mutation`). The new golden values carry a comment saying not to
-  restore the old ones without removing the guard.
-  **Validated against the real DIYABC on 05/10** (3 models × 2 replays, after the
-  seed fix, every statistic without a KS flag, as reported). The expectations
-  below were the ones set at the time; the ratio per `θ` quintile and the
-  `MPD <= 0.75*NSS` violation rate were not re-measured separately. Original text:
-  rerun the two replays of `toy_example2_ms_dna_50loci_K2P` (restart the Jupyter
-  kernel first) and expect:
-  `MPD`/`VPD` ratio DIYABC/ours **flat at ~1 across `θ` quintiles** instead of
-  1.95 → 0.995; `MPD_2_1`, `MPD_2_2`, `VPD_*` **dropping out of the KS flags**;
-  our own `MPD <= 0.75*NSS` violations **rising to ~4.6%** to match DIYABC's (it is
-  a property of the bug, so a faithful port must now reproduce it too);
-  `DTA_2_2` **remaining flagged** (it did not: see above).
-  If the ratio does not flatten, the guard is not equivalent to DIYABC's and the
-  per-sample vs per-locus distinction in `cal_mpdpl` is the first thing to recheck.
-  **The other DNA datasets change too** (`toy_example2_ms_dna_{JK,K2P,TN}` at 5
-  loci/group, the mixed path): anything with monomorphic loci. Their stored
-  comparisons predate this and are no longer comparable to a fresh run.
-
-  **How the sequences were obtained**, because this cost a whole session: the
-  dump lives in `cal_nss1p` under `debuglevel == 9` **and** `kloc == 10` (the
-  first G2 `<A>` `[S]` locus). The invocation is
-  `general -p ./ -r 2 -R ALL -a 9`. **`-R ALL` is the load-bearing part**:
-  without it `randomforest` stays false, `readHeader` goes into
-  `readHeaderEntete` instead of `readHeaderAllStat` and **hangs at 100% CPU**,
-  which is what made three earlier attempts (`-r 1 -g 1`, `-r 5 -g 5`, `-r 1000`)
-  look like a slow simulation when they had never left the header. `-g` defaults
-  to 100, so `-r 2` still simulates 100 particles — 19 s, 173k log lines. Use
-  `nice -n 19` and one process at a time.
-
-  Falsified along the way, so don't retry them: the discrete coalescent (see the
-  `evalcriterium` entry under Closed investigations); `put_mutations` is
-  textbook — per-branch `poisson(length * mus_rate * dnalength)`, so the
-  allocation of mutations across branches is unbiased; `coal_pop`'s continuous
-  branch is correct, including the subtlety that the new parent node carries the
-  target `pop` before both `draw_node` calls yet can never be drawn as its own
-  child because it holds the highest index; `cal_numvar` clears `nuvar` between
-  loci; `liberednavar` runs after the whole stat loop; `sample_site_rates` is a
-  faithful port, and `nsv = 90` means the **first 10** sites are the invariant
-  ones with 90 mutable; `dnalength` is 100 both declared and real in the `.mss`;
-  the tier-2 per-locus µ draw is active and unbiased on both sides; and "`MPD`
-  normalised by polymorphic loci" was the right shape but was dismissed in error
-  because `PSS` exceeds 1 — `PSS` is the count of **private** segregating sites,
-  not a proportion.
-
-  **A second latent bug found in passing, not triggered here.** In `mute`'s
-  non-ACGT error branch, `n` is reused as the print loop counter and ends at
-  `dna.length()`, and the `exit(1)` below it is commented out — so `switch
-  (dna[n])` reads `dna[size()]` (`'\0'`), no case matches, `dnb` keeps the
-  original base, and `dna[n] = dnb` writes out of range. Effect if it fires: the
-  mutation is silently lost plus an out-of-range write. Same family as the
-  documented `mutsit`/`sitefix` bug — **a loop counter reused in place of the
-  intended variable**. Ruled out empirically: zero "probleme" lines in
-  `diyabc_run.log` (432 lines, the full 1000-particle run). Also latent:
-  `init_dnaseq`'s inverse-CDF loop `while (s < ra) { k++; s += mutsit[k]; }` is
-  unbounded, so a normalized `mutsit` summing to 1−ε lets `k` run past
-  `dnalength`; probability ~1e-16 per mutation, no guard.
-
-  **Practical rule.** Beyond `θ ≈ 1` the ratio is 1.013 then 0.995, so the defect
-  bites only on low-diversity loci. On such a dataset **DIYABC's `MPD` and `VPD`
-  are not a trustworthy reference**, and a disagreement there is not evidence
-  against our port.
-
+- **`ML3p_2.3.4` on `toy_example4_seriel` (05/10) — RESOLVED: an artefact of overlapping seeds, not a residual.** It was
+  KS-flagged in three replays (p = 0.0001 to 0.0013, −10 to −14 %, only the columns carrying the oldest sample, t = 500)
+  because the PoolSeq `with_mrc_filter` seeds were additive (`seed + batch_index * 20`, `seed + attempt + offset`): the
+  `DTA_2_2` mechanism, see Closed investigations. Both sites now go through `_locus_seed` (`_MRC_BATCH_SEED_OFFSET`).
+  Two independent DIYABC runs at 1000 loci, two scenarios each: `ML3p_2.3.4` KS p = 0.996 and 0.30, 0 / 6 / 0 / 2 flags
+  of 120 (about 6 expected), no column in common, none carrying the oldest sample. The localisation, the `tbn` /
+  `Npast` / `Npresent` stratifications and the "first steps if anyone picks this up" are the record of what
+  overlapping seeds produced, **not evidence** of a coalescent or `cal_ml3p` defect (the discrete coalescent was
+  falsified on 30/09). `ML2p_2.4` (intermediate, decaying with loci count) is the loci-count residual. Full text:
+  `notes/exploration.md`, 25/09, 05/10 and the 03/11 archive.
+- **G2 `MPD`/`VPD` residual (02/10) — a DIYABC bug, located to the line, reproduced, validated by replay 05/10.**
+  `cal_nss1p` takes its per-locus denominator from the OBSERVED data (`samplesize()`), `cal_mpd1p` (`nd > 0`) and
+  `cal_vpd1p` (`nd > 1`) from the SIMULATED sequences. On the reftable path (`dnatrue = false`, `init_dnaseq`) a locus with
+  no mutation keeps an empty sequence, which is `SEQMISSING` (`particuleC.hpp:17`): it leaves the `MPD`/`VPD`
+  denominator and stays in `NSS`'s. As `θ → 0`, `MPD` plateaus at `1/a_n` instead of going to 0 (6.2 % of simulated loci
+  carry no mutation). Scope: `MPD` and `VPD` only (`NSS`, `PSS`, `NHA`, `MNS`, `MP2`, `MPB`, `HST` flat at ~1 by `θ`
+  quintile; `DTA` counts monomorphic loci with D = 0). Reproduced by `if ts.num_sites == 0: continue` in
+  `compute_MPD`/`compute_VPD` (see "Deliberately reproduced C++ bugs"; guarded by
+  `test_mean_pairwise_differences_excludes_loci_without_mutation`). **A verification on observed data does not validate
+  the simulated path** (`statobsRF` is computed with `dnatrue = true`). **Practical rule: beyond `θ ≈ 1` the ratio is 1.013
+  then 0.995, so the defect bites only on low-diversity loci; there DIYABC's `MPD`/`VPD` are not a trustworthy
+  reference.** Falsified, do not retry: the discrete coalescent, `put_mutations`, `coal_pop`, `cal_numvar`,
+  `sample_site_rates`, a shifted frequency spectrum. To dump DIYABC's simulated sequences: `general -p ./ -r 2 -R ALL -a 9`
+  (`debuglevel == 9`, `kloc == 10` in `cal_nss1p`; **`-R ALL` is load-bearing**, without it the header read hangs at
+  100 % CPU). Two latent C++ bugs found in passing, not reproduced and not triggered here (`mute`'s reused loop
+  counter, `init_dnaseq`'s unbounded inverse-CDF loop). Full text and tables: `notes/exploration.md`, 02/10 and the
+  03/11 archive.
 - **The DNA global shift is the loci-count residual, and it shrinks as
   documented.** Same dataset family, sign-test median aggregated per run (the
   only independent unit): at 5 loci per group, `K2P` gave +1.542 % and +0.071 %
@@ -1968,39 +1753,6 @@ the worktree exists for that.
   The `JK` and `TN` branches of `build_transition_matrix_dna` are validated by the
   per-column agreement at 5 loci (14 flags / 504 comparisons = 2.8 % against
   25.2 expected), which never depended on the global shift.
-- **`_genotypes_by_sample_and_individuals` not audited** for the `np.int64` leak
-  that caused the `FST` bug. Harmless today (`LIK`'s formula does no boolean
-  addition), but the next consumer of those tuples inherits the trap.
-- **`group_prior_column_names` hardcodes the `µ` prefix** (U+00B5) while DIYABC
-  also writes plain ASCII `mu` — `toy_example1_ms`'s trailer and reftable both use
-  `mumic_1`. **The 30/09 verdict "inert, not latent" is RETIRED — since 01/10 the
-  spelling is active in the text path.** It rested on "the names it returns are
-  never looked up by name anywhere", and that stopped being true when
-  `write_reftable_txt` began emitting these columns: its header line carries our
-  `µ` spelling, and the comparison against a real reftable is **by column name**.
-  Measured on `toy_example1_ms`: 4 of the 6 columns match by name, the two `µ`
-  ones do not (`mumic_1`/`mumic_2` on DIYABC's side).
-  **Normalize in the comparator, not in `bridge/`** — `_normalize_mu` already
-  exists for it. The decisive reason: the `.bin`, which is the project's
-  structural deliverable and what `abcranger` reads, contains **no column names at
-  all**, so the spelling cannot affect it. Making `_group_prior_columns` follow the
-  header's own spelling would be needed only to make our text file diffable as is.
-  Still true, and still the reason not to "fix" the spelling hoping to fix a bug:
-  `parse_real_reftable_params_with_group_priors` reads these columns **by
-  position** (`tokens[1 + len(priors_param_names) + i]`) and uses
-  `group_priors_names` only as the returned dict's keys. So the spelling cannot
-  cause a wrong *read*.
-  **The real exposure the positional read creates is different**: a wrong *count*
-  from `group_prior_column_names` shifts every value silently, labelling them with
-  keys that do not belong to them — which is exactly the 30/09 corruption
-  (`MODEL JK` with a `K2P` trailer: 7 names expected, 5 columns present). Nothing
-  downstream checks that the column read is the one intended. That is what
-  `check_header_trailer_line` and `check_real_reftable_matches_header` now guard,
-  upstream. Don't "fix" the `µ` spelling expecting to fix a bug; do reach for the
-  guards if a group-prior value ever looks shifted.
-- **`parse_group_priors`'s `else` branch** assumes any unrecognized line is a
-  `MODEL` line, with no positive validation — a malformed line is silently
-  mis-parsed rather than raising.
 
 ## `scripts/` — ad hoc investigation scripts
 
