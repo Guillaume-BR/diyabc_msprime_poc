@@ -27,13 +27,14 @@ from bridge.reftable_loop import (
 from bridge.scenario_parser import parse_header_scenarios
 
 suffix = "1"
-SEED_OFFSET = 200_000
+SEED_OFFSET = 100_000
 
 REFERENCE_DIR = Path("reference/toy_example1_ms_seriel")
 REAL_REFTABLE_PATH = (
     REFERENCE_DIR / f"first_records_of_the_reference_table_{suffix}.txt"
 )
 OUTPUT_PATH = REFERENCE_DIR / f"reftable_msprime_replay_{suffix}.txt"
+STATS_FILTER = "HEADER"
 
 start_time = time.perf_counter()
 print("Début du lecture du headerRF.txt")
@@ -74,7 +75,7 @@ results = replay_reftable_simulation_microsat(
     group_priors_names=group_priors_names,
     scenarios=scenarios,
     real_reftable_path=REAL_REFTABLE_PATH,
-    stats_filter="ALL",
+    stats_filter=STATS_FILTER,
     max_workers=16,
     seed_offset=SEED_OFFSET,
 )

@@ -15,7 +15,7 @@ différent (voir notebook/correlation_N2_N3_HWm_anomaly.ipynb, section
 
 import shutil
 from pathlib import Path
-from time import time
+from time import perf_counter
 
 from bridge.loci_parser import parse_loci_description
 from bridge.prior_parser import parse_priors
@@ -23,6 +23,8 @@ from bridge.reftable_loop import replay_reftable_simulation_snp, write_reftable_
 from bridge.scenario_parser import parse_header_scenarios
 
 suffix = "0"
+
+SEED_OFFSET = 200_000
 
 REFERENCE_DIR = Path("reference/human_seriel")
 REAL_REFTABLE_PATH = (
@@ -34,7 +36,7 @@ NUM_LOCI = None
 STATS_FILTER = "HEADER"
 OUTPUT_PATH = REFERENCE_DIR / f"reftable_msprime_replay_{suffix}.txt"
 
-start_time = time()
+start_time = perf_counter()
 print("Début du lecture du headerRF.txt")
 header_text = (REFERENCE_DIR / "headerRF.txt").read_text()
 
@@ -45,7 +47,7 @@ priors, _ = parse_priors(header_text)
 # filtrer qu'un seul scenario ferait planter le rejeu des lignes tirées
 # sur un autre scénario (KeyError dans _kept_param_names_by_scenario).
 scenarios = parse_header_scenarios(header_text)
-t1 = time()
+t1 = perf_counter()
 print(
     f"Lecture du headerRF.txt terminée en {t1 - start_time:.2f}s : {len(priors)} priors, {len(scenarios)} scénarios"
 )
@@ -66,7 +68,7 @@ WORK_DIR.mkdir(parents=True)
 shutil.copy(REFERENCE_DIR / "headerRF.txt", WORK_DIR / "headerRF.txt")
 shutil.copy(REFERENCE_DIR / snp_filename, WORK_DIR / snp_filename)
 
-t2 = time()
+t2 = perf_counter()
 print(f"Copie du répertoire de travail terminée en {t2 - t1:.2f}s : {WORK_DIR}")
 
 
@@ -84,15 +86,16 @@ results = replay_reftable_simulation_snp(
     num_loci=NUM_LOCI,
     stats_filter=STATS_FILTER,
     max_workers=16,
+    seed_offset=SEED_OFFSET,
 )
 
-t3 = time()
+t3 = perf_counter()
 print(
     f"Rejeu des {len(results)} particules de {total_loci} loci terminé en {t3 - t2:.2f}s"
 )
 
 write_reftable_txt(results, priors, scenarios, OUTPUT_PATH)
-t4 = time()
+t4 = perf_counter()
 print(f"Écriture du reftable terminé en {t4 - t3:.2f}s")
 print(f"{len(results)} particules rejouées avec les tirages réels de DIYABC.")
 print(f"Écrit dans {OUTPUT_PATH}")
