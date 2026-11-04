@@ -28,8 +28,8 @@ structurally and statistically equivalent to the real DIYABC's output.
 | Serial/temporal sampling (SNP IndSeq) | complete | `human_seriel` (1 population, 4 sampling times, 130 stats, 0/130 significant) |
 | Serial/temporal sampling (SNP PoolSeq) | complete | `toy_example4_seriel` (100 loci, `<MRC=5>`, 4/133 vs ~6.7 expected) |
 | Mixed MicroSat + DNA in one header | complete | `toy_example2_ms_dna_TN` (73 columns, 2 replays × 2 scenarios) |
-| Serial MicroSat + DNA, 4 samples (`AML`, `SML`) | complete, 224 columns (24 `SML`) | `toy_example2_ms_dna_50loci_TN_seriel`: 3 independent DIYABC reftables, several `seed_offset`s, 12 cells: 4 `SML` flags out of 288 columns, none repeated; MicroSat G1 `LIK`/`MGW`/`N2P` of scenario 2 recur (10 loci, probably the loci-count residual, undecided) (02/11) |
-| Non-serial 4 populations with real admixture, MicroSat + DNA (`AML`, `SML`) | complete, 224 columns | `toy_example2_ms_dna_50loci_K2P_4pop`: ONE DIYABC reftable, 2 scenarios, 0 KS flag out of 233 statistics each, `SML` smallest p 0.07, sign test significant in scenario 2 at −0.27 % (loci-count residual); no independent replica yet (03/11) |
+| Serial MicroSat + DNA, 4 samples (`AML`, `SML`) | complete, 224 columns (24 `SML`) | `toy_example2_ms_dna_50loci_TN_seriel`: 3 independent DIYABC reftables, several `seed_offset`s, 12 cells: 4 `SML` flags out of 288 columns, none repeated; MicroSat G1 (10 loci) shows a same-sign deficit in all four cells of two reftables, both scenarios (median −0.75 to −1.91 % over its 76 statistics, 54-63/76 negative, 9 of the 12 KS flags), DNA groups −0.70 to +0.47 %: probably the loci-count residual, **not demonstrated, open** (02/11, 04/11) |
+| Non-serial 4 populations with real admixture, MicroSat + DNA (`AML`, `SML`) | complete, 224 columns | `toy_example2_ms_dna_50loci_K2P_4pop`: ONE DIYABC reftable, 2 scenarios, 0 KS flag out of 233 statistics each, `SML` smallest p 0.07, sign test significant in scenario 2 at −0.27 % on the first replay; a second replay (04/11; whether it was a new DIYABC reftable was not recorded) gives 96/222, p = 0.051, median +0.122 %, KS clean: the −0.27 % was noise (03-04/11) |
 
 **Validation status (06/10): every dataset in the "Validated against" column above is
 validated with the final code**
@@ -70,8 +70,8 @@ investigations ("`maf.txt`"). **Final MAF code (light replicates, lean `run`, si
 rescale) re-replayed on 22/10 against a regenerated `toy_example3_500loci` reftable** (500 `<A>`, `maf = 0.05`, `NM=1`,
 converted in the same run: `maf.txt`, `.snp.bin` and `reftableRF.bin` share the minute; 1000 particles, six scenarios,
 priors paired): 0 KS flag out of 130 statistics (smallest p = 0.20), sign test 63/130 (p = 0.79), median +0.01 %
-by my count; the user reports 0 flag, 55/127 (p = 0.155), +0.070 % on 127 columns (3 columns not kept, which ones
-not recorded). One reftable, no `seed_offset` replica. **`human_seriel`** (5000 `<A>`, one population at four dates,
+by my count; the user reports 0 flag, 55/127 (p = 0.155), +0.070 % on 127 columns (the 3 not kept are the `F4v` columns, cut by the notebook's hand-written `N_STATS`, see
+Closed investigations, 04/11). One reftable, no `seed_offset` replica. **`human_seriel`** (5000 `<A>`, one population at four dates,
 `MAF=hudson`, regenerated 22/10 with `.snp.bin`, `maf.txt` and the reftable in the same minute; two scenarios, 1000
 particles, priors paired) with the final no-filter code: 0 KS flag out of 130 (smallest p = 0.078), sign test 50/130
 negative (p = 0.011), median `rdiff` +0.04 % by my count; the user reports 41/130 (p = 3.1e-5), +0.075 %. The sign test
@@ -87,7 +87,7 @@ Paired replay against DIYABC freshly converted (no `.snp.bin`, sex ratio 0.3), `
 `<M>` +1.5 % / +0.5 % / +0.1 % on three independent reftables (2, 0, 0 flagged), and the **mixed header**
 (350 `<A>` + 50 each) −0.10 % (0/50, sign test 34/50, p = 0.015). One reftable per cell except `<M>`.
 **PoolSeq** at a sex ratio ≠ 0.5: `toy_example4` with its `<NM=...>` edited, DIYABC freshly converted (no `.snp.bin`),
-values reported identical by the user (sex ratio, particle count and flag count not recorded). The factor itself is
+recorded 04/11 (sex ratio 0.2308, 1000 particles, 100 loci, one DIYABC reftable): scenario 1 65/127 negative (p = 0.86), median −0.076 %, KS clean; scenario 2 44/127 (p = 6.9e-4), median +0.636 %, 3/140 KS flags (`FST1m`, `FST1v`, `HBm`); a second replay gave 35/127 (p = 4.4e-7), median +0.986 % (the scenario was noted ambiguously, probably 2). **Open**: no baseline at sex ratio 0.5 on the same 100 loci, see Open work. The factor itself is
 guarded by two pytest spies (`..._rescales_autosomal_demography_by_sex_ratio`, IndSeq and PoolSeq, mutation `/ 4` →
 `/ 2` checked crosswise); the 0.5 case (sizes untouched) is not covered by them.
 
@@ -975,8 +975,8 @@ under the date given.
   adds `log(fx)` or `log(fy)` for the non-zero one (`pente_lik`, shared by `cal_Aml3p` and `cal_aml3p`); we added
   0. 344 of 720 `AML` values change on `ms_modified`, nothing else. Replays on `toy_example1_ms_seriel`: the `AML`
   flags of 13/10 vanish (smallest `AML` p 0.001 → 0.056); only `AML_2_3.1.2` keeps a stable sign (+2.3 to +3.8 %,
-  p 0.028-0.162 over three seed offsets) on ONE DIYABC reftable, absent on the other: undecided without a third
-  reftable. Beware: the replay script's default `SEED_OFFSET` is 200 000, not 0.
+  p 0.028-0.162 over three seed offsets) on ONE DIYABC reftable, absent on the other, and not flagged on a further
+  replay (04/11): noise. Beware: the replay script's default `SEED_OFFSET` is 200 000, not 0.
 - **Site rates drawn with numpy (02/11) — same law, new stream, validated by replay.** `sample_site_rates` takes a
   `np.random.Generator` (one `default_rng(_locus_seed(seed, _SITE_RATE_SEED_OFFSET, 0))` per particle) and
   `build_rate_map` works on arrays: `build_rate_map_per_locus` 12.2 → 6.0 ms, DNA particle ≈ −5 %. **Every DNA
@@ -1005,6 +1005,14 @@ under the date given.
   caused a wrong *read*; the real exposure is a wrong *count*, guarded by `check_header_trailer_line` and
   `check_real_reftable_matches_header`. Guarded by `test_detect_mu` and
   `test_group_prior_column_names_follows_trailer_spelling` (expected names written in hard).
+  **Regression caught 04/11 by the first replay of `toy_example1_ms_seriel` (`KeyError: 'µmic_1'`), not by the 635 tests:**
+  `_group_prior_values_{dna,microsat}_from_columns` (`ancestry_simulation.py`) looked up `µseq_N`/`µmic_N` by a
+  hand-written name in the dict the replay builds from `group_prior_column_names`, which now says `mumic_1`; every
+  replay-path fixture used a `µ` header (the `te2` family). Fixed by moving `_MU_VARIANTS` and `_normalize_mu` to
+  `configuration.py` (`reftable_loop` imports `ancestry_simulation`: the reverse would be circular) and normalizing the
+  keys at the top of both readers; `test_group_prior_values_*_from_columns_mu_spelling` (`mu` header on MicroSat and
+  DNA, `µ` unchanged), mutation-checked on a copy (the two `mu` tests go red). **Lesson: a naming change is checked
+  against every reader of those names, not only the writer; see the replay-path hole in Open work.**
 - **`parse_group_priors` took any unknown line for a `MODEL` line (03/11) — fixed.** The `else` branch ignored the
   first word and read `last_group_name` only from the prior branch, so a misspelt `MODEL`, a missing or non-numeric field
   gave a raw `IndexError`/`ValueError` or a silent misread, and a `MODEL` right under a `group` line was filed in the
@@ -1018,6 +1026,24 @@ under the date given.
   `test_genotypes_by_sample_and_individuals_matches_reference` asserts `type(x) is int` on every element; mutation check
   on a copy of the module (`.tolist()` → `list(...)`): 8 of the 16 polymorphic cases go red (the 8 monomorphic ones never
   reach `.tolist()`).
+- **Comparison notebooks cut statistics silently (04/11) — fixed in all 23.** Each `reference/*/compare_reftables_*.ipynb`
+  took its columns by POSITION with a hand-written `N_PRIORS`/`N_GROUP_PRIORS`/`N_STATS`, and "colonnes écartées : 0"
+  compared with that constant, not with the header. When the constant was lower than the declared count the LAST columns
+  vanished, with no error: `F4v` (3) on `toy_example3*`/`toy_example4*` (127 of 130), `F3v`/`F4m`/`F4v` (10) on
+  `toy_example4_seriel` (120), `AML_2_*` (6) on `toy_example1_ms_seriel` (146 of 152), `SML_3_3.2.4`/`SML_3_4.2.3` on
+  `TN_seriel` and `K2P_4pop` (222 of 224); `toy_example2_ms_dna_50loci_JK` also carried `N_GROUP_PRIORS = 9` (the `TN`
+  value, JK has 5), which filed four DNA statistics under "group priors". Now the columns are chosen BY NAME
+  (`parse_requested_statistic_names`, `group_prior_column_names` normalized by `_normalize_mu`, `[]` for a SNP header,
+  priors = the rest); an `assert` fails when DIYABC's reftable lacks a declared statistic and a warning lists the ones
+  the replay lacks. The earlier "0 flag on 127 columns" statements therefore exclude those columns, and the stored
+  outputs and `comparaison_summary_*.csv` are stale until each notebook is rerun. Checked by executing every notebook on
+  a copy of its folder (20 run to the end; `toy_example2_ms_dna_JK`, `_XY` and `toy_example5_1000loci` lack their replay
+  file). **The `toy_example2_ms_dna_50loci_{JK,K2P}` and `ms_dna_{JK,K2P,XY}` replays are DNA-only (42 of 58 statistics,
+  the 16 MicroSat G1 ones missing): they validate the DNA groups only; rerun them with
+  `replay_diyabc_priors_mixed.py`.** `scripts/replay_diyabc_priors_{snp,ms,dna,mixed}.py` now use `STATS_FILTER =
+  "HEADER"`; first run (04/11): `snp` and `mixed` clean, `ms` raised the `µ`/`mu` regression above, `dna` raised
+  "statistiques non calculées" on the 16 MicroSat statistics of a mixed header (the guard doing its job: use `mixed`).
+  `replay_diyabc_priors_dna_50loci.py` (obsolete, folder renamed) was deleted by the user.
 - **`SML` (02/11) — implemented and validated.** `cal_aml3p` is `AML` with one haplotype per allele (`cal_freq`),
   so `_compute_AML_one_triplet` is reused unchanged on haplotype ids; the only addition is the guard of
   `sumstat.cpp:2100-2106` (statistic = 0.5 when no locus shows two distinct haplotypes among the two parents
@@ -1442,7 +1468,7 @@ isolated (candidates: `record_provenance=False` on every `sim_ancestry` /
   entry), **unverified**. Nothing to do.
 - **MicroSat: `ms_modified` replay 228.7 s → 41.0 s (x5.6); gap to DIYABC 100x → 18x
   (12/10).** One run, variance not measured. KS unchanged against the real reftable;
-  **the sign test on `rdiff_mean` has not been run on this series.** Each step is
+  **the sign test on `rdiff_mean`, run 04/11 on `ms_modified`: median −0.713 % (106/150 negative, p = 4.4e-7) and −0.723 % (114/150, p = 1.2e-10), KS 0/161 in both scenarios (one reftable): the known loci-count residual at 50 loci, same sign and order as `toy_example1_ms_seriel`.** Each step is
   output-neutral at equal seed (`compare_particles_microsat`: 0 differences on 30
   particles x 152 values). One particle in-process without a profiler (seed 1, drawing
   path): 1.364 → 0.255 s. DNA (60-64x) is untouched: it has its own matrices and no AML.
@@ -1753,6 +1779,26 @@ the worktree exists for that.
   The `JK` and `TN` branches of `build_transition_matrix_dna` are validated by the
   per-column agreement at 5 loci (14 flags / 504 comparisons = 2.8 % against
   25.2 expected), which never depended on the global shift.
+
+- **MicroSat G1 deficit on `toy_example2_ms_dna_50loci_TN_seriel` (04/11) — open.** Four cells (reftables 0 and 1,
+  both scenarios): over the 76 MicroSat G1 statistics (10 loci) `rdiff` median −1.21 / −1.91 / −1.34 / −0.75 %,
+  54-63 of 76 negative, `LIK`/`MGW`/`N2P` −1 to −4 % in every cell, 9 of 12 KS flags in that group; the DNA groups
+  stay within −0.70 / +0.47 %. Not scenario-2-specific. Compatible with the loci-count residual (−0.4 to −1.3 % at 50
+  loci on `ms_seriel`, −0.72 % on `ms_modified`) but the decrease is not 1/loci (x5 fewer loci, x1.5 to 2.5 more bias),
+  so **not demonstrated**. Caveat: the reftable-0 CSVs (23/10) predate the 02/11 regeneration of that reftable. A
+  discriminating test needs a dataset with more MicroSat loci in the same group.
+- **PoolSeq at sex ratio 0.2308, scenario 2 (04/11) — open.** Positive shift on two replays (+0.64 %, +0.99 %, 3 KS
+  flags on the differentiation statistics `FST1m`, `FST1v`, `HBm` on the first), scenario 1 clean. No baseline: run the
+  same 100-loci replay at sex ratio 0.5 (`toy_example4`) and a `seed_offset` replay before attributing it to the
+  rescaling (the factor itself is guarded by the two pytest spies). Dataset: `toy_example4_sex_ratio_diff`.
+- **No identity or smoke test covers the replay (`_from_values`) paths — open.** `compare_particles_*` checks the drawing
+  path only. The replay broke unnoticed twice (serial IndSeq for ten days, the `µ`/`mu` readers on 04/11, both with green
+  tests). Idea: a test replaying 2-3 particles per data family (IndSeq, PoolSeq, MicroSat, DNA, mixed) from the first rows
+  of a real reftable, asserting that it runs and returns exactly the declared statistic names, on at least one `mu` and
+  one `µ` header.
+- **Notebooks to rerun (04/11).** All 23 `reference/*/compare_reftables_*.ipynb` (stored outputs and summary CSVs stale);
+  the three without a replay file need one first; the DNA-only `ms_dna_50loci_{JK,K2P}` / `ms_dna_{JK,K2P,XY}` replays
+  need the mixed script.
 
 ## `scripts/` — ad hoc investigation scripts
 
