@@ -50,6 +50,7 @@ from bridge.configuration import (
     _SITE_RATE_SEED_OFFSET,
     _VERSION_MS_PRIME_LIGHT_REPLICATES,
     _locus_seed,
+    _normalize_mu,
 )
 from bridge.demography_builder import evaluate_expression, rescale_demography
 from bridge.header_dataclasses import (
@@ -2873,6 +2874,7 @@ def _group_prior_values_dna_from_columns(
         loci ADN ([S]) uniquement -- les groupes MicroSat sont ignorés.
     """
     group_values = {}
+    group_priors_values = {_normalize_mu(k): v for k, v in group_priors_values.items()}
     for group, priors in group_priors.items():
         if next(prior for prior in priors).ms_or_seq != "S":
             continue  # Ignore les groupes de loci non ADN
@@ -3754,14 +3756,14 @@ def _group_prior_values_microsat_from_columns(
                 dans le vrai reftable (voir
                 reftable_loop.parse_real_reftable_params_with_group_priors).
             group_priors: Dict {nom_groupe: [GroupPrior, ...]} (voir
-                prior_parser=
-    (diyabc_msprime) bernardr@cbgp-d-student1:~/Documents/Github/diyabc-msprime-poc$ .parse_group_priors).
+                prior_parser.parse_group_priors).
 
         Returns:
             Un dict {nom_groupe: {nom_prior: valeur}}, pour les groupes de
             loci microsat ([M]) uniquement -- les groupes ADN sont ignorés.
     """
     group_values = {}
+    group_priors_values = {_normalize_mu(k): v for k, v in group_priors_values.items()}
     for group, priors in group_priors.items():
         if next(prior for prior in priors).ms_or_seq != "M":
             continue  # Ignore les groupes de loci non microsat

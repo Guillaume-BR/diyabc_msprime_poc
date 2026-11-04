@@ -90,3 +90,36 @@ _VERSION_MS_PRIME_LIGHT_REPLICATES = "1.4.2"  # msprime=1.4.2
 _LIGHT_EVENT_CHUNK = (
     10**4
 )  # nombre d'événements (edges) à traiter par chunk dans ancestry_simulation.py
+
+
+# ── Préfixe mus_rate des colonnes mutationnelles ──────────────────────────────────
+# DIYABC écrit le préfixe mus_rate soit "µ" (U+00B5, cas des `te2`), soit "mu"
+# en ASCII (cas de `toy_example1_ms`) -- les deux apparaissent dans de la vraie
+# sortie, et le reftable suit toujours son header. On compare donc les jetons
+# sous forme normalisée.
+# Les DEUX seules orthographes observées dans de la vraie sortie DIYABC :
+# "µ" = U+00B5 MICRO SIGN (7 headers de reference/) et "mu" en ASCII
+# (toy_example1_ms, 2 headers). Le mu grec U+03BC n'apparaît nulle part et
+# n'est DÉLIBÉRÉMENT pas normalisé : un header qui le contiendrait serait
+# auto-cohérent avec son propre reftable (bintotxt recopie la ligne de queue),
+# donc les deux gardes passeraient, mais la chaîne de rejeu ne retrouverait
+# jamais la colonne par son nom. Mieux vaut que la garde lève sur ce caractère
+# que de l'absorber.
+_MU_VARIANTS = ("µ", "mu")
+
+
+def _normalize_mu(token: str) -> str:
+    """Ramène le préfixe mus_rate d'un jeton à la variante "µ".
+
+    Args:
+        token: Nom de colonne ou jeton de la ligne de queue (`mumic_1`, `µseq_2`,
+            `k1seq_2`...).
+
+    Returns:
+        Le jeton avec son préfixe `mu` ou `µ` remplacé par `µ`, ou le jeton
+        inchangé s'il n'en porte pas.
+    """
+    for variant in _MU_VARIANTS:
+        if token.startswith(variant):
+            return "µ" + token[len(variant) :]
+    return token

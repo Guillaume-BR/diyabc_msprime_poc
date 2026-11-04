@@ -33,7 +33,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from bridge.ancestry_simulation import prepare_poolseq_observed_reads
-from bridge.configuration import _SCENARIO_DRAW_SEED_OFFSET, _locus_seed
+from bridge.configuration import (
+    _MU_VARIANTS,
+    _SCENARIO_DRAW_SEED_OFFSET,
+    _locus_seed,
+    _normalize_mu,
+)
 from bridge.demography_builder import get_parameter_names_used_by_scenario
 from bridge.header_dataclasses import (
     DnaReplayContext,
@@ -146,20 +151,6 @@ def _heritage_types_declared(header_text: str) -> set[str]:
 # statistiques ne peuvent pas collisionner (préfixe en capitales).
 _MUTATION_PARAM_TOKEN_RE = re.compile(r"^(µ|mu|k1|k2|p|sni)(seq|mic)_\d+$")
 
-# DIYABC écrit le préfixe mus_rate soit "µ" (U+00B5, cas des `te2`), soit "mu"
-# en ASCII (cas de `toy_example1_ms`) -- les deux apparaissent dans de la vraie
-# sortie, et le reftable suit toujours son header. On compare donc les jetons
-# sous forme normalisée.
-# Les DEUX seules orthographes observées dans de la vraie sortie DIYABC :
-# "µ" = U+00B5 MICRO SIGN (7 headers de reference/) et "mu" en ASCII
-# (toy_example1_ms, 2 headers). Le mu grec U+03BC n'apparaît nulle part et
-# n'est DÉLIBÉRÉMENT pas normalisé : un header qui le contiendrait serait
-# auto-cohérent avec son propre reftable (bintotxt recopie la ligne de queue),
-# donc les deux gardes passeraient, mais `group_prior_column_names` code U+00B5
-# en dur et la chaîne de rejeu ne retrouverait jamais la colonne par son nom.
-# Mieux vaut que la garde lève sur ce caractère que de l'absorber.
-_MU_VARIANTS = ("µ", "mu")
-
 
 def _detect_mu(header_text: str) -> str:
     """Détecte l'orthographe du préfixe mus_rate dans un header DIYABC.
@@ -183,14 +174,6 @@ def _detect_mu(header_text: str) -> str:
         return "mu" if first_mu.startswith("mu") else "µ"
     else:
         return "µ"
-
-
-def _normalize_mu(token: str) -> str:
-    """Ramène le préfixe mus_rate d'un jeton à la variante "µ"."""
-    for variant in _MU_VARIANTS:
-        if token.startswith(variant):
-            return "µ" + token[len(variant) :]
-    return token
 
 
 def check_header_trailer_line(header_text: str) -> None:
