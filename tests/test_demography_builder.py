@@ -3,7 +3,9 @@ paramètres tirées en msprime.Demography (merges, admixture, extraction des nom
 de paramètres référencés)."""
 
 import msprime
+import numpy as np
 import pytest
+from scipy import stats
 
 from bridge.demography_builder import (
     build_demography,
@@ -161,6 +163,71 @@ def test_build_demography_with_negative_proportions(header_text):
     }
     with pytest.raises(ValueError, match="Un des taux d'admixture est négatif"):
         build_demography(scenario2, values)
+
+
+def test_buiild_demography_with_three_ancestral_populations(header_text):
+    """Vérifie que build_demography traduit un SplitEvent en événement msprime
+    Admixture avec les bonnes populations et proportions (rate1, rate2, 1 - rate1 - rate2)."""
+    header_text_modified = header_text.replace(
+        "t1 split 1 4 2 ra", "t1 split 1 4 2 3 r1 r2"
+    )
+    scenarios = parse_header_scenarios(header_text_modified)
+    scenario2 = next(s for s in scenarios if s.index == 2)
+
+    values = {
+        "N1": 50000,
+        "N2": 50000,
+        "N3": 50000,
+        "N4": 50000,
+        "t1": 10,
+        "t2": 5000,
+        "d3": 30,
+        "Nbn3": 200,
+        "d4": 20,
+        "Nbn4": 300,
+        "N34": 60000,
+        "t3": 8000,
+        "d34": 25,
+        "Nbn34": 250,
+        "t4": 9000,
+        "Na": 40000,
+        "r1": 0.3,
+        "r2": 0.2,
+    }
+
+    demography = build_demography(scenario2, values)
+
+    samples = {"pop1": 150, "pop2": 150, "pop3": 150, "pop4": 150}
+    ts = msprime.sim_ancestry(
+        samples=samples,
+        demography=demography,
+        sequence_length=1,
+        random_seed=42,
+        record_migrations=True,
+    )
+
+    mig = ts.tables.migrations
+    mask = (mig.time == values["t1"]) & (mig.source == demography["pop1"].id)
+    dest = mig.dest[mask]
+    _, counts = np.unique(
+        dest, return_counts=True
+    )  # Attention, counts dans l'ordre des populations déclarées dans l'ordre de msprime pop2,pop3,pop4
+
+    # Bon ordre
+    _, p_value = stats.chisquare(
+        f_obs=counts,
+        f_exp=np.array([values["r2"], 1 - values["r1"] - values["r2"], values["r1"]])
+        * np.sum(counts),
+    )
+    assert p_value > 0.001
+
+    # Ordre permuté
+    _, p_value = stats.chisquare(
+        f_obs=counts,
+        f_exp=np.array([values["r1"], 1 - values["r1"] - values["r2"], values["r2"]])
+        * np.sum(counts),
+    )
+    assert p_value < 0.001
 
 
 def test_get_parameter_names_used_by_scenario2(header_text):
