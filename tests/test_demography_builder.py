@@ -165,7 +165,7 @@ def test_build_demography_with_negative_proportions(header_text):
         build_demography(scenario2, values)
 
 
-def test_buiild_demography_with_three_ancestral_populations(header_text):
+def test_build_demography_with_three_ancestral_populations(header_text):
     """Vérifie que build_demography traduit un SplitEvent en événement msprime
     Admixture avec les bonnes populations et proportions (rate1, rate2, 1 - rate1 - rate2)."""
     header_text_modified = header_text.replace(
