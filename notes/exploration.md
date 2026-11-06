@@ -6184,3 +6184,55 @@ Les récits datés correspondants sont plus haut : 25/09 (addendum) et 05/10 (su
   are not a trustworthy reference**, and a disagreement there is not evidence
   against our port.
 
+
+
+## 2026-11-06 — `split` à k populations ancestrales (admixture multiple)
+
+Demande : DIYABC n'admet que deux sources d'admixture (`split D A1 A2 r`). On veut k sources, sans équivalent DIYABC.
+Session en mode mentor (l'utilisateur code, l'assistant guide).
+
+**Décisions** (l'utilisateur) : syntaxe étendue plutôt qu'un nouveau mot-clé, champs `int` → `list`, taux absolus.
+
+- **Syntaxe.** `t split D A1 … Ak r1 … r(k-1)` : `args = [D, A1..Ak, r1..r(k-1)]`, donc `len(args) = 2k`, `k = len(args) // 2`.
+  La forme à 4 tokens est k = 2 : aucune régression sur les headers existants.
+- **Dataclass.** `SplitEvent.ancestral_pops: list[int]`, `admixture_rates: list[str]` (longueur k − 1). Le i-ème ancêtre reçoit le
+  taux i, le dernier reçoit le complément.
+- **Erreurs du parseur : `ValueError`, jamais `NotImplementedError`.** `parse_header_scenarios` n'avale que
+  `NotImplementedError` (bloc ignoré avec warning). Un `split` mal formé sous cette classe aurait fait disparaître le scénario
+  sans bruit. Gardes : `len(args)` impair, k < 2, populations non entières (`isdigit` sur `args[:k+1]`). Un test remonte
+  l'erreur jusqu'à `parse_header_scenarios` sur le vrai header human modifié par `.replace`.
+- **Sémantique des taux.** Probabilités absolues, pas de « stick-breaking ». Pour k = 2 on retombe exactement sur
+  `[r, 1 - r]`.
+- **Builder.** `proportions = taux + [max(0.0, 1 - Σtaux)]`. Garde `Σtaux > 1 + 1e-9` → `ValueError` : la tolérance sépare
+  le bruit flottant (somme 1.0000000000000002, complément −2e-16) d'une vraie erreur ; sans la garde, le `max` masquerait un
+  complément très négatif. Un taux négatif lève aussi. `get_parameter_names_used_by_scenario` boucle sur les taux
+  (`extract_referenced_names` attend UNE expression `str` : la liste faisait lever `TypeError` sur la regex).
+
+**Validation.**
+
+- k = 2 : rejeu apparié contre les reftables DIYABC des scénarios à `split` de human, toutes les valeurs concordent.
+- k = 3 : aucune référence DIYABC. On compte les destinations des lignées de la population dérivée dans la table
+  `migrations` de la `tree_sequence` et on les compare aux taux déclarés par un χ².
+
+**Pièges rencontrés avec le test χ² (à relire avant d'en écrire un autre).**
+
+1. **`chisquare` veut des effectifs, pas des fréquences.** Avec des fréquences la statistique est divisée par n : p ≈ 0,9 même
+   pour des attendus faux, donc un test qui ne rejette jamais. Un premier p = 0,77 « qui concordait » ne valait rien.
+   Le test n'est cru qu'une fois vu rouge : attendus permutés → p ≈ 1e-7 (n = 60), puis inversion volontaire de
+   `proportions` dans le builder → test rouge.
+2. **Il faut filtrer `migrations`.** `time == t1` ET `source == id(pop1)`. Les `merge` suivants (5000, 8000 sur human)
+   y écrivent aussi des migrations ; sans filtre, 100 lignes au lieu de 60 et un p ≪ 0,001 avec les attendus corrects.
+3. **L'ordre des ancêtres n'est pas l'ordre des identifiants.** `split 1 4 2 3 r1 r2` donne pop4 ← r1, pop2 ← r2, pop3 ←
+   complément ; `np.unique(dest)` range par identifiant (pop2, pop3, pop4). Les attendus doivent suivre cet ordre-là.
+   `np.unique` omet aussi une destination à effectif 0.
+4. **Conditionnellement au nombre de lignées présentes à `t1`, les effectifs sont un multinomial** (chaque lignée choisit
+   indépendamment) : les coalescences avant `t1` ne gênent pas, il faut prendre pour n le total filtré, pas le nombre
+   d'échantillons. Puissance : n × Σ(p_vrai − p_testé)²/p_testé ; à n = 60, permuter 0,5/0,3 donne ≈ 13 (p ≈ 0,002), trop
+   près d'un seuil de 0,001 ; le test pytest utilise 150 individus par population.
+
+**Ouvert : tirage des taux par une loi de Dirichlet.** Un prior est aujourd'hui un nom = un scalaire (`Prior`,
+`{nom: float}`, une colonne de reftable). Un Dirichlet tire un vecteur lié : dataclass propre (règle « sibling »), syntaxe
+de header (piste : une loi `DI[α1,…,αk]` ; la regex `_PRIOR_LINE_RE` l'accepte déjà), k − 1 colonnes de reftable, trailer
+régénéré avec ces noms, `is_constant_prior` et les contraintes d'ordre à écarter explicitement. Tirage par k Gamma(αᵢ)
+normalisés avec le `random.Random` existant ; pour k = 2, Dirichlet(α1, α2) sur la première composante est une Beta(α1, α2),
+Beta(1, 1) = Uniforme. Le chemin `UN` doit rester intact pour le rejeu de k = 2 : le Dirichlet est un ajout.

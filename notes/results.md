@@ -27,6 +27,7 @@ structurally and statistically equivalent to the real DIYABC's output.
 | Mixed MicroSat + DNA in one header | complete | `toy_example2_ms_dna_TN` (73 columns, 2 replays × 2 scenarios) |
 | Serial MicroSat + DNA, 4 samples (`AML`, `SML`) | complete, 224 columns (24 `SML`) | `toy_example2_ms_dna_50loci_TN_seriel`: 3 independent DIYABC reftables, several `seed_offset`s, 12 cells: 4 `SML` flags out of 288 columns, none repeated; MicroSat G1 (10 loci) shows a same-sign deficit in all four cells of two reftables, both scenarios (median −0.75 to −1.91 % over its 76 statistics, 54-63/76 negative, 9 of the 12 KS flags), DNA groups −0.70 to +0.47 %: probably the loci-count residual, **not demonstrated, open** (02/11, 04/11) |
 | Non-serial 4 populations with real admixture, MicroSat + DNA (`AML`, `SML`) | complete, 224 columns | `toy_example2_ms_dna_50loci_K2P_4pop`: ONE DIYABC reftable, 2 scenarios, 0 KS flag out of 233 statistics each, `SML` smallest p 0.07, sign test significant in scenario 2 at −0.27 % on the first replay; a second replay (04/11; whether it was a new DIYABC reftable was not recorded) gives 96/222, p = 0.051, median +0.122 %, KS clean: the −0.27 % was noise (03-04/11) |
+| Admixture with k ≥ 2 ancestral populations (`split`, no DIYABC counterpart for k > 2) | implemented (06/11), rates are absolute probabilities, last ancestor = complement | k = 2: paired replay against the real reftables, **every value matches**; k = 3: no DIYABC reference exists, checked by a χ² of the lineages' destinations against the declared rates (`test_buiild_demography_with_three_ancestral_populations`, positive and permuted-rates twin). **Dirichlet prior not done**, see Open work |
 
 **Validation status (06/10): every dataset in the "Validated against" column above is
 validated with the final code**
@@ -627,6 +628,27 @@ under the date given.
 
 # 3. Performance — measured state
 
+## Benchmark of 04/11 (latest; the 22/10 table below is kept for history)
+
+Même protocole que ci-dessous, une exécution par ligne. DIYABC : `benchmark_diyabc_results.csv` ; msprime :
+`benchmark_results.csv` (hors écriture du reftable).
+
+| Case | Directory | Loci | DIYABC | msprime | msprime / DIYABC | msprime sim / stats (sum over workers) |
+|---|---|---|---|---|---|---|
+| IndSeq Hudson | `human` | 5000 | 132.1 s | 185.7 s | 1.41x | 98.9 / 1.1 % |
+| IndSeq MAF > 0 | `toy_example3_500loci` | 500 | 5.95 s | 23.5 s | 3.95x | 98.2 / 1.8 % |
+| IndSeq serial | `human_seriel` | 5000 | 156.3 s | 173.6 s | 1.11x | 98.8 / 1.2 % |
+| PoolSeq Hudson | `toy_example4_hudson` | 100 | 28.8 s | 20.6 s | 0.71x | 98.7 / 1.3 % |
+| PoolSeq MRC > 0 | `toy_example4` | 100 | 96.0 s | 42.9 s | 0.45x | 99.4 / 0.6 % |
+| PoolSeq serial | `toy_example4_seriel` | 1000 | 600.0 s | 238.5 s | 0.40x | 99.8 / 0.2 % |
+| DNA only (42 stats) | `toy_example2_dna_50loci_TN` | 100 | 1.81 s | 11.6 s | 6.43x | 59.6 / 40.4 % |
+| DNA only serial (148 stats) | `toy_example2_dna_50loci_TN_seriel` | 100 | 20.7 s | 37.3 s | 1.80x | 27.6 / 72.4 % |
+| MicroSat | `toy_example1_ms_modified` | 50 | 2.59 s | 9.9 s | 3.84x | 43.6 / 56.4 % |
+| MicroSat serial | `toy_example1_ms_seriel` | 50 | 2.67 s | 10.6 s | 3.96x | 40.9 / 59.1 % |
+
+Les lignes DNA (jeux DNA seul, 100 loci, 42 et 148 statistiques) et la répartition sim / stats DNA et MicroSat ne sont pas
+comparables avec celles du 22/10.
+
 ## Performance — measured state (**full 1000-particle benchmark of 22/10**, one run per row; `benchmark_results.csv` on `bench/timings`)
 
 Verdicts only; each case below is meant to be worked in its **own session**.
@@ -943,6 +965,14 @@ the worktree exists for that.
 
 
 # 4. Open work
+
+- **`split` with k ancestral populations (06/11) — parsing, builder and tests done; Dirichlet prior open.**
+  Syntax `t split D A1 … Ak r1 … r(k-1)` (`len(args) = 2k`, k ≥ 2; the 4-token form is k = 2). `SplitEvent.ancestral_pops: list[int]`,
+  `admixture_rates: list[str]`. Rates are absolute probabilities, the k-th ancestor gets `max(0, 1 - Σr)`; a negative rate or
+  `Σr > 1 + 1e-9` raises `ValueError` (which `parse_header_scenarios` does **not** swallow, unlike `NotImplementedError`).
+  Left to do: a Dirichlet prior for the rates (a prior is one name = one scalar today; needs its own dataclass, a header
+  syntax, k − 1 reftable columns and a trailer that lists them), and a k > 2 end-to-end run through `reftable_loop`.
+  Narrative: `notes/exploration.md`, 2026-11-06.
 
 - **DIYABC's sex-ratio mode (22/10) — we follow the real ratio; `toy_example5` is validated in that mode.**
   DIYABC forces `this->sexratio = 0.5` when it loads an existing `.snp.bin` (`data.cpp:1636-1642`) and keeps the
