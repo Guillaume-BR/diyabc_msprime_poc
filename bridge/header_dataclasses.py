@@ -15,9 +15,12 @@ class MergeEvent:
 class SplitEvent:
     time_expr: str
     derived_pop: int  # disparaît
-    ancestral_pop1: int  # survit avec le taux d'admixture
-    ancestral_pop2: int  # survit avec le taux 1 - admixture
-    admixture_rate: str
+    ancestral_pops: list[
+        int
+    ]  # le i-ème élément de la liste correspond à l'i-ème taux d'admixture et le dernier le complément
+    admixture_rates: list[
+        str
+    ]  # taux d'admixture (texte brut, pas encore évalué) pour chaque pop ancestrale
 
 
 @dataclass

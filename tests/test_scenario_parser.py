@@ -5,7 +5,11 @@ human, exactement les événements qu'on a décortiqués à la main avec le ment
 import pytest
 
 from bridge.header_dataclasses import MergeEvent, SampleEvent, SplitEvent, VarNeEvent
-from bridge.scenario_parser import parse_header_scenarios, split_scenario_blocks
+from bridge.scenario_parser import (
+    _parse_event_line,
+    parse_header_scenarios,
+    split_scenario_blocks,
+)
 
 
 def test_unimplemented_scenarios_are_skipped_with_warning(header_text):
@@ -83,15 +87,50 @@ def test_scenario2_events(header_text):
     assert scenario2.events[4] == SplitEvent(
         time_expr="t1",
         derived_pop=1,
-        ancestral_pop1=4,
-        ancestral_pop2=2,
-        admixture_rate="ra",
+        ancestral_pops=[4, 2],
+        admixture_rates=["ra"],
     )
+
+
+def test_parse_event_line_three_population_split():
+    line = "t1 split 5 1 2 3 r1 r2"
+    event = _parse_event_line(line)
+    assert isinstance(event, SplitEvent)
+    assert event.time_expr == "t1"
+    assert event.derived_pop == 5
+    assert event.ancestral_pops == [1, 2, 3]
+    assert event.admixture_rates == ["r1", "r2"]
+
+
+def test_parse_event_line_wrong_format():
+    line = "t1 split 5 1 2 3 r1"
+    with pytest.raises(ValueError, match="SplitEvent mal formé"):
+        _parse_event_line(line)
+
+    line = "t1 split 5 1"
+    with pytest.raises(
+        ValueError,
+        match="Au moins deux populations ancestrales sont attendues pour un événement split",
+    ):
+        _parse_event_line(line)
+
+    line = line = "t1 split 5 a 2 3 r1 r2"
+    with pytest.raises(ValueError, match="SplitEvent mal formé"):
+        _parse_event_line(line)
 
 
 def test_parse_header_scenarios(header_text_te1):
     results = parse_header_scenarios(header_text_te1)
     assert len(results) == 2
+
+
+def test_parse_header_scenarios_with_wrong_split_format(header_text):
+    # Ajout d'un scénario avec un split mal formé
+    header_text_with_wrong_split = header_text.replace(
+        "t11 split 1 3 2 ra", "t11 split 1 3 2"
+    )
+    with pytest.raises(ValueError, match="SplitEvent mal formé"):
+        parse_header_scenarios(header_text_with_wrong_split)
 
 
 def test_split_scenario_blocks(header_text_te1):

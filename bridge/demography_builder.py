@@ -128,15 +128,34 @@ def build_demography(
             # avec probabilité admixture_rate, sinon vers ancestral_pop2 --
             # voir SplitEvent (header_dataclasses.py) pour la sémantique exacte,
             # vérifiée contre particuleC.cpp::ParticleC::split_pop.
-            rate = evaluate_expression(event.admixture_rate, values)
+            if any(
+                r < 0
+                for r in (evaluate_expression(r, values) for r in event.admixture_rates)
+            ):
+                r_neg = next(
+                    r
+                    for r in event.admixture_rates
+                    if evaluate_expression(r, values) < 0
+                )
+                raise ValueError(f"Un des taux d'admixture est négatif : {r_neg}.")
+
+            sum_rates = sum(
+                evaluate_expression(r, values) for r in event.admixture_rates
+            )
+            if sum_rates > 1 + 1e-9:  # une somme de flottant
+                raise ValueError(
+                    f"La somme des taux d'admixture est supérieure à 1 : {sum_rates}."
+                )
+
+            complement_rate = max(0.0, 1 - sum_rates)
+            proportions = [
+                evaluate_expression(rate, values) for rate in event.admixture_rates
+            ] + [complement_rate]
             demography.add_admixture(
                 time=time,
                 derived=f"pop{event.derived_pop}",
-                ancestral=[
-                    f"pop{event.ancestral_pop1}",
-                    f"pop{event.ancestral_pop2}",
-                ],
-                proportions=[rate, 1 - rate],
+                ancestral=[f"pop{i}" for i in event.ancestral_pops],
+                proportions=proportions,
             )
             continue
 
@@ -253,6 +272,6 @@ def get_parameter_names_used_by_scenario(scenario: Scenario) -> set[str]:
         if isinstance(event, VarNeEvent):
             names |= extract_referenced_names(event.new_size_expr)
         if isinstance(event, SplitEvent):
-            names |= extract_referenced_names(event.admixture_rate)
-
+            for rate in event.admixture_rates:
+                names |= extract_referenced_names(rate)
     return names

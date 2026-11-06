@@ -122,12 +122,25 @@ def _parse_event_line(line: str):
         # read_events (ordre des colonnes pop/pop1/pop2/admixrate) et
         # particuleC.cpp::ParticleC::split_pop (tirage réel : vers pop1 si
         # random() < admixrate, sinon vers pop2).
+        if len(args) % 2 != 0:
+            raise ValueError(
+                f"SplitEvent mal formé : {line!r} (nombre de tokens incorrect)"
+            )
+        if len(args) < 4:
+            raise ValueError(
+                f"Au moins deux populations ancestrales sont attendues pour un événement split : {line!r}"
+            )
+        k = len(args) // 2
+
+        if not all(arg.isdigit() for arg in args[: k + 1]):
+            raise ValueError(
+                f"SplitEvent mal formé : {line!r} (les populations doivent être des entiers)"
+            )
         return SplitEvent(
             time_expr=time_expr,
             derived_pop=int(args[0]),
-            ancestral_pop1=int(args[1]),
-            ancestral_pop2=int(args[2]),
-            admixture_rate=args[3],
+            ancestral_pops=[int(arg) for arg in args[1 : k + 1]],
+            admixture_rates=args[k + 1 :],
         )
 
     raise NotImplementedError(

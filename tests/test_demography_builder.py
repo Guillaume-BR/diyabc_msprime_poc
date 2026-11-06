@@ -44,7 +44,9 @@ def test_build_demography_scenario2_admixture(header_text):
     demography = build_demography(scenario2, values)
 
     admixtures = [
-        e for e in demography.events if isinstance(e, msprime.demography.Admixture)
+        event
+        for event in demography.events
+        if isinstance(event, msprime.demography.Admixture)
     ]
     assert len(admixtures) == 1
     admixture = admixtures[0]
@@ -52,6 +54,113 @@ def test_build_demography_scenario2_admixture(header_text):
     assert admixture.derived == "pop1"
     assert admixture.ancestral == ["pop4", "pop2"]
     assert admixture.proportions == pytest.approx([0.3, 0.7])
+
+
+def test_build_demography_scenario2_modified(header_text):
+    header_text_modified = header_text.replace(
+        "t1 split 1 4 2 ra", "t1 split 1 4 2 3 r1 r2"
+    )
+    scenarios = parse_header_scenarios(header_text_modified)
+    scenario2 = next(s for s in scenarios if s.index == 2)
+
+    values = {
+        "N1": 50000,
+        "N2": 50000,
+        "N3": 50000,
+        "N4": 50000,
+        "t1": 10,
+        "t2": 5000,
+        "d3": 30,
+        "Nbn3": 200,
+        "d4": 20,
+        "Nbn4": 300,
+        "N34": 60000,
+        "t3": 8000,
+        "d34": 25,
+        "Nbn34": 250,
+        "t4": 9000,
+        "Na": 40000,
+        "r1": 0.3,
+        "r2": 0.2,
+    }
+
+    demography = build_demography(scenario2, values)
+
+    admixtures = [
+        event
+        for event in demography.events
+        if isinstance(event, msprime.demography.Admixture)
+    ]
+    assert len(admixtures) == 1
+    admixture = admixtures[0]
+    assert admixture.time == 10
+    assert admixture.derived == "pop1"
+    assert admixture.ancestral == ["pop4", "pop2", "pop3"]
+    assert admixture.proportions == pytest.approx([0.3, 0.2, 0.5])
+
+
+def test_build_demography_with_sum_proportions_greater_than_one(header_text):
+    header_text_modified = header_text.replace(
+        "t1 split 1 4 2 ra", "t1 split 1 4 2 3 r1 r2"
+    )
+    scenarios = parse_header_scenarios(header_text_modified)
+    scenario2 = next(s for s in scenarios if s.index == 2)
+
+    # Garde avec
+
+    values = {
+        "N1": 50000,
+        "N2": 50000,
+        "N3": 50000,
+        "N4": 50000,
+        "t1": 10,
+        "t2": 5000,
+        "d3": 30,
+        "Nbn3": 200,
+        "d4": 20,
+        "Nbn4": 300,
+        "N34": 60000,
+        "t3": 8000,
+        "d34": 25,
+        "Nbn34": 250,
+        "t4": 9000,
+        "Na": 40000,
+        "r1": 0.3,
+        "r2": 0.8,  # somme > 1
+    }
+    with pytest.raises(ValueError, match="La somme des taux d'admixture"):
+        build_demography(scenario2, values)
+
+
+def test_build_demography_with_negative_proportions(header_text):
+    header_text_modified = header_text.replace(
+        "t1 split 1 4 2 ra", "t1 split 1 4 2 3 r1 r2"
+    )
+    scenarios = parse_header_scenarios(header_text_modified)
+    scenario2 = next(s for s in scenarios if s.index == 2)
+
+    values = {
+        "N1": 50000,
+        "N2": 50000,
+        "N3": 50000,
+        "N4": 50000,
+        "t1": 10,
+        "t2": 5000,
+        "d3": 30,
+        "Nbn3": 200,
+        "d4": 20,
+        "Nbn4": 300,
+        "N34": 60000,
+        "t3": 8000,
+        "d34": 25,
+        "Nbn34": 250,
+        "t4": 9000,
+        "Na": 40000,
+        "r1": -0.3,  # négatif
+        "r2": 0.5,
+    }
+    with pytest.raises(ValueError, match="Un des taux d'admixture est négatif"):
+        build_demography(scenario2, values)
 
 
 def test_get_parameter_names_used_by_scenario2(header_text):
