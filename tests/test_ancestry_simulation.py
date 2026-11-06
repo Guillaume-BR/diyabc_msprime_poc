@@ -28,6 +28,7 @@ from bridge.ancestry_simulation import (
     _derived_mask,
     _distribution_from_position,
     _group_prior_values_dna_from_columns,
+    _group_prior_values_microsat_from_columns,
     _grouping_loci_by_group_and_heritage,
     _gsm_matrix_numpy,
     _mix_sni_gsm_rows,
@@ -87,6 +88,7 @@ from bridge.observed_data import (
 )
 from bridge.pipeline import build_random_demography_for_scenario_index
 from bridge.prior_parser import parse_group_priors
+from bridge.reftable_loop import group_prior_column_names
 from bridge.scenario_parser import parse_header_scenarios
 
 
@@ -2891,3 +2893,54 @@ def test_microsat_mutation_simulation_per_locus_ploidy_matches_heritage(
     )
     assert ts_A.num_samples == 2 * ts_M.num_samples
     assert ts_Y.num_samples == num_samples_male_only
+
+
+def test_group_prior_values_microsat_from_columns_mu_spelling(header_text_te1):
+    """Un header en `mu` (toy_example1_ms) nomme ses colonnes `mumic_N` : la
+    reconstruction du dict nested doit retrouver leurs valeurs."""
+    names = group_prior_column_names(header_text_te1)
+    assert names[0] == "mumic_1"  # le header est bien en `mu`, pas en `µ`
+    values = {name: float(i + 1) for i, name in enumerate(names)}
+
+    result = _group_prior_values_microsat_from_columns(
+        values, parse_group_priors(header_text_te1)
+    )
+
+    assert result["G1"]["MEANMU"] == values["mumic_1"]
+    assert result["G1"]["MEANP"] == values["pmic_1"]
+    assert result["G1"]["MEANSNI"] == values["snimic_1"]
+    assert result["G2"]["MEANMU"] == values["mumic_2"]
+
+
+def test_group_prior_values_dna_from_columns_mu_spelling(header_text_te2):
+    """Même chose pour l'ADN, sur un header te2 dont la ligne de queue est
+    réécrite en `mu`."""
+    lines = header_text_te2.splitlines()
+    assert "µ" in lines[-1]  # sinon le replace ne change rien
+    lines[-1] = lines[-1].replace("µ", "mu")
+    header_mu = "\n".join(lines)
+
+    names = group_prior_column_names(header_mu)
+    assert "museq_2" in names and "µseq_2" not in names
+    values = {name: float(i + 1) for i, name in enumerate(names)}
+
+    result = _group_prior_values_dna_from_columns(values, parse_group_priors(header_mu))
+
+    assert result["G2"]["MEANMU"] == values["museq_2"]
+    assert result["G2"]["MEANK1"] == values["k1seq_2"]
+    assert result["G3"]["MEANMU"] == values["museq_3"]
+
+
+def test_group_prior_values_from_columns_mu_spelling_unchanged_for_micro_sign(
+    header_text_te2,
+):
+    """Le cas historique (`µ`, famille te2) reste inchangé par la normalisation."""
+    names = group_prior_column_names(header_text_te2)
+    assert "µseq_2" in names
+    values = {name: float(i + 1) for i, name in enumerate(names)}
+
+    result = _group_prior_values_dna_from_columns(
+        values, parse_group_priors(header_text_te2)
+    )
+
+    assert result["G2"]["MEANMU"] == values["µseq_2"]
