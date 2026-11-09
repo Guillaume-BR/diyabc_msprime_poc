@@ -84,6 +84,36 @@ class Prior:
 
 
 @dataclass
+class DirichletPrior:
+    """Une ligne de la section 'historical parameters priors' de header.txt.
+
+    Ex: 'ra,rb A DI[0.05,0.95,0.0,0.0]' devient
+    DirichletPrior(name=["ra", "rb"], category="A", law="DI", min=0.05, max=0.95,
+    mean=0.0, sdshape=0.0).
+
+    Attributes:
+        name: Liste des noms des paramètres (ex: ["ra", "rb"]).
+        category: "A" (taux admixture).
+        law: Loi de tirage ("DI").
+        min: Borne basse.
+        max: Borne haute.
+        mean: Moyenne, utilisée seulement par "NO"/"LN"/"GA" (0.0 et non
+            lu sinon).
+        sdshape: Écart-type ("NO") ou paramètre de forme de la
+            reparamétrisation gamma ("LN"/"GA"), utilisé seulement par
+            "NO"/"LN"/"GA" (0.0 et non lu sinon).
+    """
+
+    names: list[str]
+    category: str
+    law: str
+    min: float
+    max: float
+    mean: float
+    sdshape: float
+
+
+@dataclass
 class GroupPrior:
     """Une ligne de la section 'group priors' de header.txt
     (MicroSat/sequences-mut).

@@ -3,7 +3,7 @@ header.txt, et la règle de filtrage des priors quasi-constants."""
 
 import pytest
 
-from bridge.header_dataclasses import GroupPrior, OrderConstraint, Prior
+from bridge.header_dataclasses import DirichletPrior, GroupPrior, OrderConstraint, Prior
 from bridge.prior_parser import (
     get_parameter_used_by_model,
     is_constant_prior,
@@ -12,7 +12,7 @@ from bridge.prior_parser import (
 )
 
 
-def test_priors_and_constraints(header_text):
+def test_parse_priors_and_constraints(header_text):
     priors, constraints = parse_priors(header_text)
 
     assert len(priors) == 21
@@ -30,6 +30,114 @@ def test_priors_and_constraints(header_text):
     assert OrderConstraint(param1="t3", operator=">", param2="t2") in constraints
     assert OrderConstraint(param1="t44", operator=">", param2="t33") in constraints
     assert OrderConstraint(param1="t44", operator=">", param2="t22") in constraints
+
+
+# def test_parse_priors_with_invalid_bounds(header_text):
+#    # min > max
+#    header_text_invalid1 = header_text.replace(
+#        "N1 N UN[1000.0,100000.0,0.0,0.0]", "N1 N UN[100000.0,1000.0,0.0,0.0]"
+#    )
+#    with pytest.raises(ValueError, match="borne min > max"):
+#        parse_priors(header_text_invalid1)
+
+# min == max
+# header_text_invalid2 = header_text.replace(
+#    "N1 N UN[1000.0,100000.0,0.0,0.0]", "N1 N UN[50000.0,50000.0,0.0,0.0]"
+# )
+# with pytest.raises(ValueError, match="Domaine vide ou réduit à un point"):
+#    parse_priors(header_text_invalid2)
+
+
+def test_parse_priors_with_dirichlet_two_parameters(header_text):
+    header_text = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra A DI[0.05,0.95,0.0,0.0]"
+    )
+    priors, _ = parse_priors(header_text)
+
+    dirichlet_priors = next(p for p in priors if isinstance(p, DirichletPrior))
+
+    assert dirichlet_priors.names == ["ra"]
+    assert dirichlet_priors.category == "A"
+    assert dirichlet_priors.min == 0.05
+    assert dirichlet_priors.max == 0.95
+
+
+def test_parse_priors_with_dirichlet_three_parameters(header_text):
+    header_text = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
+    # insertion de ra,rb A DI[0.05,0.95,0.0,0.0]
+    header_text = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
+    )
+    priors, _ = parse_priors(header_text)
+
+    dirichlet_priors = next(p for p in priors if isinstance(p, DirichletPrior))
+
+    assert dirichlet_priors.names == ["ra", "rb"]
+    assert dirichlet_priors.category == "A"
+    assert dirichlet_priors.min == 0.05
+    assert dirichlet_priors.max == 0.95
+
+
+def test_parse_priors_with_invalid_dirichlet(header_text):
+
+    # Borne min
+    header_text_invalid1 = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra A DI[0.6,0.95,0.0,0.0]"
+    )
+    with pytest.raises(ValueError, match="Domaine vide ou réduit à un point"):
+        parse_priors(header_text_invalid1)
+
+    header_text_invalid1_bis = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra A DI[0.5,0.95,0.0,0.0]"
+    )
+    with pytest.raises(ValueError, match="Domaine vide ou réduit à un point"):
+        parse_priors(header_text_invalid1_bis)
+
+    # borne max
+    header_text_invalid2 = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra A DI[0.05,0.25,0.0,0.0]"
+    )
+    with pytest.raises(
+        ValueError, match="Les parts ne peuvent sommer à 1 avec la borne max"
+    ):
+        parse_priors(header_text_invalid2)
+
+    header_text_invalid2_bis = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra A DI[0.05,0.5,0.0,0.0]"
+    )
+    with pytest.raises(
+        ValueError, match="Les parts ne peuvent sommer à 1 avec la borne max"
+    ):
+        parse_priors(header_text_invalid2_bis)
+
+    # Mauvais type
+    header_text_invalid3 = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra T DI[0.05,0.25,0.0,0.0]"
+    )
+    with pytest.raises(ValueError, match="Le prior DI ne supporte"):
+        parse_priors(header_text_invalid3)
+
+    # Prior Dirichlet avec deux fois le même nom
+    header_text_invalid4 = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra,ra A DI[0.05,0.95,0.0,0.0]"
+    )
+    with pytest.raises(
+        ValueError,
+        match="Un même nom apparaît plusieurs fois dans",
+    ):
+        parse_priors(header_text_invalid4)
+
+    # header_text = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
+    line_index = header_text.find("ra A UN[0.05,0.95,0.0,0.0]")
+    header_text_invalid5 = (
+        header_text[:line_index]
+        + "ra,rb A DI[0.05,0.95,0.0,0.0] \n"
+        + header_text[line_index:]
+    )
+    with pytest.raises(
+        ValueError, match="Les noms de priors classiques et de Dirichlet DI"
+    ):
+        parse_priors(header_text_invalid5)
 
 
 def test_parse_priors_no_draw_until(header_text_te1):

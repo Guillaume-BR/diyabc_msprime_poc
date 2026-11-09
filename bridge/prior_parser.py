@@ -1,6 +1,7 @@
 import re
+from collections import Counter
 
-from bridge.header_dataclasses import GroupPrior, OrderConstraint, Prior
+from bridge.header_dataclasses import DirichletPrior, GroupPrior, OrderConstraint, Prior
 
 _SECTION_START_RE = re.compile(r"^historical parameters priors\s*\(")
 _SECTION_END_RE = re.compile(r"^DRAW UNTIL\s*$")
@@ -81,17 +82,52 @@ def parse_priors(header_text: str) -> tuple[list[Prior], list[OrderConstraint]]:
         if prior_match:
             name, category, law, bounds_str = prior_match.groups()
             min_, max_, mean, sdshape = (float(b) for b in bounds_str.split(","))
-            priors.append(
-                Prior(
-                    name=name,
-                    category=category,
-                    law=law,
-                    min=min_,
-                    max=max_,
-                    mean=mean,
-                    sdshape=sdshape,
+            if law == "DI":
+                # if min_ > max_:
+                #    raise ValueError(
+                #        f"Le prior {name} a une borne min > max : {line!r}"
+                #    )
+                # Tests de validité pour les priors Dirichlet :
+                # - catégorie A uniquement
+                if category != "A":
+                    raise ValueError(
+                        f"Le prior DI ne supporte que la catégorie A et pas {category!r} : {line!r}"
+                    )
+                # - bornes min/max réalisables avec le nombre de paramètres
+                names = name.split(",")
+                # dernier paramètre implicite : 1 - sum(autres paramètres)
+                k = len(names) + 1
+                if min_ * k >= 1:
+                    raise ValueError(
+                        f"Domaine vide ou réduit à un point avec cette valeur minimum : names : {names!r} et min : {min_!r}."
+                    )
+                if max_ * k <= 1:
+                    raise ValueError(
+                        f"Les parts ne peuvent sommer à 1 avec la borne max fournie ou domaine réduit à un point : names : {names!r} et max : {max_!r}."
+                    )
+                priors.append(
+                    DirichletPrior(
+                        names=names,
+                        category=category,
+                        law=law,
+                        min=min_,
+                        max=max_,
+                        mean=mean,
+                        sdshape=sdshape,
+                    )
                 )
-            )
+            else:
+                priors.append(
+                    Prior(
+                        name=name,
+                        category=category,
+                        law=law,
+                        min=min_,
+                        max=max_,
+                        mean=mean,
+                        sdshape=sdshape,
+                    )
+                )
             continue
 
         constraint_match = _CONSTRAINT_LINE_RE.match(line)
@@ -104,6 +140,26 @@ def parse_priors(header_text: str) -> tuple[list[Prior], list[OrderConstraint]]:
 
         raise ValueError(f"Ligne de la section priors non reconnue : {line!r}")
 
+    # Tests pour vérifier qu'aucun nom n'est utilisé deux fois :
+    dirichlet_names = [
+        n for p in priors if isinstance(p, DirichletPrior) for n in p.names
+    ]
+    priors_names = [p.name for p in priors if not isinstance(p, DirichletPrior)]
+
+    # - dans les priors Dirichlet :
+    counter = Counter(dirichlet_names)
+    identical_names = [n for n, c in counter.items() if c > 1]
+    if identical_names:
+        raise ValueError(
+            f"Un même nom apparaît plusieurs fois dans les priors Dirichlet DI : {identical_names!r}"
+        )
+
+    # - pas de chevauchement entre les priors classiques et les Dirichlet :
+    identical_names = sorted(set(dirichlet_names) & set(priors_names))
+    if identical_names:
+        raise ValueError(
+            f"Les noms de priors classiques et de Dirichlet DI ne peuvent pas être identiques : {identical_names!r}."
+        )
     return priors, constraints
 
 
