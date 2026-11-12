@@ -116,9 +116,10 @@ def _parse_event_line(line: str):
         )
 
     if action == "split":
-        # ex: "t1 split 3 1 2 r1" -> derived_pop=3 (disparaît), ancestral_pop1=1
-        # (reçoit chaque lignée de la pop 3 avec probabilité r1), ancestral_pop2=2
-        # (reçoit le complément, 1-r1) -- vérifié dans history.cpp::ScenarioC::
+        # ex: "t1 split 3 1 2 r1" -> derived_pop=3 (disparaît), ancestral_pops=[1, 2],
+        # admixture_rates=["r1"] : la pop 1 reçoit chaque lignée de la pop 3 avec
+        # probabilité r1, la pop 2 (dernière) le complément 1-r1. Forme à k
+        # ancêtres : "t1 split 3 1 2 4 r1 r2" (k-1 taux) -- vérifié dans history.cpp::ScenarioC::
         # read_events (ordre des colonnes pop/pop1/pop2/admixrate) et
         # particuleC.cpp::ParticleC::split_pop (tirage réel : vers pop1 si
         # random() < admixrate, sinon vers pop2).

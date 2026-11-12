@@ -124,8 +124,9 @@ def build_demography(
             continue
 
         if isinstance(event, SplitEvent):
-            # pop_derived disparaît : chaque lignée part vers ancestral_pop1
-            # avec probabilité admixture_rate, sinon vers ancestral_pop2 --
+            # pop_derived disparaît : chaque lignée part vers l'ancêtre i
+            # (ancestral_pops[i]) avec probabilité admixture_rates[i], et vers
+            # le dernier ancêtre avec le complément (k = 2 : r, puis 1 - r) --
             # voir SplitEvent (header_dataclasses.py) pour la sémantique exacte,
             # vérifiée contre particuleC.cpp::ParticleC::split_pop.
             if any(
