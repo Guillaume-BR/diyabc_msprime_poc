@@ -15,13 +15,16 @@ from conftest import (
 )
 
 from bridge.demography_builder import get_parameter_names_used_by_scenario
+from bridge.header_dataclasses import DirichletPrior, SplitEvent
 from bridge.prior_parser import is_constant_prior, parse_priors
 from bridge.reftable_loop import (
+    ParticleResult,
     _detect_mu,
     _historical_columns_order,
     _kept_param_names_by_scenario,
     _split_mutation_and_stat_names,
     check_header_trailer_line,
+    check_header_with_dirichlet_prior,
     group_prior_column_names,
     parse_real_reftable_params,
     parse_real_reftable_params_with_group_priors,
@@ -48,6 +51,98 @@ def test_detect_mu(header_text_te4, header_text_te2):
     fake_header = header_text_te2.replace("µ", "mu")
     mu3 = _detect_mu(fake_header)
     assert mu3 == "mu"
+
+
+def test_check_header_with_dirichlet_prior(header_text):
+    priors = [
+        DirichletPrior(
+            names=["ra", "rb"],
+            category="A",
+            law="DI",
+            min=0.05,
+            max=0.95,
+            mean=0.0,
+            sdshape=0.0,
+        ),
+    ]
+
+    # Everything ok
+    header_text1 = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
+    scenarios = [parse_header_scenarios(header_text1)[1]]
+    assert not check_header_with_dirichlet_prior(priors, scenarios)
+
+    # cas mixte
+    header_text2 = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rc")
+    scenarios = [parse_header_scenarios(header_text2)[1]]
+    with pytest.raises(
+        ValueError,
+        match="Des taux identiques d'admixture dans le prior et dans le scénario sont nécessaires.",
+    ):
+        check_header_with_dirichlet_prior(priors, scenarios)
+
+    # un seul taux avec ra,rb
+    scenarios = [parse_header_scenarios(header_text)[2]]
+    with pytest.raises(
+        ValueError,
+        match="Les taux d'admixture déclarés dans les priors et les scénarios diffèrent.",
+    ):
+        check_header_with_dirichlet_prior(priors, scenarios)
+
+    priors = [
+        DirichletPrior(
+            names=["ra", "rb"],
+            category="A",
+            law="DI",
+            min=0.05,
+            max=0.95,
+            mean=0.0,
+            sdshape=0.0,
+        ),
+        DirichletPrior(
+            names=["rc", "rd"],
+            category="A",
+            law="DI",
+            min=0.05,
+            max=0.95,
+            mean=0.0,
+            sdshape=0.0,
+        ),
+    ]
+
+    # deux priors de Dirichlet distinct
+    header_text3 = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rc")
+    scenarios = [parse_header_scenarios(header_text3)[1]]
+    with pytest.raises(
+        ValueError, match="Les taux viennent de plusieurs priors de Dirichlet :"
+    ):
+        check_header_with_dirichlet_prior(priors, scenarios)
+
+
+def test_check_header_with_dirichlet_prior_accepts_independent_uniform_rates(
+    header_text,
+):
+    """Un split k=3 dont les deux taux sont des priors classiques indépendants
+    (`ra` et `rb` en UN) est légal et ne doit pas être refusé : le contrôle ne
+    concerne que les taux déclarés dans un prior de Dirichlet."""
+    header_text = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
+    header_text = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]",
+        "ra A UN[0.05,0.5,0.0,0.0]\nrb A UN[0.05,0.5,0.0,0.0]",
+    )
+    priors, _ = parse_priors(header_text)
+    scenarios = [parse_header_scenarios(header_text)[1]]
+
+    # Garde-fou du test : sans Dirichlet, il ne peut passer à vide que si
+    # `split` porte bien deux taux.
+    assert not any(isinstance(p, DirichletPrior) for p in priors)
+    assert scenarios[0].index == 2
+    assert any(
+        len(event.admixture_rates) == 2
+        for event in scenarios[0].events
+        if isinstance(event, SplitEvent)
+    )
+
+    check_header_with_dirichlet_prior(priors, scenarios)  # ne doit pas lever
 
 
 def test_simulate_from_directory(tmp_path, snp_context_human):
@@ -140,6 +235,23 @@ def test_run_reftable_simulation_draws_multiple_scenarios(header_text):
     )
 
     assert [r.scenario_index for r in results] == [6, 4, 6, 1, 5, 6]
+
+
+def test_run_reftable_simulation_snp_with_wrong_header_dirichlet(header_text, tmp_path):
+    header_text = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
+    header_text = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rc A DI[0.05,0.95,0.0,0.0]"
+    )
+    (tmp_path / "headerRF.txt").write_text(header_text)
+    with pytest.raises(
+        ValueError,
+        match="Des taux identiques d'admixture dans le prior et dans le scénario sont nécessaires",
+    ):
+        run_reftable_simulation_snp(
+            reference_directory=tmp_path,
+            scenarios=parse_header_scenarios(header_text),
+            nrec=1,
+        )
 
 
 def test_write_reftable_bin_without_group_priors(tmp_path, header_text):
@@ -340,6 +452,36 @@ def test_kept_param_names_by_scenario(header_text_te1):
     assert len(result) == 2
 
 
+def test_kept_param_names_by_scenario_with_dirichlet_prior(header_text):
+    """Un prior de Dirichlet `ra,rb` donne deux colonnes consécutives, dans
+    l'ordre de déclaration, pour les scénarios dont un `split` les référence,
+    et aucune pour les scénarios qui ne les référencent pas.
+
+    On passe TOUS les `split` de human au format k=3 (`... ra rb`) pour que le
+    header reste cohérent : scénarios 2, 3, 5, 6 utilisent le Dirichlet,
+    scénarios 1 et 4 (sans `split`) ne l'utilisent pas.
+    """
+    header_text = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
+    header_text = header_text.replace("t1 split 1 3 2 ra", "t1 split 1 3 2 4 ra rb")
+    header_text = header_text.replace("t11 split 1 4 2 ra", "t11 split 1 4 2 3 ra rb")
+    header_text = header_text.replace("t11 split 1 3 2 ra", "t11 split 1 3 2 4 ra rb")
+    header_text = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
+    )
+    priors, _ = parse_priors(header_text)
+    scenarios = parse_header_scenarios(header_text)
+    results = _kept_param_names_by_scenario(priors, scenarios)
+
+    for index in (2, 3, 5, 6):
+        names = results[index]
+        assert "ra" in names
+        assert names.index("ra") + 1 == names.index("rb")
+
+    for index in (1, 4):
+        assert "ra" not in results[index]
+        assert "rb" not in results[index]
+
+
 def test_historical_columns_order(microsat_context_te1_modified):
     """Vérifie que _historical_columns_order retourne bien l'ordre des colonnes
     historiques tel qu'il est dans l'en-tête du reftable.txt (et non pas
@@ -368,6 +510,65 @@ def test_historical_columns_order(microsat_context_te1_modified):
     )
     with pytest.raises(ValueError, match="t41"):
         _historical_columns_order(header_line_error, priors, scenarios)
+
+
+def test_historical_column_order_with_dirichlet_prior(microsat_context_te1_modified):
+    header_text = microsat_context_te1_modified.header_text
+    header_text = header_text.replace("t421 split 4 2 1 ra", "t421 split 4 2 1 3 ra rb")
+    header_text = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
+    )
+    priors, _ = parse_priors(header_text)
+    scenarios = parse_header_scenarios(header_text)
+    header_line = header_text.splitlines()[-1]
+
+    with pytest.raises(ValueError, match=r"incohérentes.*rb"):
+        _historical_columns_order(header_line, priors, scenarios)
+
+    header_line = header_line.replace("N4 ra t41", "N4 ra rb t41")
+    result = _historical_columns_order(header_line, priors, scenarios)
+    assert "rb" in result
+    assert result.index("ra") + 1 == result.index("rb")
+
+    header_line = header_line.replace("N4 ra rb t41", "N4 rb ra t41")
+    assert result.index("ra") + 1 == result.index("rb")
+
+
+def test_write_reftable_txt_with_dirichlet(header_text, tmp_path):
+    header_text = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
+    )
+    header_text = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
+    priors, _ = parse_priors(header_text)
+    scenarios = parse_header_scenarios(header_text)
+    parameter_values = {
+        name: 0.1 for name in _kept_param_names_by_scenario(priors, scenarios)[2]
+    }
+    parameter_values.update({"ra": 0.2, "rb": 0.3})
+    particle = ParticleResult(
+        particle_index=1,
+        scenario_index=2,
+        parameter_values=parameter_values,
+        summary_statistics={"S1": 0.5},
+        group_priors_values={},
+    )
+
+    write_reftable_txt(
+        [particle], priors, scenarios, output_path=tmp_path / "reftable.txt"
+    )
+    lines = (tmp_path / "reftable.txt").read_text().splitlines()
+    header_tokens = lines[0].split()
+    ra_index = header_tokens.index("ra")
+    rb_index = header_tokens.index("rb")
+
+    for line in lines[1:]:
+        tokens = line.split()
+        assert float(tokens[ra_index]) == 0.2
+        assert float(tokens[rb_index]) == 0.3
+        assert len(tokens) == len(header_tokens)
+
+    assert "ra" in header_tokens
+    assert header_tokens.index("ra") + 1 == header_tokens.index("rb")
 
 
 def test_split_mutation_and_stat_names_rejects_undeclared_historical_parameters():
@@ -478,6 +679,168 @@ def test_group_prior_column_names_follows_trailer_spelling(header_text_te2):
     names = group_prior_column_names(header_mu)
 
     assert names[0] == "mumic_1"  # le premier nom attendu, en dur
+
+
+def test_run_reftable_simulation_snp_with_dirichelt_split_txt(header_text, tmp_path):
+    snp_filename = header_text.splitlines()[0].strip()
+    shutil.copy(REFERENCE_DIR / "human" / "headerRF.txt", tmp_path / "headerRF.txt")
+    shutil.copy(REFERENCE_DIR / "human" / snp_filename, tmp_path / snp_filename)
+    header_text = (tmp_path / "headerRF.txt").read_text()
+    # modification du header human
+    header_text = header_text.replace(
+        "21 parameters and 112 summary statistics",
+        "22 parameters and 112 summary statistics",
+    )
+
+    header_text = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
+    header_text = header_text.replace("t1 split 1 3 2 ra", "t1 split 1 3 2 4 ra rb")
+    header_text = header_text.replace("t11 split 1 4 2 ra", "t11 split 1 4 2 3 ra rb")
+    header_text = header_text.replace("t11 split 1 3 2 ra", "t11 split 1 3 2 4 ra rb")
+
+    header_text = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
+    )
+
+    header_text = header_text.replace("Nbn34 t4 Na ra t11", "Nbn34 t4 Na ra rb t11")
+    (tmp_path / "headerRF.txt").write_text(header_text)
+    priors, _ = parse_priors(header_text)
+    scenarios = parse_header_scenarios(header_text)
+    results = run_reftable_simulation_snp(
+        reference_directory=tmp_path,
+        scenarios=scenarios,
+        num_loci=10,
+        nrec=20,
+        stats_filter="ALL",
+    )
+    assert any(r.scenario_index in {2, 3, 5, 6} for r in results)
+    for result in results:
+        if result.scenario_index in {2, 3, 5, 6}:
+            assert "ra" in result.parameter_values
+            assert "rb" in result.parameter_values
+            ra = result.parameter_values["ra"]
+            rb = result.parameter_values["rb"]
+            assert ra + rb < 1 - 0.05
+            assert 1 - ra - rb >= 0.05
+            assert 0.05 <= ra <= 0.95
+            assert 0.05 <= rb <= 0.95
+
+    write_reftable_txt(
+        results, priors, scenarios, output_path=tmp_path / "reftable.txt"
+    )
+    lines = (tmp_path / "reftable.txt").read_text().splitlines()
+    header_line = lines[0].split()
+    assert "ra" in header_line
+    assert "rb" in header_line
+    for line in lines[1:]:
+        line = line.split()
+        assert len(line) == len(header_line)
+
+
+def test_write_reftable_bin_with_dirichlet_prior(header_text, tmp_path):
+    """Le reftable.bin écrit une colonne par nom d'un prior de Dirichlet.
+
+    Header human dont tous les `split` sont passés en k=3 (`... ra rb`) et
+    dont `ra,rb` est un Dirichlet : les scénarios 2, 3, 5, 6 ont un
+    paramètre de plus que dans le header d'origine, 1 et 4 aucun.
+    Pas de simulation : deux ParticleResult faits à la main, relus octet par
+    octet (format : voir write_reftable_bin).
+    """
+    original_header_text = header_text
+    header_text = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
+    header_text = header_text.replace("t1 split 1 3 2 ra", "t1 split 1 3 2 4 ra rb")
+    header_text = header_text.replace("t11 split 1 4 2 ra", "t11 split 1 4 2 3 ra rb")
+    header_text = header_text.replace("t11 split 1 3 2 ra", "t11 split 1 3 2 4 ra rb")
+    header_text = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
+    )
+    priors, _ = parse_priors(header_text)
+    scenarios = parse_header_scenarios(header_text)
+    kept = _kept_param_names_by_scenario(priors, scenarios)
+
+    # Une valeur distincte et non nulle par paramètre : une permutation de
+    # colonnes ne passerait pas inaperçue. ra et rb sont fixés à la main.
+    parameter_values1 = {name: 0.01 * (i + 1) for i, name in enumerate(kept[1])}
+    parameter_values2 = {name: 0.01 * (i + 1) for i, name in enumerate(kept[2])} | {
+        "ra": 0.2,
+        "rb": 0.3,
+    }
+    results = [
+        ParticleResult(
+            particle_index=1,
+            scenario_index=2,
+            parameter_values=parameter_values2,
+            summary_statistics={"S1": 0.5},
+            group_priors_values={},
+        ),
+        ParticleResult(
+            particle_index=2,
+            scenario_index=1,
+            parameter_values=parameter_values1,
+            summary_statistics={"S1": 0.5},
+            group_priors_values={},
+        ),
+    ]
+
+    output_file = tmp_path / "reftable.bin"
+    write_reftable_bin(results, priors, scenarios, output_path=output_file)
+    data = output_file.read_bytes()
+    offset = 0
+
+    def read_int():
+        """Lit un entier 32 bits à la position courante et avance de 4 octets."""
+        nonlocal offset
+        value = struct.unpack_from("<i", data, offset)[0]
+        offset += 4
+        return value
+
+    def read_float():
+        """Lit un flottant 32 bits à la position courante et avance de 4 octets."""
+        nonlocal offset
+        value = struct.unpack_from("<f", data, offset)[0]
+        offset += 4
+        return value
+
+    # En-tête
+    assert read_int() == len(results)
+    assert read_int() == len(scenarios)
+
+    nrecscen_read = [read_int() for _ in scenarios]
+    assert nrecscen_read == [1, 1, 0, 0, 0, 0]
+
+    # Valeur attendue calculée sur le header d'ORIGINE (indépendante du code
+    # testé) : un paramètre de plus pour les scénarios dont le split
+    # référence le Dirichlet.
+    original_kept = _kept_param_names_by_scenario(
+        parse_priors(original_header_text)[0],
+        parse_header_scenarios(original_header_text),
+    )
+    expected_nparam = [
+        len(original_kept[s.index]) + (1 if s.index in {2, 3, 5, 6} else 0)
+        for s in scenarios
+    ]
+    nparam_read = [read_int() for _ in scenarios]
+    assert nparam_read == expected_nparam
+
+    nstat_read = read_int()
+    assert nstat_read == 1
+
+    nparam_by_index = dict(zip((s.index for s in scenarios), nparam_read, strict=True))
+
+    # Enregistrements : dans l'ordre des résultats (scénario 2, puis 1).
+    for result in results:
+        assert read_int() == result.scenario_index
+        floats = [read_float() for _ in range(nparam_by_index[result.scenario_index])]
+        assert floats == pytest.approx(
+            [result.parameter_values[n] for n in kept[result.scenario_index]]
+        )
+        assert [read_float() for _ in range(nstat_read)] == pytest.approx([0.5])
+
+        if result.scenario_index == 2:
+            ra_position = kept[2].index("ra")
+            assert floats[ra_position] == pytest.approx(0.2)
+            assert floats[ra_position + 1] == pytest.approx(0.3)  # rb juste après
+
+    assert offset == len(data)  # tout le fichier consommé, aucun octet en trop
 
 
 def test_run_reftable_simulation_dna_scenario1(header_text_te2):

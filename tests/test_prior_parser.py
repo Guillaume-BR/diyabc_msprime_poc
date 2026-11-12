@@ -7,6 +7,7 @@ from bridge.header_dataclasses import DirichletPrior, GroupPrior, OrderConstrain
 from bridge.prior_parser import (
     get_parameter_used_by_model,
     is_constant_prior,
+    parameter_names_of,
     parse_group_priors,
     parse_priors,
 )
@@ -110,6 +111,13 @@ def test_parse_priors_with_invalid_dirichlet(header_text):
     ):
         parse_priors(header_text_invalid2_bis)
 
+    # min=max
+    header_text_invalid2_ter = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra A DI[0.5,0.5,0.0,0.0]"
+    )
+    with pytest.raises(ValueError, match="Domaine vide ou réduit à un point avec"):
+        parse_priors(header_text_invalid2_ter)
+
     # Mauvais type
     header_text_invalid3 = header_text.replace(
         "ra A UN[0.05,0.95,0.0,0.0]", "ra T DI[0.05,0.25,0.0,0.0]"
@@ -147,6 +155,39 @@ def test_parse_priors_no_draw_until(header_text_te1):
 
     assert len(priors) == 3
     assert constraints == []
+
+
+def test_parameter_names_of(header_text):
+    header_text = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
+    )
+    priors, _ = parse_priors(header_text)
+    parameter_names = parameter_names_of(priors)
+    assert list(parameter_names.keys()) == [
+        "N1",
+        "N2",
+        "N3",
+        "N4",
+        "t1",
+        "t2",
+        "d3",
+        "Nbn3",
+        "d4",
+        "Nbn4",
+        "N34",
+        "t3",
+        "d34",
+        "Nbn34",
+        "t4",
+        "Na",
+        "ra",
+        "rb",
+        "t11",
+        "t22",
+        "t33",
+        "t44",
+    ]
+    assert parameter_names["ra"] is parameter_names["rb"]
 
 
 def test_parse_group_priors(header_text_te2):

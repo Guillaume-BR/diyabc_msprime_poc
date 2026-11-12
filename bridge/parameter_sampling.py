@@ -18,6 +18,7 @@ import numpy as np
 
 from bridge.configuration import _GROUP_PRIOR_SEED_OFFSET, _locus_seed
 from bridge.header_dataclasses import (
+    DirichletPrior,
     GroupPrior,
     LociDescriptionDetailed,
     OrderConstraint,
@@ -84,7 +85,7 @@ def _draw_one_value(prior: Prior, rng: random.Random) -> float:
         rng: Le générateur aléatoire à utiliser.
 
     Returns:
-        La valeur tirée.
+        La valeur tirée
 
     Raises:
         NotImplementedError: Si la loi n'est pas encore implémentée.
@@ -135,6 +136,36 @@ def _draw_one_value(prior: Prior, rng: random.Random) -> float:
         value = float(math.floor(0.5 + value))
 
     return value
+
+
+def _draw_dirichlet_values(
+    prior: DirichletPrior, rng: random.Random, max_attempts: int = 1000
+) -> dict[str:float]:
+    """Tire un dictionnaire de valeurs pour un prior de dirichlet donné selon ses bornes.
+
+    Args:
+        prior: Le prior de Dirichlet à tirer.
+        rng: Le générateur aléatoire à utiliser.
+
+    Returns:
+        Le dictionnaire de valeurs
+
+    Raises:
+        ValueError: Si le nombre d'essai de tirage est supérieur à 1000.
+    """
+    k = len(prior.names) + 1
+    for _ in range(max_attempts):
+        gammas = [rng.gammavariate(1.0, 1.0) for _ in range(k)]
+        sum_gammas = sum(gammas)
+        proportions = [value / sum_gammas for value in gammas]
+        if all(prior.min <= p <= prior.max for p in proportions):
+            dict_value = {
+                key: value for key, value in zip(prior.names, proportions, strict=False)
+            }
+            return dict_value
+    raise ValueError(
+        "Nombre d'essais dépassés, les bornes doivent être trop ressérées."
+    )
 
 
 def _draw_one_group_value(group_prior: GroupPrior, rng: random.Random) -> float:
@@ -190,7 +221,7 @@ def _draw_one_group_value(group_prior: GroupPrior, rng: random.Random) -> float:
 
 
 def draw_parameter_values(
-    priors: list[Prior],
+    priors: list[Prior | DirichletPrior],
     constraints: list[OrderConstraint],
     seed: int,
     max_attempts: int = 1000,
@@ -216,9 +247,13 @@ def draw_parameter_values(
             plutôt que d'une simple mauvaise chance.
     """
     rng = random.Random(seed)
-
     for _ in range(max_attempts):
-        values = {p.name: _draw_one_value(p, rng) for p in priors}
+        values = {}
+        for p in priors:
+            if isinstance(p, Prior):
+                values[p.name] = _draw_one_value(p, rng)
+            elif isinstance(p, DirichletPrior):
+                values.update(_draw_dirichlet_values(p, rng))
         if all(c.is_satisfied(values) for c in constraints):
             return values
 

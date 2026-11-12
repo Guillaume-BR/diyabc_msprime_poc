@@ -6,11 +6,13 @@ import dataclasses
 import random
 
 import numpy as np
+import pytest
 from scipy import stats as scipy_stats
 
-from bridge.header_dataclasses import Prior, Scenario
+from bridge.header_dataclasses import DirichletPrior, Prior, Scenario
 from bridge.loci_parser import parse_loci_description
 from bridge.parameter_sampling import (
+    _draw_dirichlet_values,
     _draw_one_value,
     draw_group_parameter_values,
     draw_parameter_values,
@@ -20,6 +22,111 @@ from bridge.parameter_sampling import (
 )
 from bridge.prior_parser import parse_group_priors, parse_priors
 from bridge.scenario_parser import parse_header_scenarios
+
+
+def test_draw_one_value_round_half_up_not_banker():
+    """L'arrondi doit être round-half-up (floor(0.5+x), comme
+    particuleC.cpp), PAS round-half-to-even (comportement par défaut de
+    la fonction round() de Python) -- cas où les deux méthodes divergent
+    : x=2.5 -> 3 en round-half-up, mais round(2.5) == 2 en Python."""
+    prior = Prior(
+        name="N1", category="N", law="UN", min=0.0, max=10.0, mean=0.0, sdshape=0.0
+    )
+
+    value = _draw_one_value(prior, _FakeRng(2.5))
+
+    assert value == 3.0
+    assert (
+        round(2.5) == 2
+    )  # confirme que Python round() aurait donné un résultat différent
+
+
+def test_draw_dirichlet_values():
+    dirichlet_prior = DirichletPrior(
+        names=["ra", "rb"],
+        category="A",
+        law="DI",
+        min=0.05,
+        max=0.95,
+        mean=0.0,
+        sdshape=0.0,
+    )
+    rng = random.Random(42)
+    dict_values = _draw_dirichlet_values(dirichlet_prior, rng=rng)
+    assert list(dict_values.keys()) == ["ra", "rb"]
+    for key in dict_values:
+        assert (
+            dict_values[key] >= dirichlet_prior.min
+            and dict_values[key] <= dirichlet_prior.max
+        )
+
+    # Même graine, même valeurs
+    rng2 = random.Random(42)
+    dict_values2 = _draw_dirichlet_values(dirichlet_prior, rng=rng2)
+    assert dict_values == dict_values2
+
+
+def test_draw_dirichlet_values_with_reject():
+    dirichlet_prior = DirichletPrior(
+        names=["ra", "rb"],
+        category="A",
+        law="DI",
+        min=0.41,
+        max=0.42,
+        mean=0.0,
+        sdshape=0.0,
+    )
+    rng = random.Random(42)
+    with pytest.raises(
+        ValueError, match="Nombre d'essais dépassés, les bornes doivent être"
+    ):
+        _draw_dirichlet_values(dirichlet_prior, rng=rng)
+
+
+class _FakeGamma:
+    """rng minimal pour _draw_dirichlet_values : rend, dans l'ordre, les
+    valeurs d'une liste fournie par le test au lieu de tirer au hasard.
+
+    Attributes:
+        n_calls: Nombre de fois où gammavariate a été appelée (sert à
+            prouver qu'un essai a été rejeté : 2 essais x 3 parts = 6).
+    """
+
+    def __init__(self, fake_values):
+        self._fake_values = fake_values
+        self.n_calls = 0
+
+    def gammavariate(self, alpha, beta):
+        # alpha et beta sont ignorés : le test choisit lui-même les valeurs.
+        value = self._fake_values[self.n_calls]  # IndexError si trop d'appels
+        self.n_calls += 1
+        return value
+
+
+def test_draw_dirichlet_values_complement():
+    """Le complément (1 - somme des parts nommées) doit lui aussi respecter
+    les bornes : un essai dont seules les parts nommées sont acceptables est
+    rejeté."""
+    dirichlet_prior = DirichletPrior(
+        names=["ra", "rb"],
+        category="A",
+        law="DI",
+        min=0.05,
+        max=0.95,
+        mean=0.0,
+        sdshape=0.0,
+    )
+    # Essai 1 : parts ~ (0.498, 0.498, 0.005) -> complément < min, rejeté.
+    # Essai 2 : parts (1/3, 1/3, 1/3) -> accepté.
+    rng = _FakeGamma([1.0, 1.0, 0.01, 1.0, 1.0, 1.0])
+
+    values = _draw_dirichlet_values(dirichlet_prior, rng)
+
+    assert rng.n_calls == 6  # le premier essai a bien été rejeté
+    assert values["ra"] == pytest.approx(1 / 3)
+    assert values["rb"] == pytest.approx(1 / 3)
+    complement = 1 - sum(values.values())
+    assert dirichlet_prior.min <= complement <= dirichlet_prior.max
 
 
 def test_draw_parameter_values(header_text):
@@ -48,6 +155,23 @@ def test_draw_parameter_values_reproducible(header_text):
     values2 = draw_parameter_values(priors, constraints, seed=123)
 
     assert values1 == values2
+
+
+def test_draw_parameter_values_with_dirichlet_prior(header_text):
+    header_text = header_text.replace(
+        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
+    )
+    priors, constraints = parse_priors(header_text)
+    dirichlet_prior = next(p for p in priors if isinstance(p, DirichletPrior))
+    results = draw_parameter_values(priors, constraints, seed=42)
+    assert "ra" in results
+    assert "rb" in results
+    assert "ra,rb" not in results
+    assert "complement" not in results
+    assert results["ra"] + results["rb"] <= 1 - dirichlet_prior.min
+
+    results2 = draw_parameter_values(priors, constraints, seed=42)
+    assert results == results2
 
 
 def test_draw_parameter_values_rounds_N_and_T_not_A(header_text):
@@ -83,23 +207,6 @@ class _FakeRng:
 
     def uniform(self, min_, max_):
         return self._value
-
-
-def test_draw_one_value_round_half_up_not_banker():
-    """L'arrondi doit être round-half-up (floor(0.5+x), comme
-    particuleC.cpp), PAS round-half-to-even (comportement par défaut de
-    la fonction round() de Python) -- cas où les deux méthodes divergent
-    : x=2.5 -> 3 en round-half-up, mais round(2.5) == 2 en Python."""
-    prior = Prior(
-        name="N1", category="N", law="UN", min=0.0, max=10.0, mean=0.0, sdshape=0.0
-    )
-
-    value = _draw_one_value(prior, _FakeRng(2.5))
-
-    assert value == 3.0
-    assert (
-        round(2.5) == 2
-    )  # confirme que Python round() aurait donné un résultat différent
 
 
 def test_draw_scenario_uses_weight(header_text):

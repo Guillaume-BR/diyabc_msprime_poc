@@ -41,10 +41,13 @@ from bridge.configuration import (
 )
 from bridge.demography_builder import get_parameter_names_used_by_scenario
 from bridge.header_dataclasses import (
+    DirichletPrior,
     DnaReplayContext,
     MicrosatReplayContext,
+    Prior,
     Scenario,
     SnpReplayContext,
+    SplitEvent,
 )
 from bridge.loci_parser import parse_loci_description
 from bridge.observed_data import (
@@ -76,6 +79,7 @@ from bridge.pipeline import (
 from bridge.prior_parser import (
     get_parameter_used_by_model,
     is_constant_prior,
+    parameter_names_of,
     parse_group_priors,
     parse_priors,
 )
@@ -117,9 +121,9 @@ class ParticleResult:
     group_priors_values: dict[str, float]
 
 
-# ----------------------------------------------------------------------------
-# Pour les fichiers .snp DIYABC : lecture, écriture, rejeux de tirages réels
-# ----------------------------------------------------------------------------
+# ----------------------------------------------------------------
+# Checker si tout est cohérent dans le header
+# ----------------------------------------------------------------
 
 
 def _heritage_types_declared(header_text: str) -> set[str]:
@@ -174,6 +178,59 @@ def _detect_mu(header_text: str) -> str:
         return "mu" if first_mu.startswith("mu") else "µ"
     else:
         return "µ"
+
+
+def check_header_with_dirichlet_prior(
+    priors: list[Prior | DirichletPrior], scenarios: list[Scenario]
+) -> None:
+    """
+    Vérifie si la déclaration d'un multisplit est cohérente avec la déclaration des priors Dirichlet
+
+    Args:
+        - la liste des priors
+        - la liste des scénarios
+
+    Return:
+        None
+
+    Raises:
+        ValueError
+    """
+
+    dirichlet_by_name = {
+        name: prior
+        for name, prior in parameter_names_of(priors).items()
+        if isinstance(prior, DirichletPrior)
+    }
+
+    for s in scenarios:
+        for event in s.events:
+            if isinstance(event, SplitEvent):
+                rates_in_dirichlet = [
+                    r for r in event.admixture_rates if r in dirichlet_by_name
+                ]
+                if (
+                    len(rates_in_dirichlet) == 0
+                ):  # cas d'un split à deux populations avec un taux tiré sur une uniforme
+                    continue
+                elif len(rates_in_dirichlet) == len(event.admixture_rates):
+                    first_prior = dirichlet_by_name[event.admixture_rates[0]]
+                    if not all(
+                        dirichlet_by_name[r] is first_prior
+                        for r in event.admixture_rates
+                    ):
+                        raise ValueError(
+                            f"Les taux viennent de plusieurs priors de Dirichlet : {[dirichlet_by_name[r] for r in event.admixture_rates]}"
+                        )
+                    if set(event.admixture_rates) != set(first_prior.names):
+                        raise ValueError(
+                            f"""Les taux d'admixture déclarés dans les priors et les scénarios diffèrent. 
+                            Pour l'évènement : {event.admixture_rates!r} et pour le prior de Dirichlet : 
+                            {first_prior.names!r}"""
+                        )
+                else:
+                    raise ValueError(f"""Des taux identiques d'admixture dans le prior et dans le scénario sont nécessaires. 
+                                     Dans le prior : {rates_in_dirichlet!r} et dans le scénario : {event.admixture_rates!r}""")
 
 
 def check_header_trailer_line(header_text: str) -> None:
@@ -347,6 +404,10 @@ def raise_if_serial_with_sex_linked_loci(header_text: str) -> None:
     )
 
 
+# ----------------------------------------------------------------------------
+# Pour les fichiers .snp DIYABC : lecture, écriture, rejeux de tirages réels
+# ----------------------------------------------------------------------------
+
 # ── Tirage indépendant de scénario + paramètres, par particule ────────────
 
 
@@ -453,6 +514,8 @@ def run_reftable_simulation_snp(
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
     raise_if_serial_with_sex_linked_loci(header_text)
+    priors, _ = parse_priors(header_text)
+    check_header_with_dirichlet_prior(priors, scenarios)
     check_header_trailer_line(header_text)
     snp_filename = header_text.splitlines()[0].strip()
     snp_path = reference_directory / snp_filename
@@ -520,7 +583,7 @@ def run_reftable_simulation_snp(
 
 
 def _kept_param_names_by_scenario(
-    priors: list, scenarios: list[Scenario]
+    priors: list[Prior | DirichletPrior], scenarios: list[Scenario]
 ) -> dict[int, list[str]]:
     """Calcule les noms de paramètres à garder, par scénario.
 
@@ -539,18 +602,21 @@ def _kept_param_names_by_scenario(
         Un dict {scenario_index: [nom_paramètre, ...]}.
     """
     result = {}
+    parameter_names = parameter_names_of(priors)
     for scenario in scenarios:
         used_param_names = get_parameter_names_used_by_scenario(scenario)
-        result[scenario.index] = [
-            p.name
-            for p in priors
-            if not is_constant_prior(p) and p.name in used_param_names
-        ]
+        result[scenario.index] = []
+        for name in parameter_names:
+            if name in used_param_names and (
+                isinstance(parameter_names[name], DirichletPrior)
+                or not is_constant_prior(parameter_names[name])
+            ):
+                result[scenario.index].append(name)
     return result
 
 
 def _historical_columns_order(
-    header_line: str, priors: list, scenarios: list[Scenario]
+    header_line: str, priors: list[Prior | DirichletPrior], scenarios: list[Scenario]
 ) -> list[str]:
     """Ordre des colonnes de paramètres historiques d'un reftable texte réel.
 
@@ -579,7 +645,7 @@ def _historical_columns_order(
             (typiquement une faute de frappe dans la ligne trailer).
     """
     tokens = header_line.split()[1:]
-    prior_names = {p.name for p in priors}
+    prior_names = parameter_names_of(priors).keys()
     columns = []
     for token in tokens:
         if token not in prior_names:
@@ -690,7 +756,7 @@ def write_reftable_bin(
 
 def write_reftable_txt(
     results: list[ParticleResult],
-    priors: list,
+    priors: list[Prior | DirichletPrior],
     scenarios: list[Scenario],
     output_path: str | Path,
 ) -> None:
@@ -768,7 +834,9 @@ def write_reftable_txt(
     used_by_any = {
         name for names in kept_param_names_by_scenario.values() for name in names
     }
-    all_param_names = [p.name for p in priors if p.name in used_by_any]
+    all_param_names = [
+        name for name in parameter_names_of(priors) if name in used_by_any
+    ]
     all_group_priors_names = list(results[0].group_priors_values)
     stat_names = list(results[0].summary_statistics.keys())
 
@@ -1176,6 +1244,7 @@ def replay_reftable_simulation_snp(
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
     raise_if_serial_with_sex_linked_loci(header_text)
+    check_header_with_dirichlet_prior(priors, scenarios)
     check_header_trailer_line(header_text)
     snp_filename = header_text.splitlines()[0].strip()
     snp_path = reference_directory / snp_filename
@@ -1348,6 +1417,8 @@ def run_reftable_simulation_dna(
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
     raise_if_serial_with_sex_linked_loci(header_text)
+    priors, _ = parse_priors(header_text)
+    check_header_with_dirichlet_prior(priors, scenarios)
     check_header_trailer_line(header_text)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
@@ -1626,6 +1697,7 @@ def replay_reftable_simulation_dna(
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
     raise_if_serial_with_sex_linked_loci(header_text)
+    check_header_with_dirichlet_prior(priors, scenarios)
     check_header_trailer_line(header_text)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
@@ -1791,6 +1863,8 @@ def run_reftable_simulation_microsat(
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
     raise_if_serial_with_sex_linked_loci(header_text)
+    priors, _ = parse_priors(header_text)
+    check_header_with_dirichlet_prior(priors, scenarios)
     check_header_trailer_line(header_text)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
@@ -1925,6 +1999,7 @@ def replay_reftable_simulation_microsat(
     )  # Normalise en path au cas où une str soit passée
     header_text = read_header_text(reference_directory)
     raise_if_serial_with_sex_linked_loci(header_text)
+    check_header_with_dirichlet_prior(priors, scenarios)
     check_header_trailer_line(header_text)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
@@ -2103,6 +2178,8 @@ def run_reftable_simulation_mixed(
     reference_directory = Path(reference_directory)
     header_text = read_header_text(reference_directory)
     raise_if_serial_with_sex_linked_loci(header_text)
+    priors, _ = parse_priors(header_text)
+    check_header_with_dirichlet_prior(priors, scenarios)
     check_header_trailer_line(header_text)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename
@@ -2254,6 +2331,7 @@ def replay_reftable_simulation_mixed(
     )  # Normalise en path au cas où une str soit passée
     header_text = read_header_text(reference_directory)
     raise_if_serial_with_sex_linked_loci(header_text)
+    check_header_with_dirichlet_prior(priors, scenarios)
     check_header_trailer_line(header_text)
     mss_filename = header_text.splitlines()[0].strip()
     mss_path = reference_directory / mss_filename

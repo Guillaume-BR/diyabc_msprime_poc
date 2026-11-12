@@ -74,7 +74,7 @@ def parse_priors(header_text: str) -> tuple[list[Prior], list[OrderConstraint]]:
             deux formats connus (prior ou contrainte) -- pas d'ignorance
             silencieuse.
     """
-    priors: list[Prior] = []
+    priors: list[Prior | DirichletPrior] = []
     constraints: list[OrderConstraint] = []
 
     for line in _extract_historical_priors_section(header_text):
@@ -161,6 +161,31 @@ def parse_priors(header_text: str) -> tuple[list[Prior], list[OrderConstraint]]:
             f"Les noms de priors classiques et de Dirichlet DI ne peuvent pas être identiques : {identical_names!r}."
         )
     return priors, constraints
+
+
+def parameter_names_of(
+    priors: list[Prior | DirichletPrior],
+) -> dict[str, Prior | DirichletPrior]:
+    """
+    Fonction rertournant un dictionnaire avec le nom du prior comme clé et le prior comme valeur pour un prior classique.
+    Pour un prior de Dirichlet, elle retrouenune entrée par nombre de paramètre dans le prior
+    de Dirichlet.
+
+    Args:
+        - liste des priors obtenue avec parse_priors
+
+    Returns:
+        - Un dictionnaire {nom_prior : Prior}
+    """
+
+    parameter_names = {}
+    for p in priors:
+        if isinstance(p, Prior):
+            parameter_names[p.name] = p
+        elif isinstance(p, DirichletPrior):
+            for name in p.names:
+                parameter_names[name] = p
+    return parameter_names
 
 
 def is_constant_prior(prior: Prior) -> bool:
