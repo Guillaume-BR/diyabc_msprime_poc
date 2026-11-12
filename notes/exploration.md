@@ -6236,3 +6236,56 @@ de header (piste : une loi `DI[α1,…,αk]` ; la regex `_PRIOR_LINE_RE` l'accep
 régénéré avec ces noms, `is_constant_prior` et les contraintes d'ordre à écarter explicitement. Tirage par k Gamma(αᵢ)
 normalisés avec le `random.Random` existant ; pour k = 2, Dirichlet(α1, α2) sur la première composante est une Beta(α1, α2),
 Beta(1, 1) = Uniforme. Le chemin `UN` doit rester intact pour le rejeu de k = 2 : le Dirichlet est un ajout.
+
+## 2026-11-12 — Prior de Dirichlet pour les taux d'un `split` à k ancêtres
+
+Suite du chantier du 06/11 : les k − 1 taux d'un `split` sont tirés ensemble, de sorte que leur somme reste ≤ 1.
+Session en mode mentor (l'utilisateur code, l'assistant guide).
+
+**Décisions** (l'utilisateur).
+
+- **Syntaxe.** `ra,rb A DI[min,max,0.0,0.0]` : les noms séparés par une virgule, catégorie `A` obligatoire, Dirichlet(1,…,1)
+  (uniforme sur le simplexe, k = len(noms) + 1 parts). `mean` et `sdshape` sont ignorés. `min`/`max` bornent **chaque** part,
+  complément compris. k = 2 : Dirichlet ≡ Beta(1,1) ≡ Uniforme.
+- **Dataclass sœur.** `DirichletPrior(names: list[str], category, law, min, max, mean, sdshape)` plutôt qu'un `Prior`
+  paramétré : un `Prior` générique avalait `DI` et les tests passaient au vert sans implémentation.
+- **Garde-fous du parseur.** `min·k ≥ 1` (domaine vide ou réduit à un point) et `max·k ≤ 1` (les parts ne peuvent sommer à 1)
+  lèvent ; `min = max` tombe donc toujours sur l'une des deux. Noms dupliqués entre `DI`, ou communs à un `DI` et à un prior
+  classique : `ValueError`.
+- **Tirage.** k Gamma(1,1) normalisées, acceptées si les k parts sont dans [min, max], `max_attempts = 1000`, sinon
+  `ValueError` « bornes trop resserrées ». Les k − 1 premières parts sont les valeurs ; la dernière est le complément.
+  `draw_parameter_values` appelle `_draw_dirichlet_values` pour un `DirichletPrior` et garde `_draw_one_value` pour un `Prior` ;
+  `values` reste un `{nom: float}` plat, donc builder et reftable en aval n'ont pas changé.
+- **Colonnes du reftable.** `parameter_names_of(priors)` aplatit les priors en `{nom: prior}` (un `DirichletPrior` apparaît
+  sous chacun de ses noms) ; `_kept_param_names_by_scenario`, `_historical_columns_order` et `write_reftable_txt` passent par lui.
+  Un Dirichlet n'est jamais constant (les gardes l'interdisent), donc `is_constant_prior` ne s'applique qu'aux `Prior`.
+- **Contrôle de cohérence** `check_header_with_dirichlet_prior(priors, scenarios)`, appelé dans les 4 `run_reftable_simulation_*`
+  et les 4 `replay_reftable_simulation_*` : pour chaque `SplitEvent`, aucun taux dans un Dirichlet → rien (k = 3 à priors
+  `UN` indépendants reste légal) ; tous dans le même Dirichlet et exactement ses noms → ok ; sinon `ValueError` (événement
+  mixte, plusieurs Dirichlet, ou noms différents).
+
+**Validation.** Identité à graine égale sur un header sans `DI` (`compare_particles_snp`) : aucune différence. Tests : parsing
+(valide/invalide), tirage (rejet compté par un `_FakeGamma`, complément), câblage, noms de colonnes, `.bin` relu octet par octet
+(`nparam` du scénario à Dirichlet = celui du header d'origine + 1, `ra` puis `rb` adjacents), contrôle de cohérence, et un run
+`run_reftable_simulation_snp` sur human en k = 3.
+
+**Pièges rencontrés.**
+
+1. **Un test qui passe n'est pas un test qui prouve** : à trois reprises un test était vert sans la fonctionnalité (priors
+   générique avalant `DI`, `replace` ne touchant pas le bon scénario, `scenarios` reparsé depuis l'ancien texte). Chaque test
+   a été vu rouge sur l'ancien code (`AttributeError: 'DirichletPrior' object has no attribute 'name'`).
+2. **Un header modifié doit être réécrit dans `tmp_path`** avant l'appel à `run_*`, qui relit le disque ; le lecteur cherche
+   `header.txt` puis `headerRF.txt` (une faute de nom de fichier donne un `FileNotFoundError`).
+3. **`dict.update` et `list.append` renvoient `None`** : `x = {...}.update(...)` donne `None` (trouvé deux fois).
+4. **`assert a <= b, c`** est un `assert` avec un message `c`, pas un chaînage de comparaisons.
+5. **Deux comparaisons de listes à plat ne valent rien** pour le contrôle de cohérence (human a quatre `split` qui citent
+   `ra rb`) : comparer événement par événement, avec `is` sur l'objet prior.
+6. **Un `id()` n'est pas un objet** (`AttributeError: 'int' object has no attribute 'names'`).
+
+**Parqué.**
+
+- Probabilité d'acceptation théorique du rejet : P(toutes les parts dans [a,b]) = Σⱼ (−1)ʲ C(k,j) max(0, 1 − k·a − j(b−a))^(k−1)
+  (vérifiée par simulation ; pour b = 1 : (1 − k·a)^(k−1)). Servirait à refuser au parsing les bornes trop serrées (seuil
+  ~1e-3) et à dériver `max_attempts`.
+- α ≠ 1 (Dirichlet non symétrique) : la syntaxe actuelle ignore mean/sdshape.
+- Le test global `min > max` du parseur est commenté pour `DI` seulement ; à rendre cohérent pour toutes les lois.
