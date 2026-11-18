@@ -44,6 +44,15 @@ class Event:
 
 
 @dataclass
+class MigrationEvent:
+    time_expr: str
+    symmetric: bool
+    source: int
+    dest: int
+    migration_rate: str
+
+
+@dataclass
 class Scenario:
     index: int
     weight: float

@@ -4,12 +4,21 @@ human, exactement les événements qu'on a décortiqués à la main avec le ment
 
 import pytest
 
-from bridge.header_dataclasses import MergeEvent, SampleEvent, SplitEvent, VarNeEvent
+from bridge.header_dataclasses import (
+    MergeEvent,
+    MigrationEvent,
+    SampleEvent,
+    SplitEvent,
+    VarNeEvent,
+)
 from bridge.scenario_parser import (
     _parse_event_line,
+    check_scenario_logic,
     parse_header_scenarios,
+    parse_scenario_block,
     split_scenario_blocks,
 )
+from tests.conftest import REFERENCE_DIR
 
 
 def test_unimplemented_scenarios_are_skipped_with_warning(header_text):
@@ -119,9 +128,53 @@ def test_parse_event_line_wrong_format():
         _parse_event_line(line)
 
 
+def test_parse_event_line_with_mig():
+    line1 = "t1 mig 0 1 m01"
+    event = _parse_event_line(line1)
+    assert isinstance(event, MigrationEvent)
+    assert event.dest == 1
+    assert event.source == 0
+    assert not event.symmetric
+    assert event.migration_rate == "m01"
+
+    line2 = "t1 smig 0 1 m01"
+    event = _parse_event_line(line2)
+    assert isinstance(event, MigrationEvent)
+    assert event.symmetric
+
+
+def test_parse_event_line_with_wrong_mig():
+    line1 = "t1 mig 0 1 2 m01"
+    with pytest.raises(
+        ValueError, match="MigrationEvent mal formé : 't1 mig 0 1 2 m01'"
+    ):
+        _parse_event_line(line1)
+
+
 def test_parse_header_scenarios(header_text_te1):
     results = parse_header_scenarios(header_text_te1)
     assert len(results) == 2
+
+
+def test_parse_header_scenario_with_wrong_key_word():
+    header_text = """
+    human_snp_all22chr_maf5.snp
+    21 parameters and 130 summary statistics
+
+    3 scenarios: 2 2 2 
+    scenario 1 [0.16667] (1)
+    N1
+    0 sample 1
+    scenario 2 [0.16667] (1)
+    N1
+    0 toto 1
+    scenario 3 [0.16667] (1)
+    N1
+    0 sample 1
+    """
+
+    with pytest.warns(UserWarning, match="Bloc"):
+        parse_header_scenarios(header_text)
 
 
 def test_parse_header_scenarios_with_wrong_split_format(header_text):
@@ -139,3 +192,123 @@ def test_split_scenario_blocks(header_text_te1):
     lignes vides ou des commentaires."""
     results = split_scenario_blocks(header_text_te1)
     assert len(results) == 2
+
+
+def test_check_scenario_logic():
+    for dir in REFERENCE_DIR.iterdir():
+        if dir.is_dir():
+            path_header = REFERENCE_DIR / dir / "headerRF.txt"
+            header_text = path_header.read_text()
+            scenarios = parse_header_scenarios(header_text)
+            for s in scenarios:
+                assert check_scenario_logic(s) is None
+
+
+def test_check_scenario_logic_with_wrong_merge():
+    # Pop dérivée non présentes dans le sampling
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 2
+        t1 merge 2 15
+        """
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="La population dérivée 15"):
+        check_scenario_logic(scenario)
+
+    # pop dérivée = pop_ancestrale
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 2
+        t1 merge 2 2
+        """
+    scenario = parse_scenario_block(block)
+    with pytest.raises(
+        ValueError, match="Les populations ancestrale et dérivée de l'évènement"
+    ):
+        check_scenario_logic(scenario)
+
+
+def test_check_scenario_logic_with_wrong_varne():
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 2
+        t1 varne 14 Na
+        """
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="La population 14 de l'évènement"):
+        check_scenario_logic(scenario)
+
+
+def test_check_scenario_logic_with_wrong_split():
+    # Pop dérivée non échantillonnée
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 2
+        t1 split 7 4 2 ra
+        """
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="La population dérivée 7"):
+        check_scenario_logic(scenario)
+
+    # Pop ancestrales égales
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 2
+        t1 split 1 4 4 ra
+        """
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="Les populations ancestrales"):
+        check_scenario_logic(scenario)
+
+
+def test_check_scenario_logic_with_wrong_mig():
+    # Pop dérivée non échantillonnée
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 2
+        t1 mig 3 2 ra
+        """
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="Les populations source et dérivé"):
+        check_scenario_logic(scenario)
+
+    # Pop ancestrales égales
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 2
+        t1 mig 1 1 ra
+        """
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="Populations source et dérivé"):
+        check_scenario_logic(scenario)
+
+
+def test_check_scenario_logic_with_wrong_final_ancestral_pop():
+    # Pop dérivée non échantillonnée
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 2
+        0 sample 3
+        0 sample 4
+        t1 merge 1 2
+        t2 merge 3 4
+        """
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="Nombre de populations ancestrales :"):
+        check_scenario_logic(scenario)

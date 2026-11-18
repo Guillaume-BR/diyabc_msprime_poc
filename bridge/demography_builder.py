@@ -16,6 +16,7 @@ import msprime
 
 from bridge.header_dataclasses import (
     MergeEvent,
+    MigrationEvent,
     SampleEvent,
     Scenario,
     SplitEvent,
@@ -160,6 +161,27 @@ def build_demography(
             )
             continue
 
+        if isinstance(event, MigrationEvent):
+            migration_rate = evaluate_expression(event.migration_rate, values)
+            if migration_rate < 0:
+                raise ValueError(
+                    f"Le taux de migration doit être supérieur ou égal à 0 : {migration_rate}. Vérifiez les bornes du prior correspondant."
+                )
+            if event.symmetric:
+                demography.add_symmetric_migration_rate_change(
+                    time=time,
+                    populations=[f"pop{event.source}", f"pop{event.dest}"],
+                    rate=migration_rate,
+                )
+            else:
+                demography.add_migration_rate_change(
+                    time=time,
+                    rate=migration_rate,
+                    source=f"pop{event.source}",
+                    dest=f"pop{event.dest}",
+                )
+            continue
+
         raise NotImplementedError(
             f"Type d'événement non géré par build_demography : {event!r}"
         )
@@ -275,4 +297,6 @@ def get_parameter_names_used_by_scenario(scenario: Scenario) -> set[str]:
         if isinstance(event, SplitEvent):
             for rate in event.admixture_rates:
                 names |= extract_referenced_names(rate)
+        if isinstance(event, MigrationEvent):
+            names |= extract_referenced_names(event.migration_rate)
     return names

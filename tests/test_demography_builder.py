@@ -230,6 +230,114 @@ def test_build_demography_with_three_ancestral_populations(header_text):
     assert p_value < 0.001
 
 
+def test_demography_builder_with_migration(header_text):
+    header_text_modified = header_text.replace(
+        "t1 split 1 4 2 ra", "tm1 mig 1 4 r1\n tm2 mig 1 4 r2\n t1 split 1 4 2 ra"
+    )
+
+    scenarios = parse_header_scenarios(header_text_modified)
+    scenario2 = next(s for s in scenarios if s.index == 2)
+
+    values = {
+        "N1": 50000,
+        "N2": 50000,
+        "N3": 50000,
+        "N4": 50000,
+        "t1": 2000,
+        "t2": 5000,
+        "tm1": 50,
+        "tm2": 1000,
+        "d3": 30,
+        "Nbn3": 200,
+        "d4": 20,
+        "Nbn4": 300,
+        "N34": 60000,
+        "t3": 8000,
+        "d34": 25,
+        "Nbn34": 250,
+        "t4": 9000,
+        "Na": 40000,
+        "ra": 0.3,
+        "r1": 0.2,
+        "r2": 0.0,
+    }
+
+    demography = build_demography(scenario2, values)
+    assert demography.debug().epochs[1].migration_matrix[0, 3] == 0.2
+    assert demography.debug().epochs[1].migration_matrix[3, 0] == 0.0
+    assert demography.debug().epochs[2].migration_matrix[0, 3] == 0.0
+
+
+def test_demography_builder_with_symmetric_migration(header_text):
+    header_text_modified = header_text.replace(
+        "t1 split 1 4 2 ra", "tm1 smig 1 4 r1\n t1 split 1 4 2 ra"
+    )
+
+    scenarios = parse_header_scenarios(header_text_modified)
+    scenario2 = next(s for s in scenarios if s.index == 2)
+
+    values = {
+        "N1": 50000,
+        "N2": 50000,
+        "N3": 50000,
+        "N4": 50000,
+        "tm1": 5,
+        "t1": 10,
+        "t2": 5000,
+        "d3": 30,
+        "Nbn3": 200,
+        "d4": 20,
+        "Nbn4": 300,
+        "N34": 60000,
+        "t3": 8000,
+        "d34": 25,
+        "Nbn34": 250,
+        "t4": 9000,
+        "Na": 40000,
+        "ra": 0.1,
+        "r1": 0.3,
+    }
+
+    demography = build_demography(scenario2, values)
+    assert demography.debug().epochs[1].migration_matrix[0, 3] == 0.3
+    assert demography.debug().epochs[1].migration_matrix[3, 0] == 0.3
+
+
+def test_demography_builder_with_wrong_migration_rate(header_text):
+    header_text_modified = header_text.replace(
+        "t1 split 1 4 2 ra", "tm1 smig 1 4 r1\n t1 split 1 4 2 ra"
+    )
+    scenarios = parse_header_scenarios(header_text_modified)
+    scenario2 = next(s for s in scenarios if s.index == 2)
+
+    values = {
+        "N1": 50000,
+        "N2": 50000,
+        "N3": 50000,
+        "N4": 50000,
+        "tm1": 5,
+        "t1": 10,
+        "t2": 5000,
+        "d3": 30,
+        "Nbn3": 200,
+        "d4": 20,
+        "Nbn4": 300,
+        "N34": 60000,
+        "t3": 8000,
+        "d34": 25,
+        "Nbn34": 250,
+        "t4": 9000,
+        "Na": 40000,
+        "ra": 0.2,
+        "r1": -0.3,
+    }
+
+    with pytest.raises(
+        ValueError, match="Le taux de migration doit être supérieur ou égal à 0"
+    ):
+        build_demography(scenario2, values)
+
+
 def test_get_parameter_names_used_by_scenario2(header_text):
     """Vérifie que le taux d'admixture 'ra' est bien inclus dans les paramètres
     référencés par un scénario qui contient un SplitEvent -- sinon il serait
@@ -259,6 +367,46 @@ def test_get_parameter_names_used_by_scenario2(header_text):
         "Nbn34",
         "t4",
         "Na",
+    }
+    assert used_names == expected
+
+
+def test_get_parameter_names_used_by_scenario_with_migration(header_text):
+    """Vérifie que le taux demigration 'r1' est bien inclus dans les paramètres
+    référencés par un scénario qui contient un MigrationEvent -- sinon il serait
+    exclu à tort des colonnes du reftable.bin pour ce scénario (même bug que
+    celui déjà corrigé pour t11..t44). Par contre le second taux littéral 0.0,
+    lui n'est pas présent."""
+    header_text_modified = header_text.replace(
+        "t1 split 1 4 2 ra", "tm1 mig 1 4 r1\n tm2 mig 1 4 0.0\n t1 split 1 4 2 ra"
+    )
+    scenarios = parse_header_scenarios(header_text_modified)
+    scenario2 = next(s for s in scenarios if s.index == 2)
+
+    used_names = get_parameter_names_used_by_scenario(scenario2)
+
+    assert "r1" in used_names
+    expected = {
+        "N1",
+        "N2",
+        "N3",
+        "N4",
+        "t1",
+        "ra",
+        "t2",
+        "d3",
+        "Nbn3",
+        "d4",
+        "Nbn4",
+        "N34",
+        "t3",
+        "d34",
+        "Nbn34",
+        "t4",
+        "Na",
+        "tm1",
+        "tm2",
+        "r1",
     }
     assert used_names == expected
 

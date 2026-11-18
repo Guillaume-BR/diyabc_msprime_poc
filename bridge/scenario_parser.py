@@ -15,6 +15,7 @@ import warnings
 
 from bridge.header_dataclasses import (
     MergeEvent,
+    MigrationEvent,
     SampleEvent,
     Scenario,
     SplitEvent,
@@ -89,7 +90,7 @@ def _parse_event_line(line: str):
 
     Raises:
         NotImplementedError: Si le mot-clé d'action n'est pas dans
-            sample/merge/varNe/split.
+            sample/merge/varNe/split/mig/smig.
     """
     tokens = line.split()
     time_expr, action = tokens[0], tokens[1].lower()
@@ -144,9 +145,30 @@ def _parse_event_line(line: str):
             admixture_rates=args[k + 1 :],
         )
 
+    if action == "mig" or action == "smig":
+        if len(args) != 3:
+            raise ValueError(
+                f"MigrationEvent mal formé : {line!r} (nombre de tokens incorrect)"
+            )
+
+        if not all(arg.isdigit() for arg in args[:2]):
+            raise ValueError(
+                f"MigrationEvent mal formé : {line!r} (les populations doivent être des entiers)"
+            )
+        source = int(args[0])
+        dest = int(args[1])
+
+        return MigrationEvent(
+            time_expr=time_expr,
+            symmetric=(action == "smig"),
+            source=source,
+            dest=dest,
+            migration_rate=args[2],
+        )
+
     raise NotImplementedError(
         f"Action '{action}' non gérée par ce parser (vocabulaire connu : "
-        f"sample/merge/varNe/split). Ligne : {line!r}"
+        f"sample/merge/varNe/split/mig/smig). Ligne : {line!r}"
     )
 
 
@@ -193,9 +215,9 @@ def parse_scenario_block(block_text: str) -> Scenario:
 def parse_header_scenarios(header_text: str) -> list[Scenario]:
     """Point d'entrée principal : header.txt complet -> liste de Scenario.
 
-    Important : seule NotImplementedError est avalée ici, volontairement
-    (le bloc est ignoré avec un warning) -- toute autre exception (erreur
-    de parsing réelle, bug) continue de se propager normalement.
+    NotImplementedError est avalée ici, volontairement
+    (le bloc est ignoré avec un warning). On vérifie aussi que chaque scénario parsé
+    respecte la logique voulue.
 
     Args:
         header_text: Texte complet de header.txt.
@@ -208,11 +230,78 @@ def parse_header_scenarios(header_text: str) -> list[Scenario]:
     scenarios = []
     for block in blocks:
         try:
-            scenarios.append(parse_scenario_block(block))
+            scenario = parse_scenario_block(block)
         except NotImplementedError as e:
             first_line = block.splitlines()[0]
             warnings.warn(f"Bloc '{first_line}' ignoré : {e}", stacklevel=2)
+            continue
+        check_scenario_logic(scenario)
+        scenarios.append(scenario)
     return scenarios
+
+
+def check_scenario_logic(scenario: Scenario) -> None:
+    """
+    Détermine si un scénario est valide d'un point de vu logique :
+    fin avec une seule population ancestrale, popualtion présente pour un certain type d'évènement...
+
+    Args: scenario
+
+    Returns : None
+
+    Raises : Lève une ValueError si le scénario n'est pas logique.
+    """
+    existing_pop = set()
+    for event in scenario.events:
+        if isinstance(event, SampleEvent):
+            existing_pop.add(event.pop)
+
+        if isinstance(event, MergeEvent):
+            if event.derived_pop not in existing_pop:
+                raise ValueError(
+                    f"Le scénario {scenario.index} est mal formé. La population dérivée {event.derived_pop} de l'évènement {event!r} n'est pas échantillonnée."
+                )
+            if event.ancestral_pop == event.derived_pop:
+                raise ValueError(
+                    f"Le scénario {scenario.index} est mal formé. Les populations ancestrale et dérivée de l'évènement {event!r} doivent être différentes."
+                )
+            existing_pop.add(event.ancestral_pop)
+            existing_pop.remove(event.derived_pop)
+
+        if isinstance(event, VarNeEvent) and event.pop not in existing_pop:
+            raise ValueError(
+                f"Le scénario {scenario.index} est mal formé. La population {event.pop} de l'évènement {event!r} n'est pas échantillonnée."
+            )
+
+        if isinstance(event, SplitEvent):
+            if event.derived_pop not in existing_pop:
+                raise ValueError(
+                    f"Le scénario {scenario.index} est mal formé. La population dérivée {event.derived_pop} de l'évènement {event!r} n'est pas échantillonnée."
+                )
+            existing_pop.remove(event.derived_pop)
+            if len(event.ancestral_pops) != len(set(event.ancestral_pops)):
+                raise ValueError(
+                    f"Le scénario {scenario.index} est mal formé. Les populations ancestrales {event.ancestral_pops!r} doivent être disctinctes."
+                )
+            else:
+                for pop in event.ancestral_pops:
+                    existing_pop.add(pop)
+
+        if isinstance(event, MigrationEvent):
+            if event.source not in existing_pop or event.dest not in existing_pop:
+                raise ValueError(
+                    f"Le scénario {scenario.index} est mal formé. Les populations source et dérivé de l'évènement {event!r} ne sont pas échantillonnées."
+                )
+            if event.source == event.dest:
+                raise ValueError(
+                    f"Le scénario {scenario.index} est mal formé. Populations source et dérivé de l'évènement {event!r} doivent être différentes."
+                )
+
+    nb_ancestral_pop = len(existing_pop)
+    if nb_ancestral_pop != 1:
+        raise ValueError(
+            f"Le scénario {scenario.index} est mal formé. Nombre de populations ancestrales : {nb_ancestral_pop!r} au lieu de 1."
+        )
 
 
 def is_serial_scenario(scenario: Scenario) -> bool:
