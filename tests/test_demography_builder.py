@@ -5,6 +5,7 @@ de paramètres référencés)."""
 import msprime
 import numpy as np
 import pytest
+from conftest import _check_replace_modification
 from scipy import stats
 
 from bridge.demography_builder import (
@@ -59,8 +60,8 @@ def test_build_demography_scenario2_admixture(header_text):
 
 
 def test_build_demography_scenario2_modified(header_text):
-    header_text_modified = header_text.replace(
-        "t1 split 1 4 2 ra", "t1 split 1 4 2 3 r1 r2"
+    header_text_modified = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "t1 split 1 4 2 3 r1 r2"
     )
     scenarios = parse_header_scenarios(header_text_modified)
     scenario2 = next(s for s in scenarios if s.index == 2)
@@ -102,8 +103,8 @@ def test_build_demography_scenario2_modified(header_text):
 
 
 def test_build_demography_with_sum_proportions_greater_than_one(header_text):
-    header_text_modified = header_text.replace(
-        "t1 split 1 4 2 ra", "t1 split 1 4 2 3 r1 r2"
+    header_text_modified = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "t1 split 1 4 2 3 r1 r2"
     )
     scenarios = parse_header_scenarios(header_text_modified)
     scenario2 = next(s for s in scenarios if s.index == 2)
@@ -135,8 +136,8 @@ def test_build_demography_with_sum_proportions_greater_than_one(header_text):
 
 
 def test_build_demography_with_negative_proportions(header_text):
-    header_text_modified = header_text.replace(
-        "t1 split 1 4 2 ra", "t1 split 1 4 2 3 r1 r2"
+    header_text_modified = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "t1 split 1 4 2 3 r1 r2"
     )
     scenarios = parse_header_scenarios(header_text_modified)
     scenario2 = next(s for s in scenarios if s.index == 2)
@@ -168,8 +169,8 @@ def test_build_demography_with_negative_proportions(header_text):
 def test_build_demography_with_three_ancestral_populations(header_text):
     """Vérifie que build_demography traduit un SplitEvent en événement msprime
     Admixture avec les bonnes populations et proportions (rate1, rate2, 1 - rate1 - rate2)."""
-    header_text_modified = header_text.replace(
-        "t1 split 1 4 2 ra", "t1 split 1 4 2 3 r1 r2"
+    header_text_modified = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "t1 split 1 4 2 3 r1 r2"
     )
     scenarios = parse_header_scenarios(header_text_modified)
     scenario2 = next(s for s in scenarios if s.index == 2)
@@ -231,8 +232,10 @@ def test_build_demography_with_three_ancestral_populations(header_text):
 
 
 def test_demography_builder_with_migration(header_text):
-    header_text_modified = header_text.replace(
-        "t1 split 1 4 2 ra", "tm1 mig 1 4 r1\n tm2 mig 1 4 r2\n t1 split 1 4 2 ra"
+    header_text_modified = _check_replace_modification(
+        header_text,
+        "t1 split 1 4 2 ra",
+        "tm1 mig 1 4 r1\n tm2 mig 1 4 r2\n t1 split 1 4 2 ra",
     )
 
     scenarios = parse_header_scenarios(header_text_modified)
@@ -269,8 +272,8 @@ def test_demography_builder_with_migration(header_text):
 
 
 def test_demography_builder_with_symmetric_migration(header_text):
-    header_text_modified = header_text.replace(
-        "t1 split 1 4 2 ra", "tm1 smig 1 4 r1\n t1 split 1 4 2 ra"
+    header_text_modified = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "tm1 smig 1 4 r1\n t1 split 1 4 2 ra"
     )
 
     scenarios = parse_header_scenarios(header_text_modified)
@@ -304,8 +307,8 @@ def test_demography_builder_with_symmetric_migration(header_text):
 
 
 def test_demography_builder_with_wrong_migration_rate(header_text):
-    header_text_modified = header_text.replace(
-        "t1 split 1 4 2 ra", "tm1 smig 1 4 r1\n t1 split 1 4 2 ra"
+    header_text_modified = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "tm1 smig 1 4 r1\n t1 split 1 4 2 ra"
     )
     scenarios = parse_header_scenarios(header_text_modified)
     scenario2 = next(s for s in scenarios if s.index == 2)
@@ -377,8 +380,10 @@ def test_get_parameter_names_used_by_scenario_with_migration(header_text):
     exclu à tort des colonnes du reftable.bin pour ce scénario (même bug que
     celui déjà corrigé pour t11..t44). Par contre le second taux littéral 0.0,
     lui n'est pas présent."""
-    header_text_modified = header_text.replace(
-        "t1 split 1 4 2 ra", "tm1 mig 1 4 r1\n tm2 mig 1 4 0.0\n t1 split 1 4 2 ra"
+    header_text_modified = _check_replace_modification(
+        header_text,
+        "t1 split 1 4 2 ra",
+        "tm1 mig 1 4 r1\n tm2 mig 1 4 0.0\n t1 split 1 4 2 ra",
     )
     scenarios = parse_header_scenarios(header_text_modified)
     scenario2 = next(s for s in scenarios if s.index == 2)
@@ -568,3 +573,48 @@ def test_rescale_demography(header_text):
 
     # Vérification que l'original n'est pas modifié
     assert demography.populations[0].initial_size == 50000
+
+
+def test_rescale_demography_with_migration(header_text):
+    for text in ["mig", "smig"]:
+        header_text_modified = _check_replace_modification(
+            header_text, "t1 split 1 4 2 ra", f"tm1 {text} 1 4 r1\n t1 split 1 4 2 ra"
+        )
+
+        scenarios = parse_header_scenarios(header_text_modified)
+        scenario2 = next(s for s in scenarios if s.index == 2)
+
+        values = {
+            "N1": 1000,
+            "N2": 1000,
+            "N3": 1000,
+            "N4": 1000,
+            "tm1": 5,
+            "t1": 10,
+            "t2": 5000,
+            "d3": 30,
+            "Nbn3": 200,
+            "d4": 20,
+            "Nbn4": 300,
+            "N34": 60000,
+            "t3": 8000,
+            "d34": 25,
+            "Nbn34": 250,
+            "t4": 9000,
+            "Na": 40000,
+            "ra": 0.1,
+            "r1": 0.3,
+        }
+        factor = 0.4
+        demography = build_demography(scenario2, values)
+        demography_rescaled = rescale_demography(demography, factor=factor)
+        for epoch, epoch_rescaled in zip(
+            demography.debug().epochs, demography_rescaled.debug().epochs, strict=True
+        ):
+            assert np.array_equal(
+                epoch.migration_matrix, epoch_rescaled.migration_matrix
+            )
+        for pop, pop_rescaled in zip(
+            demography.populations, demography_rescaled.populations, strict=True
+        ):
+            assert pop.initial_size * factor == pop_rescaled.initial_size

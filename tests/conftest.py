@@ -33,6 +33,42 @@ from bridge.observed_data import (
     parse_sex_ratio,
 )
 
+
+def _check_replace_modification(text: str, old_fragment: str, new_fragment: str) -> str:
+    """
+    Fonction pour tester si un replace dans un header a eu l'effet escompté.
+
+    Args:
+        - le text dans lequel on va remplcer certaines parties
+        - old_fragment : l'ancien morceau
+        - new_fragment : le nouveau morceau
+
+    Returns: Le texte avec le remplacement effectué.
+
+    Raises: ValueError si l'ancien fragment est absent ou présent plus d'une fois.
+    """
+    n = text.count(old_fragment)
+    if n != 1:
+        cause = "absent" if n == 0 else f"présent {n} fois au lieu d'une"
+        raise ValueError(f"Le morceau à remplacer {old_fragment!r} est {cause}")
+    return text.replace(old_fragment, new_fragment)
+
+
+def test_check_replace_modification():
+    text = "Le lapin est monté dans l'arbre. Il est gentil"
+    # Bien présent une fois
+    result = _check_replace_modification(text, "lapin", "tigre")
+    assert result == "Le tigre est monté dans l'arbre. Il est gentil"
+
+    # absent
+    with pytest.raises(ValueError, match="Le morceau à remplacer 'moche'"):
+        _check_replace_modification(text, "moche", "blanc")
+
+    # présent plusieurs fois
+    with pytest.raises(ValueError, match="est présent 2 fois"):
+        _check_replace_modification(text, "est", "blanc")
+
+
 REFERENCE_DIR = Path(__file__).parent.parent / "reference"
 GENERAL_BINARY_PATH = os.environ.get("DIYABC_GENERAL_PATH")
 

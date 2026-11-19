@@ -6,12 +6,14 @@ import shutil
 import struct
 from pathlib import Path
 
+import numpy as np
 import pytest
 from conftest import (
     GENERAL_BINARY_PATH,
     OBSERVED_MSS_FILE_TE2,
     OBSERVED_SNP_FILE_HUMAN,
     REFERENCE_DIR,
+    _check_replace_modification,
 )
 
 from bridge.demography_builder import get_parameter_names_used_by_scenario
@@ -67,12 +69,16 @@ def test_check_header_with_dirichlet_prior(header_text):
     ]
 
     # Everything ok
-    header_text1 = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
+    header_text1 = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb"
+    )
     scenarios = [parse_header_scenarios(header_text1)[1]]
     assert not check_header_with_dirichlet_prior(priors, scenarios)
 
     # cas mixte
-    header_text2 = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rc")
+    header_text2 = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rc"
+    )
     scenarios = [parse_header_scenarios(header_text2)[1]]
     with pytest.raises(
         ValueError,
@@ -110,7 +116,9 @@ def test_check_header_with_dirichlet_prior(header_text):
     ]
 
     # deux priors de Dirichlet distinct
-    header_text3 = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rc")
+    header_text3 = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rc"
+    )
     scenarios = [parse_header_scenarios(header_text3)[1]]
     with pytest.raises(
         ValueError, match="Les taux viennent de plusieurs priors de Dirichlet :"
@@ -124,8 +132,11 @@ def test_check_header_with_dirichlet_prior_accepts_independent_uniform_rates(
     """Un split k=3 dont les deux taux sont des priors classiques indépendants
     (`ra` et `rb` en UN) est légal et ne doit pas être refusé : le contrôle ne
     concerne que les taux déclarés dans un prior de Dirichlet."""
-    header_text = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
-    header_text = header_text.replace(
+    header_text = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb"
+    )
+    header_text = _check_replace_modification(
+        header_text,
         "ra A UN[0.05,0.95,0.0,0.0]",
         "ra A UN[0.05,0.5,0.0,0.0]\nrb A UN[0.05,0.5,0.0,0.0]",
     )
@@ -238,9 +249,11 @@ def test_run_reftable_simulation_draws_multiple_scenarios(header_text):
 
 
 def test_run_reftable_simulation_snp_with_wrong_header_dirichlet(header_text, tmp_path):
-    header_text = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
-    header_text = header_text.replace(
-        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rc A DI[0.05,0.95,0.0,0.0]"
+    header_text = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb"
+    )
+    header_text = _check_replace_modification(
+        header_text, "ra A UN[0.05,0.95,0.0,0.0]", "ra,rc A DI[0.05,0.95,0.0,0.0]"
     )
     (tmp_path / "headerRF.txt").write_text(header_text)
     with pytest.raises(
@@ -461,12 +474,20 @@ def test_kept_param_names_by_scenario_with_dirichlet_prior(header_text):
     header reste cohérent : scénarios 2, 3, 5, 6 utilisent le Dirichlet,
     scénarios 1 et 4 (sans `split`) ne l'utilisent pas.
     """
-    header_text = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
-    header_text = header_text.replace("t1 split 1 3 2 ra", "t1 split 1 3 2 4 ra rb")
-    header_text = header_text.replace("t11 split 1 4 2 ra", "t11 split 1 4 2 3 ra rb")
-    header_text = header_text.replace("t11 split 1 3 2 ra", "t11 split 1 3 2 4 ra rb")
-    header_text = header_text.replace(
-        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
+    header_text = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb"
+    )
+    header_text = _check_replace_modification(
+        header_text, "t1 split 1 3 2 ra", "t1 split 1 3 2 4 ra rb"
+    )
+    header_text = _check_replace_modification(
+        header_text, "t11 split 1 4 2 ra", "t11 split 1 4 2 3 ra rb"
+    )
+    header_text = _check_replace_modification(
+        header_text, "t11 split 1 3 2 ra", "t11 split 1 3 2 4 ra rb"
+    )
+    header_text = _check_replace_modification(
+        header_text, "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
     )
     priors, _ = parse_priors(header_text)
     scenarios = parse_header_scenarios(header_text)
@@ -514,9 +535,11 @@ def test_historical_columns_order(microsat_context_te1_modified):
 
 def test_historical_column_order_with_dirichlet_prior(microsat_context_te1_modified):
     header_text = microsat_context_te1_modified.header_text
-    header_text = header_text.replace("t421 split 4 2 1 ra", "t421 split 4 2 1 3 ra rb")
-    header_text = header_text.replace(
-        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
+    header_text = _check_replace_modification(
+        header_text, "t421 split 4 2 1 ra", "t421 split 4 2 1 3 ra rb"
+    )
+    header_text = _check_replace_modification(
+        header_text, "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
     )
     priors, _ = parse_priors(header_text)
     scenarios = parse_header_scenarios(header_text)
@@ -535,10 +558,12 @@ def test_historical_column_order_with_dirichlet_prior(microsat_context_te1_modif
 
 
 def test_write_reftable_txt_with_dirichlet(header_text, tmp_path):
-    header_text = header_text.replace(
-        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
+    header_text = _check_replace_modification(
+        header_text, "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
     )
-    header_text = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
+    header_text = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb"
+    )
     priors, _ = parse_priors(header_text)
     scenarios = parse_header_scenarios(header_text)
     parameter_values = {
@@ -687,21 +712,32 @@ def test_run_reftable_simulation_snp_with_dirichelt_split_txt(header_text, tmp_p
     shutil.copy(REFERENCE_DIR / "human" / snp_filename, tmp_path / snp_filename)
     header_text = (tmp_path / "headerRF.txt").read_text()
     # modification du header human
-    header_text = header_text.replace(
-        "21 parameters and 112 summary statistics",
-        "22 parameters and 112 summary statistics",
+    header_text = _check_replace_modification(
+        header_text,
+        "21 parameters and 130 summary statistics",
+        "22 parameters and 130 summary statistics",
     )
 
-    header_text = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
-    header_text = header_text.replace("t1 split 1 3 2 ra", "t1 split 1 3 2 4 ra rb")
-    header_text = header_text.replace("t11 split 1 4 2 ra", "t11 split 1 4 2 3 ra rb")
-    header_text = header_text.replace("t11 split 1 3 2 ra", "t11 split 1 3 2 4 ra rb")
-
-    header_text = header_text.replace(
-        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
+    header_text = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb"
+    )
+    header_text = _check_replace_modification(
+        header_text, "t1 split 1 3 2 ra", "t1 split 1 3 2 4 ra rb"
+    )
+    header_text = _check_replace_modification(
+        header_text, "t11 split 1 4 2 ra", "t11 split 1 4 2 3 ra rb"
+    )
+    header_text = _check_replace_modification(
+        header_text, "t11 split 1 3 2 ra", "t11 split 1 3 2 4 ra rb"
     )
 
-    header_text = header_text.replace("Nbn34 t4 Na ra t11", "Nbn34 t4 Na ra rb t11")
+    header_text = _check_replace_modification(
+        header_text, "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
+    )
+
+    header_text = _check_replace_modification(
+        header_text, "Nbn34 t4 Na ra t11", "Nbn34 t4 Na ra rb t11"
+    )
     (tmp_path / "headerRF.txt").write_text(header_text)
     priors, _ = parse_priors(header_text)
     scenarios = parse_header_scenarios(header_text)
@@ -746,12 +782,20 @@ def test_write_reftable_bin_with_dirichlet_prior(header_text, tmp_path):
     octet (format : voir write_reftable_bin).
     """
     original_header_text = header_text
-    header_text = header_text.replace("t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb")
-    header_text = header_text.replace("t1 split 1 3 2 ra", "t1 split 1 3 2 4 ra rb")
-    header_text = header_text.replace("t11 split 1 4 2 ra", "t11 split 1 4 2 3 ra rb")
-    header_text = header_text.replace("t11 split 1 3 2 ra", "t11 split 1 3 2 4 ra rb")
-    header_text = header_text.replace(
-        "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
+    header_text = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "t1 split 1 4 2 3 ra rb"
+    )
+    header_text = _check_replace_modification(
+        header_text, "t1 split 1 3 2 ra", "t1 split 1 3 2 4 ra rb"
+    )
+    header_text = _check_replace_modification(
+        header_text, "t11 split 1 4 2 ra", "t11 split 1 4 2 3 ra rb"
+    )
+    header_text = _check_replace_modification(
+        header_text, "t11 split 1 3 2 ra", "t11 split 1 3 2 4 ra rb"
+    )
+    header_text = _check_replace_modification(
+        header_text, "ra A UN[0.05,0.95,0.0,0.0]", "ra,rb A DI[0.05,0.95,0.0,0.0]"
     )
     priors, _ = parse_priors(header_text)
     scenarios = parse_header_scenarios(header_text)
@@ -841,6 +885,153 @@ def test_write_reftable_bin_with_dirichlet_prior(header_text, tmp_path):
             assert floats[ra_position + 1] == pytest.approx(0.3)  # rb juste après
 
     assert offset == len(data)  # tout le fichier consommé, aucun octet en trop
+
+
+def test_run_reftable_simulation_with_migration_event(header_text, tmp_path):
+    snp_filename = header_text.splitlines()[0].strip()
+    shutil.copy(REFERENCE_DIR / "human" / "headerRF.txt", tmp_path / "headerRF.txt")
+    shutil.copy(REFERENCE_DIR / "human" / snp_filename, tmp_path / snp_filename)
+    header_text = (tmp_path / "headerRF.txt").read_text()
+    # modification du header human
+    header_text = _check_replace_modification(
+        header_text,
+        "21 parameters and 130 summary statistics",
+        "23 parameters and 130 summary statistics",
+    )
+
+    header_text = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "tm1 mig 1 4 rm1 \n t1 split 1 4 2 ra"
+    )
+
+    header_text = _check_replace_modification(
+        header_text,
+        "t1 T UN[1.0,30.0,0.0,0.0]",
+        "tm1 T UN[1.0,10.0,0.0,0.0]\n t1 T UN[15.0,30.0,0.0,0.0]",
+    )
+    header_text = _check_replace_modification(
+        header_text,
+        "ra A UN[0.05,0.95,0.0,0.0]",
+        "rm1 M UN[0.005,0.01,0.0,0.0]\n ra A UN[0.05,0.95,0.0,0.0]",
+    )
+
+    header_text = _check_replace_modification(
+        header_text, "Nbn34 t4 Na ra t11", "Nbn34 t4 Na ra rm1 t11"
+    )
+
+    header_text = _check_replace_modification(
+        header_text, "N3 N4 t1 t2", "N3 N4 tm1 t1 t2"
+    )
+
+    # réécriture du header
+    (tmp_path / "headerRF.txt").write_text(header_text)
+
+    priors, _ = parse_priors(header_text)
+    scenarios = parse_header_scenarios(header_text)
+    kept = _kept_param_names_by_scenario(priors, scenarios)
+    results = run_reftable_simulation_snp(
+        reference_directory=tmp_path,
+        scenarios=scenarios,
+        num_loci=10,
+        nrec=20,
+        stats_filter="ALL",
+    )
+
+    assert len(results) == 20
+    for result in results:
+        if result.scenario_index == 2:
+            assert "rm1" in result.parameter_values
+            assert "tm1" in result.parameter_values
+            assert "rm1" in kept[result.scenario_index]
+            rm1 = result.parameter_values["rm1"]
+            tm1 = result.parameter_values["tm1"]
+            assert 0.005 <= rm1 <= 0.01
+            assert 1 <= tm1 <= 10
+        else:
+            assert "rm1" not in kept[result.scenario_index]
+    write_reftable_txt(
+        results, priors, scenarios, output_path=tmp_path / "reftable.txt"
+    )
+    lines = (tmp_path / "reftable.txt").read_text().splitlines()
+    header_line = lines[0].split()
+    assert "tm1" in header_line
+    assert "rm1" in header_line
+    for line in lines[1:]:
+        line = line.split()
+        assert len(line) == len(header_line)
+
+
+def test_run_reftable_simulation_migration_effect(header_text, tmp_path):
+    """On teste si la migration a un effet en comparant le résultat de deux simulations qui diffèrent seulment par le taux de "
+    migration"""
+    snp_filename = header_text.splitlines()[0].strip()
+    shutil.copy(REFERENCE_DIR / "human" / "headerRF.txt", tmp_path / "headerRF.txt")
+    shutil.copy(REFERENCE_DIR / "human" / snp_filename, tmp_path / snp_filename)
+
+    # modification du header human
+    header_text1 = (tmp_path / "headerRF.txt").read_text()
+    header_text2 = (tmp_path / "headerRF.txt").read_text()
+    header_text1 = _check_replace_modification(
+        header_text1,
+        "21 parameters and 130 summary statistics",
+        "23 parameters and 130 summary statistics",
+    )
+
+    header_text1 = _check_replace_modification(
+        header_text1, "t1 split 1 4 2 ra", "0 mig 1 4 0.5 \n t1 split 1 4 2 ra"
+    )
+
+    priors, _ = parse_priors(header_text1)
+    scenarios = parse_header_scenarios(header_text1)
+    # réécriture du header
+    (tmp_path / "headerRF.txt").write_text(header_text1)
+    results1 = run_reftable_simulation_snp(
+        reference_directory=tmp_path,
+        scenarios=[scenarios[1]],
+        num_loci=10,
+        nrec=20,
+        stats_filter="ALL",
+    )
+
+    results1_bis = run_reftable_simulation_snp(
+        reference_directory=tmp_path,
+        scenarios=[scenarios[1]],
+        num_loci=10,
+        nrec=20,
+        stats_filter="ALL",
+    )
+
+    # Même fichier, même résultat
+    for r1, r1_bis in zip(results1, results1_bis, strict=True):
+        assert r1.summary_statistics == r1_bis.summary_statistics
+
+    # Seconde modification du header human : migration différente, résultats différents : prise en compte de la migration
+    header_text2 = _check_replace_modification(
+        header_text2,
+        "21 parameters and 130 summary statistics",
+        "23 parameters and 130 summary statistics",
+    )
+
+    header_text2 = _check_replace_modification(
+        header_text2, "t1 split 1 4 2 ra", "0 mig 1 4 0 \n t1 split 1 4 2 ra"
+    )
+
+    priors, _ = parse_priors(header_text2)
+    scenarios = parse_header_scenarios(header_text2)
+    # réécriture du header
+    (tmp_path / "headerRF.txt").write_text(header_text2)
+    results2 = run_reftable_simulation_snp(
+        reference_directory=tmp_path,
+        scenarios=[scenarios[1]],
+        num_loci=10,
+        nrec=20,
+        stats_filter="ALL",
+    )
+
+    for r1, r2 in zip(results1, results2, strict=True):
+        assert r1.summary_statistics.keys() == r2.summary_statistics.keys()
+        values1 = r1.summary_statistics.values()
+        values2 = r2.summary_statistics.values()
+        assert not np.array_equal(values1, values2)
 
 
 def test_run_reftable_simulation_dna_scenario1(header_text_te2):
@@ -958,8 +1149,8 @@ def test_raise_if_serial_with_sex_linked_loci_leve_sur_la_combinaison():
     N [w] (nlines)` doit être incrémenté en même temps, sinon
     split_scenario_blocks tronque le bloc et l'événement ajouté est ignoré."""
     header_text = (REFERENCE_DIR / "toy_example5" / "headerRF.txt").read_text()
-    serial_header = header_text.replace(
-        "scenario 1 [0.33333] (6)", "scenario 1 [0.33333] (7)"
+    serial_header = _check_replace_modification(
+        header_text, "scenario 1 [0.33333] (6)", "scenario 1 [0.33333] (7)"
     ).replace("0 sample 3\nta merge 1 3", "0 sample 3\n50 sample 3\nta merge 1 3")
     assert is_serial_scenario(parse_header_scenarios(serial_header)[0])
 

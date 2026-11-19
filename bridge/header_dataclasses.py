@@ -72,7 +72,7 @@ class Prior:
 
     Attributes:
         name: Nom du paramètre (ex: "N1").
-        category: "N" (taille), "T" (temps) ou "A" (taux admixture).
+        category: "N" (taille), "T" (temps), "A" (taux admixture) "M" (taux de migration).
         law: Loi de tirage ("UN", "LU", "NO", "LN" ou "GA").
         min: Borne basse.
         max: Borne haute.
@@ -102,7 +102,7 @@ class DirichletPrior:
 
     Attributes:
         name: Liste des noms des paramètres (ex: ["ra", "rb"]).
-        category: "A" (taux admixture).
+        category: "A" pour un taux d'admixture.
         law: Loi de tirage ("DI").
         min: Borne basse.
         max: Borne haute.
