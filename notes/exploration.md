@@ -6289,3 +6289,22 @@ Session en mode mentor (l'utilisateur code, l'assistant guide).
   ~1e-3) et à dériver `max_attempts`.
 - α ≠ 1 (Dirichlet non symétrique) : la syntaxe actuelle ignore mean/sdshape.
 - Le test global `min > max` du parseur est commenté pour `DI` seulement ; à rendre cohérent pour toutes les lois.
+
+## 2026-11-16 → 19 — Migrations continues `MIG` / `SMIG`
+
+Session mentor (l'utilisateur code). Syntaxe : `t MIG source dest taux`, `t SMIG a b taux`. Aucun événement de migration dans le C++ de DIYABC : **pas de référence**, validation par tests structurels.
+
+**Décisions**
+- Sens backward, comme `split` : `source` = population où se trouve la lignée avant le saut (en temps réel les gènes vont de `dest` vers `source`). Fin d'une migration = une seconde ligne `MIG s d 0` (comme `varNe`), pas de temps de fin.
+- Taux `m` = taux par lignée et par génération, **pas une probabilité** (peut dépasser 1). Littéral ou nom de paramètre ; catégorie de prior `M` (illisible par le vrai DIYABC). **Non rescalé** par `rescale_demography` (verrouillé par test, mutation vérifiée).
+- `check_scenario_logic` transcrit `ScenarioC::checklogic` (`history.cpp:483`), appelée par `parse_header_scenarios` hors du `try`. Ajouts volontaires : `varNe` et existence des populations d'un `MIG`. Les contrôles sur les populations ancestrales sont commentés dans le C++ et **ne sont pas activés** (les `toy_example2*` font un `split` vers des populations jamais échantillonnées) ; 86/86 scénarios de `reference/` acceptés.
+
+**Pièges msprime**
+- `add_migration_rate_change` n'écrit pas `demography.migration_matrix` : lire `demography.debug().epochs`.
+- Une population ancestrale d'un `split` est inactive avant lui, sauf `initially_active=True` (posé par `build_demography`) : sinon `Attempt to move a lineage into an inactive population`.
+- Sans fusion finale : `Infinite waiting time` (aucun événement possible). Migration encore active après la fusion de la population : pas d'erreur (20 graines, un scénario).
+- `ts.tables.migrations` : une ligne = un saut ; `node` = dernier nœud de la lignée qui saute (peut être interne).
+
+**Rescaling (interprétation, non démontrée)** : le nombre de migrations suit le facteur en symétrique (≈ 0,75, 1000 réplicats). En asymétrique sans fusion, rapport rescalé/non rescalé non monotone : 0,94 / 0,85 / 0,80 / 0,84 / 0,96 pour m = 0,1 / 0,01 / 0,001 / 1e-4 / 1e-5, creux plat ≈ 0,80 ; saturation à m grand (au plus une migration par lignée source), plancher d'une migration à m petit. Un début de migration à t > 0 n'est pas rescalé (0,786 au lieu de 0,75).
+
+**Ouvert** : ordre des dates (arrêt avant début) — condition `DRAW UNTIL` côté utilisateur ? ; effet de la migration non testé pour MicroSat, DNA et mixte.

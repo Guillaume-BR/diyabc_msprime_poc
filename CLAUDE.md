@@ -60,6 +60,15 @@ Pipeline: `scenario_parser` → `prior_parser` / `stats_group_parser` / `loci_pa
 `reftable_loop`. One module per stage, no cross-cutting logic. Non-obvious points:
 
 - **`scenario_parser`**: only `NotImplementedError` is swallowed (block skipped with a warning); anything else propagates.
+  `check_scenario_logic` (transcribes `ScenarioC::checklogic`, `history.cpp:483`; runs on every parsed scenario, in **file order**,
+  outside that `try`) deliberately does **not** require the ancestral populations of a `merge`/`split` to exist (commented out in
+  the C++; `toy_example2*` split towards never-sampled populations). Don't "complete" it.
+- **Migration `MIG`/`SMIG`** (no DIYABC counterpart): `t MIG source dest rate`, backward in time like `split`; stop = a later
+  `MIG s d 0`. The rate is a rate per lineage per generation (not a probability), **never rescaled** (`rescale_demography` skips
+  it, pinned by a mutation-checked test). `build_demography` creates populations with `initially_active=True`: without it the
+  ancestral population of a `merge` is inactive until the merge and msprime raises `Attempt to move a lineage into an inactive
+  population`. A scenario with no final merge blocks msprime (`Infinite waiting time`). The rate lives in
+  `add_migration_rate_change` events, not in `demography.migration_matrix`: read `demography.debug().epochs`. Prior category `M`.
 - **`prior_parser.is_constant_prior`**: constant iff `(max-min)/max <= 1e-6`, **never** constant when `max == 0.0`
   (DIYABC excludes constants from `reftable.bin` columns). `_extract_historical_priors_section` falls back to an empty
   line as terminator when `DRAW UNTIL` is absent.

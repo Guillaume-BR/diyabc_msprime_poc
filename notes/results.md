@@ -28,6 +28,7 @@ structurally and statistically equivalent to the real DIYABC's output.
 | Serial MicroSat + DNA, 4 samples (`AML`, `SML`) | complete, 224 columns (24 `SML`) | `toy_example2_ms_dna_50loci_TN_seriel`: 3 independent DIYABC reftables, several `seed_offset`s, 12 cells: 4 `SML` flags out of 288 columns, none repeated; MicroSat G1 (10 loci) shows a same-sign deficit in all four cells of two reftables, both scenarios (median −0.75 to −1.91 % over its 76 statistics, 54-63/76 negative, 9 of the 12 KS flags), DNA groups −0.70 to +0.47 %: probably the loci-count residual, **not demonstrated, open** (02/11, 04/11) |
 | Non-serial 4 populations with real admixture, MicroSat + DNA (`AML`, `SML`) | complete, 224 columns | `toy_example2_ms_dna_50loci_K2P_4pop`: ONE DIYABC reftable, 2 scenarios, 0 KS flag out of 233 statistics each, `SML` smallest p 0.07, sign test significant in scenario 2 at −0.27 % on the first replay; a second replay (04/11; whether it was a new DIYABC reftable was not recorded) gives 96/222, p = 0.051, median +0.122 %, KS clean: the −0.27 % was noise (03-04/11) |
 | Admixture with k ≥ 2 ancestral populations (`split`, no DIYABC counterpart for k > 2) | implemented (06/11), rates are absolute probabilities, last ancestor = complement | k = 2: paired replay against the real reftables, **every value matches**; k = 3: no DIYABC reference exists, checked by a χ² of the lineages' destinations against the declared rates (`test_buiild_demography_with_three_ancestral_populations`, positive and permuted-rates twin). Dirichlet prior for the rates: implemented (12/11), see Open work |
+| Continuous migration `MIG` / `SMIG` | implemented (11/2026), rate literal or prior parameter (category `M`), never rescaled | **no DIYABC reference** (no migration in the C++); structural tests only: epoch matrices (direction, symmetric), name extraction, non-rescaling (mutation-checked), end-to-end SNP (reftable columns; the rate changes the statistics, same-rate control identical). Not tested for MicroSat / DNA / mixed |
 
 **Validation status (06/10): every dataset in the "Validated against" column above is
 validated with the final code**
@@ -965,6 +966,12 @@ the worktree exists for that.
 
 
 # 4. Open work
+
+- **Migration `MIG`/`SMIG` (16-19/11) — implemented, structural tests only.**
+  Rescaled/unrescaled ratio of migration counts (factor 0.75, 1000 replicates): symmetric ≈ 0.75; asymmetric without a final merge
+  non-monotone, 0.94 / 0.85 / 0.80 / 0.84 / 0.96 for m = 0.1 … 1e-5 (saturation at large m, floor of one migration at small m:
+  an interpretation, not demonstrated). Still open: stop date before start date (a `DRAW UNTIL` condition on the user's side?),
+  effect test for MicroSat / DNA / mixed. Narrative: `notes/exploration.md`, 2026-11-16 → 19.
 
 - **`split` with k ancestral populations (06/11, Dirichlet 12/11) — implemented end to end, k = 3 run through `reftable_loop` on human.**
   Syntax `t split D A1 … Ak r1 … r(k-1)` (`len(args) = 2k`, k ≥ 2; the 4-token form is k = 2). `SplitEvent.ancestral_pops: list[int]`,
