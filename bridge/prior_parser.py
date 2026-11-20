@@ -167,7 +167,7 @@ def parameter_names_of(
     priors: list[Prior | DirichletPrior],
 ) -> dict[str, Prior | DirichletPrior]:
     """
-    Fonction rertournant un dictionnaire avec le nom du prior comme clé et le prior comme valeur pour un prior classique.
+    Fonction retournant un dictionnaire avec le nom du prior comme clé et le prior comme valeur pour un prior classique.
     Pour un prior de Dirichlet, elle retrouenune entrée par nombre de paramètre dans le prior
     de Dirichlet.
 
