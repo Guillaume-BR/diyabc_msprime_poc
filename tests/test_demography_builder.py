@@ -6,6 +6,7 @@ import msprime
 import numpy as np
 import pytest
 from conftest import _check_replace_modification
+from msprime.demography import InstantaneousBottleneck, SimpleBottleneck
 from scipy import stats
 
 from bridge.demography_builder import (
@@ -15,7 +16,7 @@ from bridge.demography_builder import (
     get_parameter_names_used_by_scenario,
     rescale_demography,
 )
-from bridge.scenario_parser import parse_header_scenarios
+from bridge.scenario_parser import parse_header_scenarios, parse_scenario_block
 
 
 def test_build_demography_scenario2_admixture(header_text):
@@ -271,6 +272,116 @@ def test_demography_builder_with_migration(header_text):
     assert demography.debug().epochs[2].migration_matrix[0, 3] == 0.0
 
 
+def test_demography_builder_with_bottleneck():
+    block = """
+    scenario 1 [0.16667] (4)
+    N1 N2
+    0 sample 1
+    0 sample 2
+    tbn bn 1 p
+    tibn ibn 2 s
+    t1 merge 1 2
+    """
+
+    values = {
+        "N1": 1000,
+        "N2": 1000,
+        "tbn": 10,
+        "p": 0.6,
+        "tibn": 20,
+        "s": 100,
+        "t1": 500,
+    }
+
+    scenario = parse_scenario_block(block)
+    demography = build_demography(scenario, values)
+    assert (
+        SimpleBottleneck(time=10, population="pop1", proportion=0.6)
+        in demography.events
+    )
+    assert (
+        InstantaneousBottleneck(time=20, population="pop2", strength=100)
+        in demography.events
+    )
+
+
+def test_demography_builder_with_wrong_simple_bottleneck():
+    block = """
+    scenario 1 [0.16667] (4)
+    N1 N2
+    0 sample 1
+    0 sample 2
+    tbn bn 1 p
+    tibn ibn 2 s
+    t1 merge 1 2
+    """
+
+    values = {
+        "N1": 1000,
+        "N2": 1000,
+        "tbn": 10,
+        "p": -0.6,
+        "tibn": 20,
+        "s": 100,
+        "t1": 500,
+    }
+
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="comprise entre 0 et 1 : -0.6."):
+        build_demography(scenario, values)
+
+    # Temps de départ du bottleneck à 0
+    block = """
+    scenario 1 [0.16667] (4)
+    N1 N2
+    0 sample 1
+    0 sample 2
+    tbn bn 1 p
+    tibn ibn 2 s
+    t1 merge 1 2
+    """
+
+    values = {
+        "N1": 1000,
+        "N2": 1000,
+        "tbn": 0,
+        "p": 0.6,
+        "tibn": 20,
+        "s": 100,
+        "t1": 500,
+    }
+
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="Bottleneck silencieux et sans effet"):
+        build_demography(scenario, values)
+
+
+def test_demography_builder_with_wrong_instantaneous_bottleneck():
+    block = """
+    scenario 1 [0.16667] (4)
+    N1 N2
+    0 sample 1
+    0 sample 2
+    tbn bn 1 p
+    tibn ibn 2 s
+    t1 merge 1 2
+    """
+
+    values = {
+        "N1": 1000,
+        "N2": 1000,
+        "tbn": 10,
+        "p": 0.6,
+        "tibn": 20,
+        "s": -100,
+        "t1": 500,
+    }
+
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="instantané doit être positive : -100"):
+        build_demography(scenario, values)
+
+
 def test_demography_builder_with_symmetric_migration(header_text):
     header_text_modified = _check_replace_modification(
         header_text, "t1 split 1 4 2 ra", "tm1 smig 1 4 r1\n t1 split 1 4 2 ra"
@@ -416,6 +527,22 @@ def test_get_parameter_names_used_by_scenario_with_migration(header_text):
     assert used_names == expected
 
 
+def test_get_parameter_used_by_scenario_with_bottleneck():
+    block = """
+    scenario 1 [0.16667] (4)
+    N1 N2
+    0 sample 1
+    0 sample 2
+    tbn bn 1 p
+    tibn ibn 2 s
+    t1 merge 1 2
+    """
+
+    scenario = parse_scenario_block(block)
+    used_names = get_parameter_names_used_by_scenario(scenario)
+    assert {"tbn", "p", "tibn", "s"} <= used_names
+
+
 def test_evaluate_expression():
     values = {"t1": 12.3, "t2": 4881.0, "d3": 35.0}
 
@@ -557,7 +684,7 @@ def test_rescale_demography(header_text):
     ):
         assert pop_scaled.initial_size == pop.initial_size * 2.0
 
-    # Vérifie que les tailles de population sont bien mises à l'échelle pour les bottlenecks
+    # Vérifie que les tailles de population sont bien mises à l'échelle pour les variations de population hors bottleneck
     change_events = [
         e
         for e in demography.events
@@ -618,3 +745,38 @@ def test_rescale_demography_with_migration(header_text):
             demography.populations, demography_rescaled.populations, strict=True
         ):
             assert pop.initial_size * factor == pop_rescaled.initial_size
+
+
+def test_rescale_demography_with_bottleneck():
+    block = """
+    scenario 1 [0.16667] (4)
+    N1 N2
+    0 sample 1
+    0 sample 2
+    tbn bn 1 p
+    tibn ibn 2 s
+    t1 merge 1 2
+    """
+
+    values = {
+        "N1": 1000,
+        "N2": 1000,
+        "tbn": 10,
+        "p": 0.6,
+        "tibn": 20,
+        "s": 100,
+        "t1": 500,
+    }
+    scenario = parse_scenario_block(block)
+    demography = build_demography(scenario, values)
+    demography_rescaled = rescale_demography(demography, 0.5)
+
+    for pop, pop_rescaled in zip(
+        demography.populations, demography_rescaled.populations, strict=True
+    ):
+        assert pop.initial_size * 0.5 == pop_rescaled.initial_size
+
+    for event, event_rescaled in zip(
+        demography.events, demography_rescaled.events, strict=True
+    ):
+        assert event == event_rescaled

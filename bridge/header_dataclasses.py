@@ -53,6 +53,15 @@ class MigrationEvent:
 
 
 @dataclass
+class BottleneckEvent:
+    time_expr: str
+    pop: int
+    instantaneous: bool
+    proportion: str | None
+    strength: str | None
+
+
+@dataclass
 class Scenario:
     index: int
     weight: float
@@ -72,7 +81,7 @@ class Prior:
 
     Attributes:
         name: Nom du paramètre (ex: "N1").
-        category: "N" (taille), "T" (temps), "A" (taux admixture) "M" (taux de migration).
+        category: "N" (taille), "T" (temps), "A" (taux admixture) "M" (taux de migration) "B" (paramètre de bottleneck (proportion ou force), jamais arrondi à discuter).
         law: Loi de tirage ("UN", "LU", "NO", "LN" ou "GA").
         min: Borne basse.
         max: Borne haute.

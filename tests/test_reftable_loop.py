@@ -6,7 +6,6 @@ import shutil
 import struct
 from pathlib import Path
 
-import numpy as np
 import pytest
 from conftest import (
     GENERAL_BINARY_PATH,
@@ -977,13 +976,11 @@ def test_run_reftable_simulation_migration_effect(header_text, tmp_path):
     )
 
     header_text1 = _check_replace_modification(
-        header_text1, "t1 split 1 4 2 ra", "0 mig 1 4 0.5 \n t1 split 1 4 2 ra"
+        header_text1, "t1 split 1 4 2 ra", "0 mig 1 4 0 \n t1 split 1 4 2 ra"
     )
 
-    priors, _ = parse_priors(header_text1)
-    scenarios = parse_header_scenarios(header_text1)
-    # réécriture du header
-    (tmp_path / "headerRF.txt").write_text(header_text1)
+    # Résultat avec le header sans migration
+    scenarios = parse_header_scenarios(header_text)
     results1 = run_reftable_simulation_snp(
         reference_directory=tmp_path,
         scenarios=[scenarios[1]],
@@ -992,15 +989,18 @@ def test_run_reftable_simulation_migration_effect(header_text, tmp_path):
         stats_filter="ALL",
     )
 
+    (tmp_path / "headerRF.txt").write_text(header_text1)
+    # Résultat avec une migration au taux nul
+    scenarios1_bis = parse_header_scenarios(header_text1)
     results1_bis = run_reftable_simulation_snp(
         reference_directory=tmp_path,
-        scenarios=[scenarios[1]],
+        scenarios=[scenarios1_bis[1]],
         num_loci=10,
         nrec=20,
         stats_filter="ALL",
     )
 
-    # Même fichier, même résultat
+    # On vérifie que la migartion a taux nul n'a pas d'effet.
     for r1, r1_bis in zip(results1, results1_bis, strict=True):
         assert r1.summary_statistics == r1_bis.summary_statistics
 
@@ -1012,26 +1012,145 @@ def test_run_reftable_simulation_migration_effect(header_text, tmp_path):
     )
 
     header_text2 = _check_replace_modification(
-        header_text2, "t1 split 1 4 2 ra", "0 mig 1 4 0 \n t1 split 1 4 2 ra"
+        header_text2, "t1 split 1 4 2 ra", "0 mig 1 4 0.5 \n t1 split 1 4 2 ra"
     )
 
-    priors, _ = parse_priors(header_text2)
-    scenarios = parse_header_scenarios(header_text2)
     # réécriture du header
     (tmp_path / "headerRF.txt").write_text(header_text2)
+    scenarios2 = parse_header_scenarios(header_text2)
     results2 = run_reftable_simulation_snp(
         reference_directory=tmp_path,
-        scenarios=[scenarios[1]],
+        scenarios=[scenarios2[1]],
         num_loci=10,
         nrec=20,
         stats_filter="ALL",
     )
 
-    for r1, r2 in zip(results1, results2, strict=True):
-        assert r1.summary_statistics.keys() == r2.summary_statistics.keys()
-        values1 = r1.summary_statistics.values()
-        values2 = r2.summary_statistics.values()
-        assert not np.array_equal(values1, values2)
+    # On vérifie que la migration a un effet
+    for r1, r2 in zip(results1_bis, results2, strict=True):
+        assert r1.summary_statistics != r2.summary_statistics
+
+
+def test_run_reftable_simulation_with_bottleneck_event(header_text, tmp_path):
+    snp_filename = header_text.splitlines()[0].strip()
+    shutil.copy(REFERENCE_DIR / "human" / "headerRF.txt", tmp_path / "headerRF.txt")
+    shutil.copy(REFERENCE_DIR / "human" / snp_filename, tmp_path / snp_filename)
+    header_text = (tmp_path / "headerRF.txt").read_text()
+    # modification du header human
+    header_text = _check_replace_modification(
+        header_text,
+        "21 parameters and 130 summary statistics",
+        "23 parameters and 130 summary statistics",
+    )
+
+    header_text = _check_replace_modification(
+        header_text, "t1 split 1 4 2 ra", "tbn bn 1 p1 \n t1 split 1 4 2 ra"
+    )
+
+    header_text = _check_replace_modification(
+        header_text,
+        "t1 T UN[1.0,30.0,0.0,0.0]",
+        "tbn T UN[1.0,10.0,0.0,0.0]\n t1 T UN[15.0,30.0,0.0,0.0]",
+    )
+    header_text = _check_replace_modification(
+        header_text,
+        "ra A UN[0.05,0.95,0.0,0.0]",
+        "p1 B UN[0.05,0.9,0.0,0.0]\n ra A UN[0.05,0.95,0.0,0.0]",
+    )
+
+    header_text = _check_replace_modification(
+        header_text, "Nbn34 t4 Na ra t11", "Nbn34 t4 Na ra p1 t11"
+    )
+
+    header_text = _check_replace_modification(
+        header_text, "N3 N4 t1 t2", "N3 N4 tbn t1 t2"
+    )
+
+    # réécriture du header
+    (tmp_path / "headerRF.txt").write_text(header_text)
+
+    priors, _ = parse_priors(header_text)
+    scenarios = parse_header_scenarios(header_text)
+    kept = _kept_param_names_by_scenario(priors, scenarios)
+    results = run_reftable_simulation_snp(
+        reference_directory=tmp_path,
+        scenarios=scenarios,
+        num_loci=10,
+        nrec=20,
+        stats_filter="ALL",
+    )
+
+    assert len(results) == 20
+    for result in results:
+        if result.scenario_index == 2:
+            assert "p1" in result.parameter_values
+            assert "tbn" in result.parameter_values
+            assert "p1" in kept[result.scenario_index]
+            p1 = result.parameter_values["p1"]
+            tbn = result.parameter_values["tbn"]
+            assert 0.05 <= p1 <= 0.9
+            assert 1 <= tbn <= 10
+        else:
+            assert "p1" not in kept[result.scenario_index]
+    write_reftable_txt(
+        results, priors, scenarios, output_path=tmp_path / "reftable.txt"
+    )
+    lines = (tmp_path / "reftable.txt").read_text().splitlines()
+    header_line = lines[0].split()
+    assert "tbn" in header_line
+    assert "p1" in header_line
+    for line in lines[1:]:
+        line = line.split()
+        assert len(line) == len(header_line)
+
+
+def test_run_reftable_simulation_bottleneck_effect(header_text, tmp_path):
+    """On teste si un bottleneck a un effet en comparant le résultat de deux simulations qui diffèrent seulement par la présence d'un bottleneck"""
+    snp_filename = header_text.splitlines()[0].strip()
+    shutil.copy(REFERENCE_DIR / "human" / "headerRF.txt", tmp_path / "headerRF.txt")
+    shutil.copy(REFERENCE_DIR / "human" / snp_filename, tmp_path / snp_filename)
+
+    header_text2 = (tmp_path / "headerRF.txt").read_text()
+
+    scenarios1 = parse_header_scenarios(header_text)
+
+    # Résultat avec le header non modifié (sans bottleneck)
+    results1 = run_reftable_simulation_snp(
+        reference_directory=tmp_path,
+        scenarios=[scenarios1[1]],
+        num_loci=10,
+        nrec=20,
+        stats_filter="ALL",
+    )
+
+    # Header avec un bottleneck fort
+    header_text2 = _check_replace_modification(
+        header_text2,
+        "21 parameters and 130 summary statistics",
+        "23 parameters and 130 summary statistics",
+    )
+
+    header_text2 = _check_replace_modification(
+        header_text2, "t1 split 1 4 2 ra", "0.5 bn 1 0.7 \n t1 split 1 4 2 ra"
+    )
+
+    # réécriture du header
+    (tmp_path / "headerRF.txt").write_text(header_text2)
+    scenarios2 = parse_header_scenarios(header_text2)
+    # Résultats avec un bottleneck avec une proportion non mulle
+    results2 = run_reftable_simulation_snp(
+        reference_directory=tmp_path,
+        scenarios=[scenarios2[1]],
+        num_loci=10,
+        nrec=20,
+        stats_filter="ALL",
+    )
+
+    # Au moins une particule a des statistiques différentes
+    assert any(
+        r1.summary_statistics != r2.summary_statistics
+        for r1, r2 in zip(results1, results2, strict=True)
+    )
 
 
 def test_run_reftable_simulation_dna_scenario1(header_text_te2):

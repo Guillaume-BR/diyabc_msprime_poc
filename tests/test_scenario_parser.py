@@ -5,6 +5,7 @@ human, exactement les événements qu'on a décortiqués à la main avec le ment
 import pytest
 
 from bridge.header_dataclasses import (
+    BottleneckEvent,
     MergeEvent,
     MigrationEvent,
     SampleEvent,
@@ -150,6 +151,40 @@ def test_parse_event_line_with_wrong_mig():
     ):
         _parse_event_line(line1)
 
+    line2 = "t1 mig pop0 1 m01"
+    with pytest.raises(ValueError, match="Les populations concernées"):
+        _parse_event_line(line2)
+
+
+def test_parse_event_line_with_btn():
+    line1 = "t1 bn 0 pbn"
+    event = _parse_event_line(line1)
+    assert isinstance(event, BottleneckEvent)
+    assert event.pop == 0
+    assert not event.instantaneous
+    assert event.strength is None
+    assert event.proportion == "pbn"
+
+    line2 = "t1 ibn 0 sbn"
+    event = _parse_event_line(line2)
+    assert isinstance(event, BottleneckEvent)
+    assert event.pop == 0
+    assert event.instantaneous
+    assert event.strength == "sbn"
+    assert event.proportion is None
+
+
+def test_parse_event_line_with_wrong_btn():
+    line1 = "t1 bn 0 1 pbn"
+    with pytest.raises(ValueError, match="BottleneckEvent mal formé : 't1 bn 0 1 pbn'"):
+        _parse_event_line(line1)
+
+    line2 = "t1 bn pop0 pbn"
+    with pytest.raises(
+        ValueError, match="La population concernée doit être un entier."
+    ):
+        _parse_event_line(line2)
+
 
 def test_parse_header_scenarios(header_text_te1):
     results = parse_header_scenarios(header_text_te1)
@@ -242,6 +277,19 @@ def test_check_scenario_logic_with_wrong_varne():
         """
     scenario = parse_scenario_block(block)
     with pytest.raises(ValueError, match="La population 14 de l'évènement"):
+        check_scenario_logic(scenario)
+
+
+def test_check_scenario_logic_with_wrong_bottleneck():
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 2
+        t1 bn 12 Na
+        """
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="La population 12 de l'évènement"):
         check_scenario_logic(scenario)
 
 

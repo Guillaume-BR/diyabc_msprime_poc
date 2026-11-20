@@ -82,6 +82,10 @@ def parse_priors(header_text: str) -> tuple[list[Prior], list[OrderConstraint]]:
         if prior_match:
             name, category, law, bounds_str = prior_match.groups()
             min_, max_, mean, sdshape = (float(b) for b in bounds_str.split(","))
+            if category not in {"N", "T", "A", "M", "B"}:
+                raise NotImplementedError(
+                    f"Catégorie de prior non implémentée ou incorrecte : {category!r}"
+                )
             if law == "DI":
                 # if min_ > max_:
                 #    raise ValueError(

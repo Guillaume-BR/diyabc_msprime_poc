@@ -33,20 +33,16 @@ def test_parse_priors_and_constraints(header_text):
     assert OrderConstraint(param1="t44", operator=">", param2="t22") in constraints
 
 
-# def test_parse_priors_with_invalid_bounds(header_text):
-#    # min > max
-#    header_text_invalid1 = header_text.replace(
-#        "N1 N UN[1000.0,100000.0,0.0,0.0]", "N1 N UN[100000.0,1000.0,0.0,0.0]"
-#    )
-#    with pytest.raises(ValueError, match="borne min > max"):
-#        parse_priors(header_text_invalid1)
-
-# min == max
-# header_text_invalid2 = header_text.replace(
-#    "N1 N UN[1000.0,100000.0,0.0,0.0]", "N1 N UN[50000.0,50000.0,0.0,0.0]"
-# )
-# with pytest.raises(ValueError, match="Domaine vide ou réduit à un point"):
-#    parse_priors(header_text_invalid2)
+def test_parse_priors_with_invalid_category(header_text):
+    # min > max
+    header_text_invalid1 = header_text.replace(
+        "N1 N UN[1000.0,100000.0,0.0,0.0]", "N1 H UN[100000.0,1000.0,0.0,0.0]"
+    )
+    with pytest.raises(
+        NotImplementedError,
+        match="Catégorie de prior non implémentée ou incorrecte : 'H'",
+    ):
+        parse_priors(header_text_invalid1)
 
 
 def test_parse_priors_with_dirichlet_two_parameters(header_text):

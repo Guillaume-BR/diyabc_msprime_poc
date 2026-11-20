@@ -15,6 +15,7 @@ import re
 import msprime
 
 from bridge.header_dataclasses import (
+    BottleneckEvent,
     MergeEvent,
     MigrationEvent,
     SampleEvent,
@@ -122,6 +123,38 @@ def build_demography(
                 population=f"pop{event.pop}",
                 initial_size=evaluate_expression(event.new_size_expr, values),
             )
+            continue
+
+        if isinstance(event, BottleneckEvent):
+            time_bn = evaluate_expression(event.time_expr, values)
+            if time_bn <= 0:
+                raise ValueError(
+                    f"Bottleneck silencieux et sans effet à t={time_bn}."
+                    if time_bn == 0
+                    else "Un temps ne peut être négatif."
+                )
+            if event.instantaneous:
+                strength = evaluate_expression(event.strength, values)
+                if strength < 0:
+                    raise ValueError(
+                        f"L'intensité d'un bottleneck instantané doit être positive : {strength!r}."
+                    )
+                demography.add_instantaneous_bottleneck(
+                    time=time,
+                    population=f"pop{event.pop}",
+                    strength=strength,
+                )
+            else:
+                proportion = evaluate_expression(event.proportion, values)
+                if not 0 <= proportion <= 1:
+                    raise ValueError(
+                        f"La proportion d'un bottleneck simple doit être comprise entre 0 et 1 : {proportion!r}."
+                    )
+                demography.add_simple_bottleneck(
+                    time=time,
+                    population=f"pop{event.pop}",
+                    proportion=proportion,
+                )
             continue
 
         if isinstance(event, SplitEvent):
@@ -232,7 +265,6 @@ def rescale_demography(
     for event in demography_copy.events:
         if hasattr(event, "initial_size") and event.initial_size is not None:
             event.initial_size *= factor
-
     return demography_copy
 
 
@@ -299,4 +331,8 @@ def get_parameter_names_used_by_scenario(scenario: Scenario) -> set[str]:
                 names |= extract_referenced_names(rate)
         if isinstance(event, MigrationEvent):
             names |= extract_referenced_names(event.migration_rate)
+        if isinstance(event, BottleneckEvent) and event.proportion is not None:
+            names |= extract_referenced_names(event.proportion)
+        if isinstance(event, BottleneckEvent) and event.strength is not None:
+            names |= extract_referenced_names(event.strength)
     return names

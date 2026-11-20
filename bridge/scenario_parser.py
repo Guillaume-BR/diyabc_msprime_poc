@@ -14,6 +14,7 @@ import re
 import warnings
 
 from bridge.header_dataclasses import (
+    BottleneckEvent,
     MergeEvent,
     MigrationEvent,
     SampleEvent,
@@ -90,7 +91,7 @@ def _parse_event_line(line: str):
 
     Raises:
         NotImplementedError: Si le mot-clé d'action n'est pas dans
-            sample/merge/varNe/split/mig/smig.
+            sample/merge/varNe/split/mig/smig/bn/ibn.
     """
     tokens = line.split()
     time_expr, action = tokens[0], tokens[1].lower()
@@ -148,12 +149,12 @@ def _parse_event_line(line: str):
     if action == "mig" or action == "smig":
         if len(args) != 3:
             raise ValueError(
-                f"MigrationEvent mal formé : {line!r} (nombre de tokens incorrect)"
+                f"MigrationEvent mal formé : {line!r}. Il faut trois arguments : 'pop_source pop_dest migration_rate'."
             )
 
         if not all(arg.isdigit() for arg in args[:2]):
             raise ValueError(
-                f"MigrationEvent mal formé : {line!r} (les populations doivent être des entiers)"
+                f"MigrationEvent mal formé : {line!r}. Les populations concernées {args[:2]!r} doivent être des entiers."
             )
         source = int(args[0])
         dest = int(args[1])
@@ -166,9 +167,33 @@ def _parse_event_line(line: str):
             migration_rate=args[2],
         )
 
+    if action == "bn" or action == "ibn":
+        instantaneous = action == "ibn"
+        arg = "strength" if instantaneous else "proportion"
+        if len(args) != 2:
+            raise ValueError(
+                f"BottleneckEvent mal formé : {line!r}. Il faut seulement deux arguments : 'population {arg}'."
+            )
+
+        if not args[0].isdigit():
+            raise ValueError(
+                f"BottleneckEvent mal formé : {line!r}. La population concernée doit être un entier."
+            )
+
+        strength = args[1] if instantaneous else None
+        proportion = None if instantaneous else args[1]
+
+        return BottleneckEvent(
+            time_expr=time_expr,
+            pop=int(args[0]),
+            instantaneous=instantaneous,
+            proportion=proportion,
+            strength=strength,
+        )
+
     raise NotImplementedError(
         f"Action '{action}' non gérée par ce parser (vocabulaire connu : "
-        f"sample/merge/varNe/split/mig/smig). Ligne : {line!r}"
+        f"sample/merge/varNe/split/mig/smig/bn/ibn). Ligne : {line!r}"
     )
 
 
@@ -269,6 +294,11 @@ def check_scenario_logic(scenario: Scenario) -> None:
             existing_pop.remove(event.derived_pop)
 
         if isinstance(event, VarNeEvent) and event.pop not in existing_pop:
+            raise ValueError(
+                f"Le scénario {scenario.index} est mal formé. La population {event.pop} de l'évènement {event!r} n'est pas échantillonnée."
+            )
+
+        if isinstance(event, BottleneckEvent) and event.pop not in existing_pop:
             raise ValueError(
                 f"Le scénario {scenario.index} est mal formé. La population {event.pop} de l'évènement {event!r} n'est pas échantillonnée."
             )
