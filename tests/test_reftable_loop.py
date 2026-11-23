@@ -6,6 +6,7 @@ import shutil
 import struct
 from pathlib import Path
 
+import numpy as np
 import pytest
 from conftest import (
     GENERAL_BINARY_PATH,
@@ -1030,6 +1031,15 @@ def test_run_reftable_simulation_migration_effect(header_text, tmp_path):
     for r1, r2 in zip(results1_bis, results2, strict=True):
         assert r1.summary_statistics != r2.summary_statistics
 
+    # Test sur l'effet sur la différentiation
+    mean_ref = np.mean(
+        [r1.summary_statistics["FST2m_1.4"] for r1 in results1]
+    )  # 0.03432472782756772
+    mean_mig = np.mean(
+        [r2.summary_statistics["FST2m_1.4"] for r2 in results2]
+    )  # 0.0030839629862399456
+    assert mean_mig < 0.1 * mean_ref
+
 
 def test_run_reftable_simulation_with_bottleneck_event(header_text, tmp_path):
     snp_filename = header_text.splitlines()[0].strip()
@@ -1131,7 +1141,7 @@ def test_run_reftable_simulation_bottleneck_effect(header_text, tmp_path):
     )
 
     header_text2 = _check_replace_modification(
-        header_text2, "t1 split 1 4 2 ra", "0.5 bn 1 0.7 \n t1 split 1 4 2 ra"
+        header_text2, "t1 split 1 4 2 ra", "0.5 bn 1 0.95 \n t1 split 1 4 2 ra"
     )
 
     # réécriture du header
@@ -1151,6 +1161,15 @@ def test_run_reftable_simulation_bottleneck_effect(header_text, tmp_path):
         r1.summary_statistics != r2.summary_statistics
         for r1, r2 in zip(results1, results2, strict=True)
     )
+
+    # Test sur l'effet sur la diversité intra-population
+    mean_ref = np.mean(
+        [r1.summary_statistics["HWm_1"] for r1 in results1]
+    )  # 0.04433050847457627
+    mean_bn = np.mean(
+        [r2.summary_statistics["HWm_1"] for r2 in results2]
+    )  # 0.0027994350282485874
+    assert mean_bn < 0.1 * mean_ref
 
 
 def test_run_reftable_simulation_dna_scenario1(header_text_te2):
