@@ -6308,3 +6308,22 @@ Session mentor (l'utilisateur code). Syntaxe : `t MIG source dest taux`, `t SMIG
 **Rescaling (interprétation, non démontrée)** : le nombre de migrations suit le facteur en symétrique (≈ 0,75, 1000 réplicats). En asymétrique sans fusion, rapport rescalé/non rescalé non monotone : 0,94 / 0,85 / 0,80 / 0,84 / 0,96 pour m = 0,1 / 0,01 / 0,001 / 1e-4 / 1e-5, creux plat ≈ 0,80 ; saturation à m grand (au plus une migration par lignée source), plancher d'une migration à m petit. Un début de migration à t > 0 n'est pas rescalé (0,786 au lieu de 0,75).
 
 **Ouvert** : ordre des dates (arrêt avant début) — condition `DRAW UNTIL` côté utilisateur ? ; effet de la migration non testé pour MicroSat, DNA et mixte.
+
+## 2026-11-20 — Bottlenecks `bn` / `ibn`
+
+Session mentor (l'utilisateur code), même chemin que `MIG` : dataclass → `scenario_parser` → `demography_builder` → `get_parameter_names_used_by_scenario` → tests. Syntaxe : `t bn pop proportion` (`add_simple_bottleneck`, `proportion` ∈ [0,1]) et `t ibn pop strength` (`add_instantaneous_bottleneck`, `strength` ≥ 0, en générations). Aucun équivalent dans le C++ : **pas de référence**, validation structurelle.
+
+**Décisions**
+- `BottleneckEvent(time_expr, pop, instantaneous, proportion, strength)`, valeur littérale ou nom de paramètre. `check_scenario_logic` exige que la population soit échantillonnée (comme `varNe`).
+- **`rescale_demography` ne touche pas les bottlenecks** (elle ne multiplie que des tailles, jamais un temps) : `proportion` est une probabilité, `strength` est en générations et msprime l'applique avec la taille courante de la population (donc déjà rescalée). Verrouillé par un test (événements égaux avant/après). Une première consigne « rescaler `strength` comme un temps » était **fausse**.
+- Catégorie de prior `B` pour `proportion` et `strength` (jamais arrondies ; `N`/`T` le sont, `parameter_sampling.py`). Piège évité : une proportion déclarée en `T` serait arrondie à 0 ou 1 en silence. `prior_parser` valide maintenant la catégorie ∈ {N, T, A, M, B} (`NotImplementedError` sinon, avant la branche `DI`) ; les 222 priors historiques de `reference/` + `tests/` n'utilisent que N, T, A.
+
+**Pièges msprime (mesurés)**
+- **Un bottleneck à `t = 0` est ignoré en silence**, quelle que soit la valeur (simple avec p = 0,7 : temps de coalescence identiques à « sans bottleneck » ; à t = 1e-9 il agit). `build_demography` le refuse (`time <= 0`, `ValueError`, testé). `t < 0` : laissé à msprime.
+- **Un bottleneck neutre à `t > 0` (p = 0 ou strength = 0) change quand même le flux aléatoire** (20/20 graines différentes de « sans bottleneck », simple et instantané) : msprime tire un nombre par lignée même à probabilité nulle. Un test « neutre == sans bottleneck à graine égale » n'était vrai qu'à `t = 0`, donc trompeur ; **retiré**.
+- **Assertion vide, aussi dans le test de migration** : `np.array_equal(d1.values(), d2.values())` sur des `dict_values` vaut toujours `False` (même pour deux dicts identiques), donc `not np.array_equal(...)` ne pouvait jamais échouer. Remplacée par `any(r1.summary_statistics != r2.summary_statistics ...)` (garde-fou) **et** par une assertion sur la moyenne d'une statistique avec un sens attendu : `FST2m_1.4` (migration `0.5` entre 1 et 4) `< 0,1 ×` la valeur de référence ; `HWm_1` (`bn` à `0.5` sur `pop1`, `proportion = 0.95`) `< 0,07 ×` la référence, 20 particules, 10 loci. Mutation vérifiée : l'effet remis à 0, les deux assertions échouent.
+- Les `scenarios` passés à `run_reftable_simulation_snp` viennent de l'argument, les priors et le trailer du **header sur disque** : pour comparer deux scénarios, re-parser ET réécrire le header à chaque fois.
+
+**Piège de conception du test** : `pop1` ne vit que jusqu'à `t1` (tiré dans [1, 30]), donc un bottleneck sur `pop1` doit avoir `t < 1` ; à cette date, `proportion = 0.7` n'a presque pas d'effet sur les longueurs de branches, il faut `proportion` proche de 1 (ou un `ibn` de force ~ N) pour un signal net.
+
+**Ouvert** : effet non testé pour MicroSat/DNA/mixte ; échelle de temps de `strength` pour les loci `ploidy = 1` (`<X>/<Y>/<M>/<H>`, msprime l'utilise pour `ibn`) non étudiée.

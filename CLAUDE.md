@@ -69,6 +69,11 @@ Pipeline: `scenario_parser` → `prior_parser` / `stats_group_parser` / `loci_pa
   ancestral population of a `merge` is inactive until the merge and msprime raises `Attempt to move a lineage into an inactive
   population`. A scenario with no final merge blocks msprime (`Infinite waiting time`). The rate lives in
   `add_migration_rate_change` events, not in `demography.migration_matrix`: read `demography.debug().epochs`. Prior category `M`.
+- **Bottlenecks `bn`/`ibn`** (no DIYABC counterpart): `t bn pop proportion` (`add_simple_bottleneck`, p ∈ [0,1]) and `t ibn pop strength`
+  (`add_instantaneous_bottleneck`, generations ≥ 0). **`t <= 0` is refused**: msprime silently ignores a bottleneck at `t = 0`. Neither
+  value is ever rescaled (`rescale_demography` only multiplies sizes, never a time; pinned by a test). Prior category `B` (never rounded,
+  unlike `N`/`T`: a proportion declared `T` would become 0 or 1); `prior_parser` raises `NotImplementedError` outside {N, T, A, M, B}.
+  A neutral bottleneck (p = 0) at `t > 0` still changes the random stream, so "neutral == no bottleneck at equal seed" is false.
 - **`prior_parser.is_constant_prior`**: constant iff `(max-min)/max <= 1e-6`, **never** constant when `max == 0.0`
   (DIYABC excludes constants from `reftable.bin` columns). `_extract_historical_priors_section` falls back to an empty
   line as terminator when `DRAW UNTIL` is absent.

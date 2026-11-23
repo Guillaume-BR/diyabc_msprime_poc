@@ -29,6 +29,7 @@ structurally and statistically equivalent to the real DIYABC's output.
 | Non-serial 4 populations with real admixture, MicroSat + DNA (`AML`, `SML`) | complete, 224 columns | `toy_example2_ms_dna_50loci_K2P_4pop`: ONE DIYABC reftable, 2 scenarios, 0 KS flag out of 233 statistics each, `SML` smallest p 0.07, sign test significant in scenario 2 at −0.27 % on the first replay; a second replay (04/11; whether it was a new DIYABC reftable was not recorded) gives 96/222, p = 0.051, median +0.122 %, KS clean: the −0.27 % was noise (03-04/11) |
 | Admixture with k ≥ 2 ancestral populations (`split`, no DIYABC counterpart for k > 2) | implemented (06/11), rates are absolute probabilities, last ancestor = complement | k = 2: paired replay against the real reftables, **every value matches**; k = 3: no DIYABC reference exists, checked by a χ² of the lineages' destinations against the declared rates (`test_buiild_demography_with_three_ancestral_populations`, positive and permuted-rates twin). Dirichlet prior for the rates: implemented (12/11), see Open work |
 | Continuous migration `MIG` / `SMIG` | implemented (11/2026), rate literal or prior parameter (category `M`), never rescaled | **no DIYABC reference** (no migration in the C++); structural tests only: epoch matrices (direction, symmetric), name extraction, non-rescaling (mutation-checked), end-to-end SNP (reftable columns; the rate changes the statistics, same-rate control identical). Not tested for MicroSat / DNA / mixed |
+| Bottlenecks `bn` (simple) / `ibn` (instantaneous) | implemented (11/2026), value literal or prior parameter (category `B`), never rescaled, `t = 0` refused (msprime ignores it) | **no DIYABC reference**; structural tests only: events in `demography.events`, name extraction, non-rescaling, value guards, `t = 0` guard, prior-category guard, end-to-end SNP (reftable columns; statistics change). Effect on the mean of one statistic, mutation-checked (`HWm_1` for `bn`, `FST2m_1.4` for `MIG`). Not tested for MicroSat / DNA / mixed |
 
 **Validation status (06/10): every dataset in the "Validated against" column above is
 validated with the final code**
@@ -966,6 +967,13 @@ the worktree exists for that.
 
 
 # 4. Open work
+
+- **Bottlenecks `bn`/`ibn` (20-23/11) — implemented, structural + effect tests, no DIYABC reference.** Syntax `t bn pop proportion`,
+  `t ibn pop strength`; prior category `B`; `t = 0` refused. Effect tests (SNP, human) assert the mean of one statistic against the
+  no-event run (`HWm_1` for `bn`, `FST2m_1.4` for `MIG`), mutation-checked; the former effect assertion of the migration test could
+  never fail (`np.array_equal` on `dict_values`). Still open: effect test for MicroSat / DNA / mixed; time scale of `strength` for
+  `ploidy = 1` loci.
+  Narrative: `notes/exploration.md`, 2026-11-20.
 
 - **Migration `MIG`/`SMIG` (16-19/11) — implemented, structural tests only.**
   Rescaled/unrescaled ratio of migration counts (factor 0.75, 1000 replicates): symmetric ≈ 0.75; asymmetric without a final merge
