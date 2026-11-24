@@ -16,6 +16,7 @@ from bridge.demography_builder import (
     get_parameter_names_used_by_scenario,
     rescale_demography,
 )
+from bridge.observed_data import coalescence_coefficient
 from bridge.scenario_parser import parse_header_scenarios, parse_scenario_block
 
 
@@ -780,3 +781,96 @@ def test_rescale_demography_with_bottleneck():
         demography.events, demography_rescaled.events, strict=True
     ):
         assert event == event_rescaled
+
+
+# (type de locus, ploïdie msprime, facteur de rescale appliqué par le pipeline) à sex ratio 0.5 :
+# <A> reste en ploïdie 2 sans rescale (facteur 1, cf. CLAUDE.md), les autres types passent
+# en ploïdie 1 avec rescale_demography(coalescence_coefficient(type, 0.5) / 2).
+_BOTTLENECK_LOCUS_CASES = [
+    ("A", 2, 1.0),
+    ("X", 1, coalescence_coefficient("X", 0.5) / 2),
+    ("Y", 1, coalescence_coefficient("Y", 0.5) / 2),
+    ("M", 1, coalescence_coefficient("M", 0.5) / 2),
+]
+
+
+def _fraction_coalesced_at_bottleneck(block, values, ploidy, factor, time, seed):
+    """Fraction de paires de lignées dont la coalescence a lieu exactement à `time`.
+
+    Args:
+        block: Bloc de scénario (une seule population, un seul bottleneck).
+        values: Valeurs des paramètres du scénario.
+        ploidy: Ploïdie passée à msprime (2 pour <A>, 1 sinon).
+        factor: Facteur de rescale des tailles (1.0 = pas de rescale).
+        time: Date du bottleneck (générations).
+        seed: Graine msprime.
+
+    Returns:
+        (nombre de paires coalescées à `time`, nombre de réplicats).
+    """
+    n_replicates = 4000
+    demography = build_demography(parse_scenario_block(block), values)
+    if factor != 1.0:
+        demography = rescale_demography(demography, factor)
+    n_individuals = 1 if ploidy == 2 else 2  # toujours 2 lignées échantillonnées
+    replicates = msprime.sim_ancestry(
+        samples={"pop1": n_individuals},
+        demography=demography,
+        ploidy=ploidy,
+        sequence_length=1,
+        num_replicates=n_replicates,
+        random_seed=seed,
+    )
+    tmrca = np.array([ts.first().tmrca(0, 1) for ts in replicates])
+    # La date n'est pas rescalée : les coalescences du bottleneck tombent pile à `time`.
+    at_bottleneck = np.isclose(tmrca, time)
+    return int(at_bottleneck.sum()), n_replicates
+
+
+@pytest.mark.parametrize("locus_type, ploidy, factor", _BOTTLENECK_LOCUS_CASES)
+def test_simple_bottleneck_effect_is_not_rescaled(locus_type, ploidy, factor):
+    """La date et la proportion d'un `bn` ne sont jamais rescalées, quel que soit le
+    type de locus : P(deux lignées coalescent au bottleneck) = proportion^2,
+    à la date exacte du bottleneck, en ploïdie 1 comme en ploïdie 2."""
+    block = """
+    scenario 1 [1.0] (3)
+    N1
+    0 sample 1
+    tbn bn 1 p
+    """
+    time, proportion = 10.0, 0.6
+    # N très grand : la coalescence "de fond" avant `time` est négligeable (~1e-4).
+    values = {"N1": 1e6, "tbn": time, "p": proportion}
+
+    k, n = _fraction_coalesced_at_bottleneck(block, values, ploidy, factor, time, 101)
+
+    result = stats.binomtest(k, n, proportion**2)
+    assert result.pvalue > 1e-3, (
+        f"<{locus_type}> : {k}/{n} coalescences à t={time}, attendu {proportion**2:.3f}"
+    )
+
+
+@pytest.mark.parametrize("locus_type, ploidy, factor", _BOTTLENECK_LOCUS_CASES)
+def test_instantaneous_bottleneck_effect_scales_with_gene_copies(
+    locus_type, ploidy, factor
+):
+    """La force d'un `ibn` n'est jamais rescalée, mais son effet suit le type de locus
+    par la taille rescalée : P(coalescence au bottleneck) = 1 - exp(-s / (ploïdie * N'))
+    avec N' = N * facteur (vérifié pour msprime 1.4.2). C'est ce qui rend un même
+    `strength` plus fort pour <M>/<Y> que pour <A>."""
+    block = """
+    scenario 1 [1.0] (3)
+    N1
+    0 sample 1
+    tibn ibn 1 s
+    """
+    time, strength, size = 10.0, 50_000.0, 100_000.0
+    values = {"N1": size, "tibn": time, "s": strength}
+    expected = 1 - np.exp(-strength / (ploidy * size * factor))
+
+    k, n = _fraction_coalesced_at_bottleneck(block, values, ploidy, factor, time, 202)
+
+    result = stats.binomtest(k, n, expected)
+    assert result.pvalue > 1e-3, (
+        f"<{locus_type}> : {k}/{n} = {k / n:.3f} coalescences à t={time}, attendu {expected:.3f}"
+    )
