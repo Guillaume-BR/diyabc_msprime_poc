@@ -29,7 +29,7 @@ structurally and statistically equivalent to the real DIYABC's output.
 | Non-serial 4 populations with real admixture, MicroSat + DNA (`AML`, `SML`) | complete, 224 columns | `toy_example2_ms_dna_50loci_K2P_4pop`: ONE DIYABC reftable, 2 scenarios, 0 KS flag out of 233 statistics each, `SML` smallest p 0.07, sign test significant in scenario 2 at −0.27 % on the first replay; a second replay (04/11; whether it was a new DIYABC reftable was not recorded) gives 96/222, p = 0.051, median +0.122 %, KS clean: the −0.27 % was noise (03-04/11) |
 | Admixture with k ≥ 2 ancestral populations (`split`, no DIYABC counterpart for k > 2) | implemented (06/11), rates are absolute probabilities, last ancestor = complement | k = 2: paired replay against the real reftables, **every value matches**; k = 3: no DIYABC reference exists, checked by a χ² of the lineages' destinations against the declared rates (`test_buiild_demography_with_three_ancestral_populations`, positive and permuted-rates twin). Dirichlet prior for the rates: implemented (12/11), see Open work |
 | Continuous migration `MIG` / `SMIG` | implemented (11/2026), rate literal or prior parameter (category `M`), never rescaled | **no DIYABC reference** (no migration in the C++); structural tests only: epoch matrices (direction, symmetric), name extraction, non-rescaling (mutation-checked), end-to-end SNP (reftable columns; the rate changes the statistics, same-rate control identical). Not tested for MicroSat / DNA / mixed |
-| Bottlenecks `bn` (simple) / `ibn` (instantaneous) | implemented (11/2026), value literal or prior parameter (category `B`), never rescaled, `t = 0` refused (msprime ignores it) | **no DIYABC reference**; structural tests only: events in `demography.events`, name extraction, non-rescaling, value guards, `t = 0` guard, prior-category guard, end-to-end SNP (reftable columns; statistics change). Effect on the mean of one statistic, mutation-checked (`HWm_1` for `bn`, `FST2m_1.4` for `MIG`). Not tested for MicroSat / DNA / mixed |
+| Bottlenecks `bn` (simple) / `ibn` (instantaneous) | implemented (11/2026), value literal or prior parameter (category `B`), never rescaled, `t = 0` refused (msprime ignores it) | **no DIYABC reference**; structural tests only: events in `demography.events`, name extraction, non-rescaling, value guards, `t = 0` guard, prior-category guard, end-to-end SNP (reftable columns; statistics change). Effect on the mean of one statistic, mutation-checked (`HWm_1` for `bn`, `FST2m_1.4` for `MIG`). Effect per locus type pinned by simulation (24/11, `test_*_bottleneck_effect*`: `bn` P = `proportion`², `ibn` P = 1 − exp(−s/(ploidy·N′)), mutation-checked). Not tested for MicroSat / DNA / mixed |
 
 **Validation status (06/10): every dataset in the "Validated against" column above is
 validated with the final code**
@@ -628,6 +628,40 @@ under the date given.
   together). Details, tests, validation table: `notes/exploration.md`, 23/10-02/11.
 
 
+- **Memory growth of DIYABC over thousands of runs (24/11) — none in `-R ALL`; the `-o` leaks are real, tiny and fixed.** Question:
+  does chaining ~1000 DIYABC runs (the supervisor's ABC procedure, `-o` on the 100 nearest points of each target) saturate the RAM?
+  Each run is its own process: the OS reclaims everything at exit, so a leak can only hurt **within** a run (peak RSS vs number of
+  parameter lines), never accumulate across runs.
+  - `-R ALL`, `human`, 1000 runs × 50 particles in series (11.3 h, reftable emptied between runs, `scripts/fuite_data.py`): return
+    code 0 and `nrec = 50` and `reftable.log` = `END` for the 1000; 0 live `diyabc` after each run; peak RSS 98 744 kB (min
+    98 404, max 98 916) identical in each block of 100 runs; duration 40.6 ± 0.5 s, no drift. `MemAvailable` falls 0.32 Mo/run
+    (−28 Mo/h) but the concurrent control (`scripts/fuite_temoin.py`) falls identically (−28.2 Mo/h, correlation 0.992), and it stays
+    **flat for the 4.2 h that follow** the end of the runs (28 486-28 512 Mo): at that rate 28 Go would take ~90 000 runs. The
+    control cannot separate DIYABC from the machine (system-wide metric): the peak and the duration are the evidence.
+  - `-o` (the supervisor's mode), `src-JMC-C++` at `0654cb9e^` vs master: the whole PR is `simfile.cpp` (+18/−2): `delete[]` in
+    `dosimstat`/`dosimfile` and a skip of the header line. AddressSanitizer: parameter file **with** a header line → `heap-buffer-overflow`
+    at `simfile.cpp:201` (before the PR, reproduced on `human` too); **without** → leaks all in `dosimstat`: 14 377 B (`depindep`, 10 lines),
+    143 617 B (`depindep`, 100 lines, 16 threads), 191 904 B (`human`, 100 lines, 310 allocations), i.e. 1.4-1.9 Ko per line. After the PR:
+    0 leak and no error, with and without header, `-t 1/4/16`.
+    Peak RSS (plain builds): `depindep` 40 Mo flat from 10 to 400 lines; `human` 115.7 / 148 / 150 Mo for 10 / 100 / 300 lines;
+    before and after the PR identical to 0.3 Mo. 1.9 Ko/line would take millions of lines to reach 28 Go.
+  - Not established: the cause of the `migale` crash (see §4). Not tested: the supervisor's own binary and R script.
+  - `human` `-o` input: the 1000 rows of `first_records_of_the_reference_table_0.txt` (ragged: the parameters of the row's scenario,
+    in the trailer's order) cut of their 130 statistics, **re-ordered by the order of appearance of the parameters in the scenario**
+    (not the trailer's order, else `-o` rejects the particles: `t11 [1,30] 40`); `nphistarOK` = the number of lines.
+- **Time scale of the bottlenecks `bn`/`ibn` and the "ploidy of `strength`" (24/11) — closed: nothing is rescaled, and nothing
+  needs to be.** msprime 1.4.2, two lineages, N = 10^5, bottleneck at t = 1-10: `ibn` coalescence probability = 1 − exp(−s/(ploidy·N)):
+  0.392 for ploidy 1 and 0.220 for ploidy 2 (s = 50 000; formulas 0.393 and 0.221). `bn`: pairs coalesced at the bottleneck 0.252 = `proportion`²
+  (0.5), at exactly the bottleneck date, for ploidy 1 and 2. The pipeline rescales the SIZES to gene copies N′ (ploidy 1 for non-`<A>`,
+  ploidy 2 unrescaled for `<A>` at sex ratio 0.5), so `s` generations act at the locus's own coalescence rate: the same `strength` is
+  stronger on `<M>`/`<Y>` (N′ = N/2) than on `<A>` (4×), a property to state to users, not a bug. If the supervisor wants the same
+  coalescence probability for every locus type, `strength` would have to be rescaled per type: a semantic decision, not taken.
+  Pinned by `test_simple_bottleneck_effect_is_not_rescaled` and `test_instantaneous_bottleneck_effect_scales_with_gene_copies`
+  (4 locus types each, binomial test p > 1e-3, 4000 replicates, fixed seed); mutation check on a copy (plugin patching
+  `rescale_demography`): rescaling `strength`, the date or `proportion` turns 3 cases of 4 red each (`<A>` at 0.5 has factor 1:
+  neutral by construction). Limits: sex ratio 0.5 only, one population.
+
+
 # 3. Performance — measured state
 
 ## Benchmark of 04/11 (latest; the 22/10 table below is kept for history)
@@ -968,11 +1002,32 @@ the worktree exists for that.
 
 # 4. Open work
 
+- **`VARNELOG` (logistic/Verhulst bottleneck exit, 24/11) — analysed, NOT implemented.** Deliverables from the supervisor in
+  `docs/livrables_VARNELOG/` (`msp_varnelog.py`, `diyabc_varnelog.patch`, patched C++ sources, header template, validation scripts).
+  Syntax `t VARNELOG pop NF r`: from `t` to the founding of `pop` (the `merge` absorbing it or the `split` creating it) the size
+  follows N(k) = NS / (1 + A·exp(−r·k)), A = (NS − NF)/NF, k = generations since the founding. **The patch is not in the sibling
+  repo's master**: the official binary rejects the keyword, so a DIYABC reference needs the patched sources compiled (done for
+  other versions on 24/11, ~20 s per build). Plan: `VarNeLogEvent` dataclass + pure function for the segments (not a class with
+  behaviour) → `check_scenario_logic` (the two rules added to `checklogic`) → `varnelog_segments` checked line by line against
+  `ParticleC::seqCoal` → `build_demography` (look-ahead to the founding time, `NS` = size in force before) → parameter names
+  (`NF`, `r` in category `A`, never rounded) → comparison with the patched DIYABC. Points to settle: (a) `msp_varnelog.add_varnelog`
+  cuts `[tL, tF]` in one block while `seqCoal` cuts per segment between events of the population: equal only without an
+  intermediate event of that population, to be tested; (b) the demo simulates the bottleneck with `DiscreteTimeWrightFisher`,
+  whereas the discrete coalescent verdict (closed, §2) was established for large N and here N(0) = NF can be 2-200: ask whether
+  to keep DTWF; (c) the sizes must be rescaled (they go through `rescale_demography`), the times and `r` not.
+
+- **DIYABC `-o` crash on the supervisor's server (`migale`) — cause NOT found.** The leaks of `-o` are real but tiny and fixed (see §2,
+  24/11): they cannot explain it. Remaining candidates, none tested: the heap-buffer-overflow when the parameter file starts with
+  a header line (memory corruption, allocator-dependent, would fit "crashes on `migale`, passes on `oban`"); the R script
+  (accumulation on the R side, parallelism: ~150 Mo per `human` run, ~100 runs in parallel ≈ 15 Go); the `double free` reported by the
+  PR on a remote Linux server (not reproduced here, Ubuntu 22.04, gcc 11, ASan, 1/4/16 threads). Unknown: how the R script launched
+  the runs (serial or parallel), the machine's memory.
+
 - **Bottlenecks `bn`/`ibn` (20-23/11) — implemented, structural + effect tests, no DIYABC reference.** Syntax `t bn pop proportion`,
   `t ibn pop strength`; prior category `B`; `t = 0` refused. Effect tests (SNP, human) assert the mean of one statistic against the
   no-event run (`HWm_1` for `bn`, `FST2m_1.4` for `MIG`), mutation-checked; the former effect assertion of the migration test could
-  never fail (`np.array_equal` on `dict_values`). Still open: effect test for MicroSat / DNA / mixed; time scale of `strength` for
-  `ploidy = 1` loci.
+  never fail (`np.array_equal` on `dict_values`). Still open: effect test for MicroSat / DNA / mixed. (The time scale of `strength`
+  for `ploidy = 1` loci is closed, 24/11: see §2.)
   Narrative: `notes/exploration.md`, 2026-11-20.
 
 - **Migration `MIG`/`SMIG` (16-19/11) — implemented, structural tests only.**

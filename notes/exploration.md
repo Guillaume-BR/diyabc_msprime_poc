@@ -6327,3 +6327,102 @@ Session mentor (l'utilisateur code), même chemin que `MIG` : dataclass → `sce
 **Piège de conception du test** : `pop1` ne vit que jusqu'à `t1` (tiré dans [1, 30]), donc un bottleneck sur `pop1` doit avoir `t < 1` ; à cette date, `proportion = 0.7` n'a presque pas d'effet sur les longueurs de branches, il faut `proportion` proche de 1 (ou un `ibn` de force ~ N) pour un signal net.
 
 **Ouvert** : effet non testé pour MicroSat/DNA/mixte ; échelle de temps de `strength` pour les loci `ploidy = 1` (`<X>/<Y>/<M>/<H>`, msprime l'utilise pour `ibn`) non étudiée.
+
+## 2026-11-24 — Fuites mémoire de DIYABC sur des runs enchaînés (`-R ALL`, puis `-o`)
+
+Session mentor (l'utilisateur écrit les scripts de mesure, puis me délègue la partie C++). Question de l'encadrant : sur 1000 points cibles
+(données simulées), on prend les 100 plus proches dans l'espace des statistiques et on relance 1000 `diyabc` à partir de ces paramètres ;
+au bout d'un moment le serveur sature en RAM. Y a-t-il une fuite ? Verdict et chiffres : `notes/results.md` §2 (24/11). Récit ici.
+
+**Cadrage.** Chaque `./diyabc` (lancé par un script R) est un processus : l'OS reprend sa mémoire à la sortie. Une fuite C++ ne
+peut donc pas s'accumuler d'un run à l'autre ; elle ne peut que gonfler le **pic d'un run**. À mesurer : `MemAvailable`
+(`/proc/meminfo`, pas « free » : le page cache est récupérable), le pic de RAM par run (`/usr/bin/time -f %M`, pas `ru_maxrss` de
+`RUSAGE_CHILDREN`, qui est un maximum cumulé), le nombre de `diyabc` vivants, la taille du dossier.
+
+**Le script (`scripts/fuite_data.py`, `scripts/fuite_temoin.py`).** Une boucle de runs dans un dossier copié de `reference/` (jamais dans
+`reference/`), une ligne CSV flushée par run (`run, t, return_code, mem_available_kb, alive_process, dir_size, peak_rss_kb, log_end, nrec`),
+un run de chauffe (la conversion `.snp` → `.snp.bin`, ~8 s et ~50 Mo de fichiers, ne doit pas fausser le run 0). Le témoin lit
+`MemAvailable` toutes les 5 s sans lancer DIYABC ; même horloge (`perf_counter` = `CLOCK_MONOTONIC`, partagée entre processus).
+
+**Faux départs, dans l'ordre (à ne pas refaire).**
+1. **Les premières séries étaient des runs sans simulation.** `-R ALL -r N` ne veut pas dire « N particules de plus » mais
+   « amener la reftable à N enregistrements au total ». Sur la même reftable, seuls les 2-3 premiers runs simulaient ; les 997 suivants
+   lisaient les données (0,42 s, 96 Mo) et s'arrêtaient. Indices : `reftableRF.bin` figé à 15:35:14 pendant 7 min de boucle ; premier entier
+   du `.bin` (nombre d'enregistrements) = 102 après 1000 runs de `-r 100`. Corrigé : `reset_reftable()` avant chaque run, colonne `nrec`.
+   Mes premières conclusions (« pic constant, DIYABC ne garde rien ») ne portaient donc que sur des runs sans simulation.
+2. **`TIMEOUT = 30` s** (conseillé pour des runs d'une particule) tuait les vrais runs de 100 particules (~81 s) : deux `timeout` en tête de série.
+3. **`log_end` faux deux fois.** Le log est `END\n\n` (run sans simulation) puis `END\n<nrec>\n` : « dernière ligne » puis « dernier mot » étaient
+   faux ; `END` est le **premier** mot.
+4. **Le témoin ne sépare pas DIYABC de la machine** : il mesure une grandeur du système entier, pendant que DIYABC tourne. Une courbe commune
+   ne prouve rien. Ce qui a servi : le pic par run et la durée (constants), et les 4,2 h de témoin **après** la fin des runs (courbe plate :
+   la pente de −28 Mo/h s'est arrêtée avec les runs ; les ~280 Mo perdus n'ont pas été rendus, cause non identifiée, trop petite pour compter).
+5. **Mauvaise option.** Tout cela portait sur `-R ALL` (priors tirés). La fuite signalée est dans `-o` (paramètres imposés, `dosimstat` dans
+   `simfile.cpp`), le cœur de la procédure de l'encadrant. Je ne l'avais pas demandé : « comment les runs sont-ils enchaînés ? » ne dit pas
+   « avec quelle option ».
+
+**Le C++ (`-o`).** Le dépôt `~/Documents/Github/diyabc` contient déjà le correctif de la PR (commits `0654cb9e`, `d9165d78`, avril 2024) ;
+tout le diff depuis `b4564b2c` est `simfile.cpp` (+18/−2) et une ligne de CMake. Clone local dans la scratchpad (sous-modules `dcmt` et
+`wingetopt` à copier à la main), deux `git worktree` (`0654cb9e^` et master), quatre builds : ASan (`-fsanitize=address -g -O1`) et normal,
+pour chaque version. **Le build ASan de master a échoué deux fois** (`internal compiler error: Erreur de segmentation` de g++, à des
+endroits différents) puis réussi en `-j2` : bruit du compilateur, pas du code. Jeu `tests/datasets/depindep` (SNP, 4 populations, 10 lignes de
+paramètres, c'est le test `-o` du dépôt), puis `human`. Mesures : `notes/results.md` §2.
+
+**Pièges de la mesure en `-o` (à retenir).**
+- `-n "t:1;..."` crée des états de RNG pour **un seul thread** : `-t 4` échoue avec « I do not have enough states into RNG_state_0000.bin ».
+  Recréer avec `t:16`.
+- Le fichier de paramètres de `human` : la reftable brute (`first_records_of_the_reference_table_0.txt`) est **irrégulière** (chaque ligne ne porte que
+  les paramètres de son scénario, dans l'ordre du trailer) et suivie de 130 statistiques. `-o` lit tous les mots comme des paramètres
+  (ligne trop longue = écriture hors tampon) et attend **l'ordre du scénario** (apparition dans le texte : scénario 5 = `N1..N4 t11 ra t22 d3 Nbn3
+  t33 d4 Nbn4 t44 Na`, pas `N1..N4 d3 Nbn3 d4 Nbn4 Na ra t11…`). Mauvais ordre : `t11 [1,30] 40 → rejecting particle`, `nphistarOK` < nombre de lignes.
+- Un fichier sans ligne d'en-tête pour la version d'avant la PR (avec : écriture hors tampon).
+
+**Où en est la cause du plantage de `migale`** : non trouvée (`notes/results.md` §4). Les fuites corrigées font ~1,9 Ko par ligne ; le dépassement
+de tampon est la piste la plus plausible parmi celles testables (corruption du tas, dépendante de l'allocateur), non démontrée. Le `double free`
+de la PR sur un serveur Linux distant n'est pas reproduit ici.
+
+**Rangement.** Les 16 `ref_*.json` de la racine sont dans `ref_json/` ; les 4 `scripts/compare_particles_*.py` lisent/écrivent un nom sans dossier
+dans `ref_json/` (créé au besoin).
+
+## 2026-11-24 — Échelle de temps des bottlenecks : `time`, `proportion`, `strength` ne sont jamais rescalés
+
+Question de l'utilisateur : le `strength` d'un `ibn` doit-il être rescalé comme une taille ? Réponse : non, et la mesure montre pourquoi.
+Notre `rescale_demography` ramène les tailles à des nombres de copies de gènes N′ (ploïdie 1 pour `<X>/<Y>/<M>/<H>`, ploïdie 2 non rescalée
+pour `<A>` à sex ratio 0,5). msprime applique `strength` comme une **durée de coalescent** : P(coalescence d'une paire au goulot)
+= 1 − exp(−s / (ploïdie × N)), mesuré 0,392 (ploïdie 1) et 0,220 (ploïdie 2) pour s = 50 000, N = 10^5 (formule : 0,393 et 0,221). Avec les
+tailles rescalées, `s` générations agissent au taux de coalescence du locus, donc le même `strength` pèse 4 fois plus sur `<M>`/`<Y>`
+(N′ = N/2) que sur `<A>` : cohérent, mais à dire aux utilisateurs. `bn` : la proportion est une probabilité (paires coalescées au goulot =
+`proportion`², à la date exacte, mesuré 0,252 pour 0,5), la date est en générations pour toute ploïdie. Cela ferme le point « ploïdie de `strength` »
+resté ouvert le 20/11. Si l'encadrant veut une même probabilité de coalescence pour tous les types de locus, il faudrait rescaler `strength` par
+type de locus : décision de sémantique, non prise.
+
+Tests ajoutés (`tests/test_demography_builder.py`) : `test_simple_bottleneck_effect_is_not_rescaled`, `test_instantaneous_bottleneck_effect_scales_with_gene_copies`
+(`A`, `X`, `Y`, `M` à sex ratio 0,5, par `build_demography` + `rescale_demography` avec le vrai `coalescence_coefficient`, 4000 réplicats, graine fixe,
+test binomial exact `p > 1e-3`). Mutation faite sur une copie (plugin pytest qui remplace `rescale_demography`) : `strength`, date ou `proportion`
+rescalés à tort, 3 cas sur 4 rouges ; `<A>` reste vert (facteur 1 : la faute est neutre). Pourquoi un test binomial : l'issue de chaque
+réplicat est oui/non, le test exact dimensionne la tolérance sur n et p, sans approximation normale ; le bruit vaut √(p(1−p)/n) ≈ 0,008.
+Hypothèse du test : la coalescence « de fond » avant le goulot est négligeable (N très grand, ~10⁻⁴ par paire). Limites : sex ratio 0,5 seulement
+(le cas `<A>` à facteur ≠ 1 n'est pas couvert), une population.
+
+## 2026-11-24 — `VARNELOG` (sortie logistique d'un bottleneck) : analyse, pas encore implémenté
+
+L'encadrant a fait produire à un autre agent des livrables dans `docs/livrables_VARNELOG/` : `msp_varnelog.py` (version msprime), `diyabc_varnelog.patch`
+et `diyabc_sources_modifiees/` (C++), `header_type_VARNELOG.txt`, `infer_NF_verhulst.R`, `validation_varnelog/`, un guide `.docx`. Syntaxe
+`t VARNELOG pop NF r` : de `t` jusqu'à la **fondation** de `pop` (`merge` qui l'absorbe ou `split` qui la crée), N(k) = NS / (1 + A·exp(−r·k)), A = (NS − NF)/NF,
+k = générations depuis la fondation, N(0) = NF exactement ; en C++, `seqCoal` découpe en `VARNELOG_K = 20` morceaux (pas égaux en ln N) de taille
+constante = **moyenne harmonique discrète exacte**.
+
+Question posée par l'utilisateur : une classe `VarNeLog` ou une fonction ? Réponse retenue (à confirmer) : une dataclass d'événement `VarNeLogEvent`
+(comme `BottleneckEvent`, texte non évalué) + une **fonction pure** `varnelog_segments(t0, t1, tF, NF, NS, r, K)` qui transcrit `seqCoal`. Pas de
+classe à comportement. Ce qui sort du schéma des événements existants : l'événement s'étend jusqu'à la fondation (regard en avant dans
+`build_demography`) et dépend de la taille en vigueur avant (`NS`). `r` en catégorie `A`, jamais arrondie ; `NF` en `N`. Le patch ajoute à `checklogic` deux règles
+(la population doit être fondée plus tard ; pas de `varNe`/`VARNELOG` de la même population avant la fondation), à transcrire dans `check_scenario_logic`.
+
+Trois points à trancher ou à vérifier avant d'écrire du code :
+1. `msp_varnelog.add_varnelog` appelle `varnelog_segments(tL, tF, tF, ...)` d'un bloc ; `seqCoal` est appelée par segment entre deux événements de la population,
+   et les points de coupure (`br`) dépendent des bornes du segment. Équivalent seulement sans événement intermédiaire de cette population
+   (un autre `sample`, par exemple) : lecture du code, non testée.
+2. La démo simule le goulot avec `DiscreteTimeWrightFisher` puis le coalescent standard. Le verdict « coalescent discret non répliqué » (`evalcriterium`) a été établi pour de grandes
+   tailles ; ici N(0) = NF peut valoir 2 à 200. Régime à part, à demander à l'encadrant ; le verdict n'est pas rouvert sans mesure.
+3. **Le patch n'est pas dans le `master` du dépôt DIYABC** : le binaire officiel refuse `VARNELOG`. Valider contre le « vrai » DIYABC exige de compiler les sources modifiées.
+
+Les tailles de ces segments doivent passer par `rescale_demography` (ce sont de vraies tailles, comme `varNe`), les temps et `r` non.

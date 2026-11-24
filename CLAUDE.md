@@ -355,7 +355,7 @@ Benchmarks and verdicts: `notes/results.md` §3. Method:
   machine (`ps -eo pcpu,args --sort=-pcpu | head`) and the reference (`maf.txt`, `THIS->MAF=`); a stored `ref_*.json` is void once its
   dataset directory changed or a statistical change happened. Run one heavy computation at a time, with `nice` and a timeout; never
   `pkill -f` / `pkill python` (it killed the Jupyter kernel once).
-- **Identity check**: `compare_particles_microsat save ref.json` on `HEAD` in a clean worktree, `compare ref.json` after; exact equality.
+- **Identity check**: `compare_particles_microsat save ref.json` on `HEAD` in a clean worktree, `compare ref.json` after; exact equality. A bare file name lives in `ref_json/` (all the `ref_*.json` are there, not at the root).
   When `reference/` is tracked, `ln -s` inside the worktree creates the link *inside* it: remove the checked-out directory first.
 - **Tests of an output-neutral optimization**: (1) the oracle is the **old code copied into the tests**, imported from `bridge/` for
   the new one; (2) **at least two different loci**; (3) a cache needs a **call-count spy**; (4) run the **mutation check** on a *copy*
