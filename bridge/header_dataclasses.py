@@ -62,6 +62,14 @@ class BottleneckEvent:
 
 
 @dataclass
+class VarNeLogEvent:
+    time_expr: str
+    pop: int
+    founder_pop: str
+    growth_rate: str
+
+
+@dataclass
 class Scenario:
     index: int
     weight: float

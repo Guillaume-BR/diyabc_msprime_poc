@@ -21,6 +21,7 @@ from bridge.header_dataclasses import (
     Scenario,
     SplitEvent,
     VarNeEvent,
+    VarNeLogEvent,
 )
 
 # Capture : "scenario 1 [0.16667] (16)" -> index=1, weight=0.16667, nlines=16
@@ -168,11 +169,12 @@ def _parse_event_line(line: str):
         )
 
     if action == "bn" or action == "ibn":
+        # ex : t1 ibn 4 200 ou t1 bn 4 0.8
         instantaneous = action == "ibn"
         arg = "strength" if instantaneous else "proportion"
         if len(args) != 2:
             raise ValueError(
-                f"BottleneckEvent mal formé : {line!r}. Il faut seulement deux arguments : 'population {arg}'."
+                f"BottleneckEvent mal formé : {line!r}. Il faut deux arguments : 'population {arg}'."
             )
 
         if not args[0].isdigit():
@@ -191,9 +193,26 @@ def _parse_event_line(line: str):
             strength=strength,
         )
 
+    if action == "varnelog":
+        if len(args) != 3:
+            raise ValueError(
+                f"VarNeLogEvent mal formé : {line!r}. Il faut trois arguments : population founder_pop growth_rate"
+            )
+        if not args[0].isdigit():
+            raise ValueError(
+                f"VarNeLogEvent mal formé : {line!r}. La population concernée doit être un entier."
+            )
+
+        return VarNeLogEvent(
+            time_expr=time_expr,
+            pop=int(args[0]),
+            founder_pop=args[1],
+            growth_rate=args[2],
+        )
+
     raise NotImplementedError(
         f"Action '{action}' non gérée par ce parser (vocabulaire connu : "
-        f"sample/merge/varNe/split/mig/smig/bn/ibn). Ligne : {line!r}"
+        f"sample/varne/bn/ibn/varneloge/merge/split/mig/smig). Ligne : {line!r}"
     )
 
 

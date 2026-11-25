@@ -11,6 +11,7 @@ from bridge.header_dataclasses import (
     SampleEvent,
     SplitEvent,
     VarNeEvent,
+    VarNeLogEvent,
 )
 from bridge.scenario_parser import (
     _parse_event_line,
@@ -182,6 +183,32 @@ def test_parse_event_line_with_wrong_btn():
     line2 = "t1 bn pop0 pbn"
     with pytest.raises(
         ValueError, match="La population concernée doit être un entier."
+    ):
+        _parse_event_line(line2)
+
+
+def test_parse_event_line_with_varnelog():
+    line1 = "t1 varnelog 0 NF1 r1"
+    event = _parse_event_line(line1)
+    assert isinstance(event, VarNeLogEvent)
+    assert event.pop == 0
+    assert event.time_expr == "t1"
+    assert event.founder_pop == "NF1"
+    assert event.growth_rate == "r1"
+
+
+def test_parse_event_line_with_wrong_varnelog():
+    line1 = "t1 varnelog 0 NF1"
+    with pytest.raises(
+        ValueError,
+        match="VarNeLogEvent mal formé : 't1 varnelog 0 NF1'. Il faut trois arguments",
+    ):
+        _parse_event_line(line1)
+
+    line2 = "t1 varnelog pop0 NF1 r1"
+    with pytest.raises(
+        ValueError,
+        match="VarNeLogEvent mal formé : 't1 varnelog pop0 NF1 r1'. La population",
     ):
         _parse_event_line(line2)
 
