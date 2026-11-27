@@ -123,3 +123,7 @@ def _normalize_mu(token: str) -> str:
         if token.startswith(variant):
             return "µ" + token[len(variant) :]
     return token
+
+
+# Nombre d'intervalles de découpage pour entre NF et NS pour un évènement VarNeLog
+VARNELOG_K = 20

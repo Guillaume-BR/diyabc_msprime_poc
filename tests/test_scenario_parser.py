@@ -113,7 +113,7 @@ def test_parse_event_line_three_population_split():
     assert event.admixture_rates == ["r1", "r2"]
 
 
-def test_parse_event_line_wrong_format():
+def test_parse_event_line_with_split_wrong_format():
     line = "t1 split 5 1 2 3 r1"
     with pytest.raises(ValueError, match="SplitEvent mal formé"):
         _parse_event_line(line)
@@ -193,7 +193,7 @@ def test_parse_event_line_with_varnelog():
     assert isinstance(event, VarNeLogEvent)
     assert event.pop == 0
     assert event.time_expr == "t1"
-    assert event.founder_pop == "NF1"
+    assert event.founder_size_expr == "NF1"
     assert event.growth_rate == "r1"
 
 
@@ -304,6 +304,90 @@ def test_check_scenario_logic_with_wrong_varne():
         """
     scenario = parse_scenario_block(block)
     with pytest.raises(ValueError, match="La population 14 de l'évènement"):
+        check_scenario_logic(scenario)
+
+
+def test_check_scenario_logic_with_valid_varnelog():
+    block = """
+        scenario 1 [0.16667] (5)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 2
+        t1  VARNELOG 2 NF r 
+        t2  merge 1 2
+        """
+    scenario = parse_scenario_block(block)
+    assert check_scenario_logic(scenario) is None
+
+
+def test_check_scenario_logic_varnelog_population_not_sampled():
+    block = """
+        scenario 1 [0.16667] (5)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 3
+        t1  VARNELOG 2 NF r 
+        t2  merge 1 2
+        """
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="La population 2"):
+        check_scenario_logic(scenario)
+
+
+def test_check_scenario_logic_varnelog_population_not_derived():
+    block = """
+        scenario 1 [0.16667] (5)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 2
+        t1  VARNELOG 2 NF r 
+        t2  merge 2 1
+        """
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="n'est fondée par aucun évènement"):
+        check_scenario_logic(scenario)
+
+
+def test_check_scenario_logic_varnelog_population_not_derived2():
+    block = """
+        scenario 1 [0.16667] (5)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 2
+        t1  VARNELOG 2 NF r 
+        """
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="n'est fondée par aucun évènement"):
+        check_scenario_logic(scenario)
+
+
+def test_check_scenario_parser_with_varne_before_varnelog_foundation():
+    block = """
+        scenario 1 [0.16667] (5)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 2
+        t1  VARNELOG 2 NF r
+        t1b varne 2 N5 
+        t2  merge 1 2
+        """
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="avant la fondation de la population"):
+        check_scenario_logic(scenario)
+
+
+def test_check_scenario_parser_with_varnelog_before_varnelog_foundation():
+    block = """
+        scenario 1 [0.16667] (5)
+        N1 N2 N3 N4
+        0 sample 1
+        0 sample 2
+        t1  VARNELOG 2 NF r
+        t1b varnelog 2 N5 r1
+        t2  merge 1 2
+        """
+    scenario = parse_scenario_block(block)
+    with pytest.raises(ValueError, match="avant la fondation de la population"):
         check_scenario_logic(scenario)
 
 

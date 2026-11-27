@@ -22,7 +22,9 @@ from bridge.header_dataclasses import (
     Scenario,
     SplitEvent,
     VarNeEvent,
+    VarNeLogEvent,
 )
+from bridge.varnelog import add_varnelog
 
 # "t2-d3" -> param1="t2", op="-", param2="d3"
 # "t1"    -> pas de match -> traité comme un nom de paramètre seul
@@ -67,8 +69,62 @@ def evaluate_expression(expr: str, values: dict[str, float]) -> float:
         ) from None
 
 
+def _founding_time(scenario: Scenario, index: int, values: dict[str, float]) -> float:
+    """
+    Retourne le temps de fondation de la population dans un scenario contenant un événement Varnelog.
+
+    Args:
+        scenario: Le scenario considéré
+        index: L'index de l'évènement varnelog considéré dans la liste des événements du scénario
+        values: Les valeurs des priors pour les paramètres du scénario
+
+    Returns:
+        Le temps de fondation
+
+    Raises:
+        Si la population n'est formée par aucun évènement antérieur en temps forward.
+
+
+    """
+    event = scenario.events[index]
+    for e in scenario.events[index + 1 :]:
+        if isinstance(e, (MergeEvent, SplitEvent)) and e.derived_pop == event.pop:
+            return evaluate_expression(e.time_expr, values)
+    raise ValueError(
+        f"La population {event.pop} n'est pas fondée dans le scénario {scenario.index} "
+        f"par un évènement postérieur au VarNeLogEvent."
+    )
+
+
+def _size_in_force(scenario: Scenario, index: int, values: dict[str, float]) -> float:
+    """
+    Renvoie la population initiale correspondant à la population stable à l'issue d'un
+    événement Varnelog. Cette population peut être issu d'un événement Varne ou bien de l'échantillonage
+    initial.
+
+    Args:
+        scenario : Le scénario contenant l'événement Varnelog
+        index : L'index de l'événement Varnelog dans la liste des événements du scénario
+        values : Les valeurs du prior pour ce scénario
+
+    Returns:
+        La population résultante du Varnelog : NS.
+    """
+    event = scenario.events[index]
+    for e in reversed(scenario.events[:index]):
+        if isinstance(e, VarNeEvent) and e.pop == event.pop:
+            return evaluate_expression(e.new_size_expr, values)
+    n_declared = len(scenario.initial_pop_size_exprs)
+    if not 1 <= event.pop <= n_declared:
+        raise ValueError(
+            f"La population {event.pop} n'a pas de taille initiale déclarée "
+            f"({n_declared} tailles dans le scénario {scenario.index})."
+        )
+    return evaluate_expression(scenario.initial_pop_size_exprs[event.pop - 1], values)
+
+
 def build_demography(
-    scenario: Scenario, values: dict[str, float]
+    scenario: Scenario, values: dict[str, float], varnelog_mode: str = "harmonic"
 ) -> msprime.Demography:
     """Construit la Demography msprime correspondant au scenario.
 
@@ -79,6 +135,7 @@ def build_demography(
         scenario: Le scénario parsé (header_dataclasses.Scenario).
         values: Les valeurs numériques déjà tirées des priors, {nom:
             valeur}.
+        varnelog_mode : "harmonic" (par défaut) ou "exact"
 
     Returns:
         La Demography msprime correspondante, avec ses événements triés
@@ -101,7 +158,7 @@ def build_demography(
     # Les événements sont listés dans header.txt du présent vers le passé
     # (time croissant) -- msprime attend le même ordre pour
     # add_population_split / add_population_parameters_change.
-    for event in scenario.events:
+    for i, event in enumerate(scenario.events):
         time = evaluate_expression(event.time_expr, values)
 
         if isinstance(event, SampleEvent):
@@ -155,6 +212,25 @@ def build_demography(
                     population=f"pop{event.pop}",
                     proportion=proportion,
                 )
+            continue
+
+        if isinstance(event, VarNeLogEvent):
+            time_start = time
+            time_found = _founding_time(scenario, i, values)
+            NS = _size_in_force(scenario, i, values)
+            NF = evaluate_expression(event.founder_size_expr, values)
+            r = evaluate_expression(event.growth_rate, values)
+            add_varnelog(
+                demography=demography,
+                pop=f"pop{event.pop}",
+                tL=time_start,
+                tF=time_found,
+                NF=NF,
+                NS=NS,
+                r=r,
+                mode=varnelog_mode,
+            )
+
             continue
 
         if isinstance(event, SplitEvent):
@@ -326,13 +402,17 @@ def get_parameter_names_used_by_scenario(scenario: Scenario) -> set[str]:
         names |= extract_referenced_names(event.time_expr)
         if isinstance(event, VarNeEvent):
             names |= extract_referenced_names(event.new_size_expr)
+        if isinstance(event, BottleneckEvent) and event.proportion is not None:
+            names |= extract_referenced_names(event.proportion)
+        if isinstance(event, BottleneckEvent) and event.strength is not None:
+            names |= extract_referenced_names(event.strength)
+        if isinstance(event, VarNeLogEvent):
+            names |= extract_referenced_names(event.founder_size_expr)
+            names |= extract_referenced_names(event.growth_rate)
         if isinstance(event, SplitEvent):
             for rate in event.admixture_rates:
                 names |= extract_referenced_names(rate)
         if isinstance(event, MigrationEvent):
             names |= extract_referenced_names(event.migration_rate)
-        if isinstance(event, BottleneckEvent) and event.proportion is not None:
-            names |= extract_referenced_names(event.proportion)
-        if isinstance(event, BottleneckEvent) and event.strength is not None:
-            names |= extract_referenced_names(event.strength)
+
     return names

@@ -41,6 +41,17 @@ def test_draw_one_value_round_half_up_not_banker():
     )  # confirme que Python round() aurait donné un résultat différent
 
 
+@pytest.mark.parametrize("category,rate", [("N", 0.0), ("B", 0.2)])
+def test_draw_one_value_round_only_n_and_t(category, rate):
+    prior = Prior(
+        name="N1", category=category, law="UN", min=0.0, max=10.0, mean=0.0, sdshape=0.0
+    )
+
+    value = _draw_one_value(prior, _FakeRng(0.2))
+
+    assert value == rate
+
+
 def test_draw_dirichlet_values():
     dirichlet_prior = DirichletPrior(
         names=["ra", "rb"],

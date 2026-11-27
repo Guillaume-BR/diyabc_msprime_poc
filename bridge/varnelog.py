@@ -16,7 +16,7 @@ import math
 import msprime
 import numpy as np
 
-VARNELOG_K = 20  # identique à #define VARNELOG_K dans particuleC.hpp
+from bridge.configuration import VARNELOG_K
 
 
 def verhulst_N(
@@ -53,6 +53,32 @@ def _compute_horizon_Dstar(NF: float, NS: float, r: float):
     return max(1.0, math.log(1000.0 * abs(A)) / r) if abs(A) > 1e-12 else 1.0
 
 
+def _check_varnelog_parameters(NF: float, NS: float, r: float) -> None:
+    """
+    Vérifie certaines conditions NF >=1, NS >=1 et r>0 sinon lève une erreur.
+
+    Args:
+        NF: Taille de la ppulation fondatrice
+        NS: Taille de la populaiton stable
+        r: Taux de croissande la logistique de Verhulst
+
+    Returns:
+        None
+
+    Raises:
+        Si une des conditions n'est pas remplie.
+    """
+
+    if r <= 0:
+        raise ValueError(
+            f"Le taux de croissance r={r!r} doit être strictement positif."
+        )
+    if NF < 1 or NS < 1:
+        raise ValueError(
+            "La taille des populations fondatrice NF et stable NS doit être supérieure ou égale à 1."
+        )
+
+
 def varnelog_segments(
     t0: float, t1: float, tF: float, NF: int, NS: int, r: float, K: int = VARNELOG_K
 ) -> list[tuple[float, float, int]]:
@@ -73,13 +99,10 @@ def varnelog_segments(
 
 
     """
+    _check_varnelog_parameters(NF, NS, r)
     if t1 > tF:
         raise ValueError(
             f"Le segment [t0={t0!r}, t1={t1!r}] dépasse la fondation tF={tF!r} : il faut t1 <= tF."
-        )
-    if r <= 0:
-        raise ValueError(
-            f"Le taux de croissance r={r!r} doit être strictement positif."
         )
     # Constante pour que la logistique de Verhulst aille de NF à NS
     A = (NS - NF) / NF
@@ -163,10 +186,6 @@ def add_varnelog(
         Le mode doit être "harmonic" ou "exact".
 
     """
-    if r <= 0:
-        raise ValueError(
-            f"Le taux de croissance r={r!r} doit être strictement positif."
-        )
     if not (tL < tF):
         raise ValueError("VARNELOG : il faut tL < tF")
     if mode == "harmonic":
@@ -176,6 +195,7 @@ def add_varnelog(
                 time=a, population=pop, initial_size=Nh, growth_rate=0
             )
     elif mode == "exact":
+        _check_varnelog_parameters(NF, NS, r)
         Dh = _compute_horizon_Dstar(NF, NS, r)
         kmax = min(int(tF - tL), int(math.ceil(Dh)))
         for k in range(kmax - 1, -1, -1):  # backward croissant

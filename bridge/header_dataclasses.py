@@ -31,28 +31,6 @@ class VarNeEvent:
 
 
 @dataclass
-class SampleEvent:
-    time_expr: str
-    pop: int
-
-
-@dataclass
-class Event:
-    time_expr: str  # "t2-d3" ou "t1" — texte brut, pas encore évalué
-    action: str  # "merge", "varNe", "sample"
-    args: list[str]  # ["2", "1"] pour merge, ["3", "Nbn3"] pour varNe
-
-
-@dataclass
-class MigrationEvent:
-    time_expr: str
-    symmetric: bool
-    source: int
-    dest: int
-    migration_rate: str
-
-
-@dataclass
 class BottleneckEvent:
     time_expr: str
     pop: int
@@ -65,8 +43,30 @@ class BottleneckEvent:
 class VarNeLogEvent:
     time_expr: str
     pop: int
-    founder_pop: str
+    founder_size_expr: str
     growth_rate: str
+
+
+@dataclass
+class SampleEvent:
+    time_expr: str
+    pop: int
+
+
+@dataclass
+class Event:
+    time_expr: str  # "t2-d3" ou "t1" — texte brut, pas encore évalué
+    action: str  # "merge", "varNe", "sample, varnelog, split, bn, ibn, mig, smig"
+    args: list[str]  # ["2", "1"] pour merge, ["3", "Nbn3"] pour varNe
+
+
+@dataclass
+class MigrationEvent:
+    time_expr: str
+    symmetric: bool
+    source: int
+    dest: int
+    migration_rate: str
 
 
 @dataclass

@@ -118,6 +118,48 @@ def _parse_event_line(line: str):
             new_size_expr=args[1],
         )
 
+    if action == "bn" or action == "ibn":
+        # ex : t1 ibn 4 200 ou t1 bn 4 0.8
+        instantaneous = action == "ibn"
+        arg = "strength" if instantaneous else "proportion"
+        if len(args) != 2:
+            raise ValueError(
+                f"BottleneckEvent mal formé : {line!r}. Il faut deux arguments : 'population {arg}'."
+            )
+
+        if not args[0].isdigit():
+            raise ValueError(
+                f"BottleneckEvent mal formé : {line!r}. La population concernée doit être un entier."
+            )
+
+        strength = args[1] if instantaneous else None
+        proportion = None if instantaneous else args[1]
+
+        return BottleneckEvent(
+            time_expr=time_expr,
+            pop=int(args[0]),
+            instantaneous=instantaneous,
+            proportion=proportion,
+            strength=strength,
+        )
+
+    if action == "varnelog":
+        if len(args) != 3:
+            raise ValueError(
+                f"VarNeLogEvent mal formé : {line!r}. Il faut trois arguments : population founder_pop growth_rate"
+            )
+        if not args[0].isdigit():
+            raise ValueError(
+                f"VarNeLogEvent mal formé : {line!r}. La population concernée doit être un entier."
+            )
+
+        return VarNeLogEvent(
+            time_expr=time_expr,
+            pop=int(args[0]),
+            founder_size_expr=args[1],
+            growth_rate=args[2],
+        )
+
     if action == "split":
         # ex: "t1 split 3 1 2 r1" -> derived_pop=3 (disparaît), ancestral_pops=[1, 2],
         # admixture_rates=["r1"] : la pop 1 reçoit chaque lignée de la pop 3 avec
@@ -168,51 +210,9 @@ def _parse_event_line(line: str):
             migration_rate=args[2],
         )
 
-    if action == "bn" or action == "ibn":
-        # ex : t1 ibn 4 200 ou t1 bn 4 0.8
-        instantaneous = action == "ibn"
-        arg = "strength" if instantaneous else "proportion"
-        if len(args) != 2:
-            raise ValueError(
-                f"BottleneckEvent mal formé : {line!r}. Il faut deux arguments : 'population {arg}'."
-            )
-
-        if not args[0].isdigit():
-            raise ValueError(
-                f"BottleneckEvent mal formé : {line!r}. La population concernée doit être un entier."
-            )
-
-        strength = args[1] if instantaneous else None
-        proportion = None if instantaneous else args[1]
-
-        return BottleneckEvent(
-            time_expr=time_expr,
-            pop=int(args[0]),
-            instantaneous=instantaneous,
-            proportion=proportion,
-            strength=strength,
-        )
-
-    if action == "varnelog":
-        if len(args) != 3:
-            raise ValueError(
-                f"VarNeLogEvent mal formé : {line!r}. Il faut trois arguments : population founder_pop growth_rate"
-            )
-        if not args[0].isdigit():
-            raise ValueError(
-                f"VarNeLogEvent mal formé : {line!r}. La population concernée doit être un entier."
-            )
-
-        return VarNeLogEvent(
-            time_expr=time_expr,
-            pop=int(args[0]),
-            founder_pop=args[1],
-            growth_rate=args[2],
-        )
-
     raise NotImplementedError(
         f"Action '{action}' non gérée par ce parser (vocabulaire connu : "
-        f"sample/varne/bn/ibn/varneloge/merge/split/mig/smig). Ligne : {line!r}"
+        f"sample/varne/bn/ibn/varnelog/merge/split/mig/smig). Ligne : {line!r}"
     )
 
 
@@ -296,7 +296,7 @@ def check_scenario_logic(scenario: Scenario) -> None:
     Raises : Lève une ValueError si le scénario n'est pas logique.
     """
     existing_pop = set()
-    for event in scenario.events:
+    for i, event in enumerate(scenario.events):
         if isinstance(event, SampleEvent):
             existing_pop.add(event.pop)
 
@@ -322,6 +322,26 @@ def check_scenario_logic(scenario: Scenario) -> None:
                 f"Le scénario {scenario.index} est mal formé. La population {event.pop} de l'évènement {event!r} n'est pas échantillonnée."
             )
 
+        if isinstance(event, VarNeLogEvent):
+            if event.pop not in existing_pop:
+                raise ValueError(
+                    f"Le scénario {scenario.index} est mal formé. La population {event.pop} de l'évènement {event!r} n'est pas échantillonnée."
+                )
+            # On regarde parmi les évènements arrivant après.
+            for e in scenario.events[i + 1 :]:
+                if (
+                    isinstance(e, (MergeEvent, SplitEvent))
+                    and e.derived_pop == event.pop
+                ):
+                    break
+                if isinstance(e, (VarNeEvent, VarNeLogEvent)) and e.pop == event.pop:
+                    raise ValueError(
+                        f"Un évènenement {type(e).__name__} ne peut avoir lieu avant la fondation de la population."
+                    )
+            else:
+                raise ValueError(
+                    f"La population {event.pop} n'est fondée par aucun évènement Merge ou Split"
+                )
         if isinstance(event, SplitEvent):
             if event.derived_pop not in existing_pop:
                 raise ValueError(

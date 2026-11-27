@@ -132,7 +132,8 @@ def _draw_one_value(prior: Prior, rng: random.Random) -> float:
         # (N) et de temps (T) juste après le tirage -- particuleC.cpp :
         # "if (category<2) value = floor(0.5+value)" (round-half-up),
         # category 0=N, 1=T, 2=A (histparam.category, header.cpp). Le
-        # taux d'admixture (A) reste continu, jamais arrondi.
+        # taux d'admixture (A) et le taux de croissance (B) restent continus,
+        # jamais arrondi.
         value = float(math.floor(0.5 + value))
 
     return value

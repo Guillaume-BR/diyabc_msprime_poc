@@ -10,14 +10,194 @@ from msprime.demography import InstantaneousBottleneck, SimpleBottleneck
 from scipy import stats
 
 from bridge.demography_builder import (
+    _founding_time,
+    _size_in_force,
     build_demography,
     evaluate_expression,
     extract_referenced_names,
     get_parameter_names_used_by_scenario,
     rescale_demography,
 )
+from bridge.header_dataclasses import VarNeLogEvent
 from bridge.observed_data import coalescence_coefficient
-from bridge.scenario_parser import parse_header_scenarios, parse_scenario_block
+from bridge.scenario_parser import (
+    check_scenario_logic,
+    parse_header_scenarios,
+    parse_scenario_block,
+)
+from bridge.varnelog import add_varnelog
+
+
+@pytest.mark.parametrize(
+    "scenario_index,founding_event, values, expected",
+    [
+        (1, "t2 merge 1 2", {"t2": 50}, 50),  # nom
+        (2, "50 merge 1 2", {}, 50),  # littéral
+        (3, "t2-d3 merge 1 2", {"t2": 50, "d3": 8}, 42),  # expression
+        (
+            4,
+            "t2 split 2 1 3 r\n t3 merge 1 3",
+            {"t2": 50, "r": 0.5, "t3": 80},
+            50,
+        ),  # split
+    ],
+)
+def test_founding_time(scenario_index, founding_event, values, expected):
+    block = f"""
+        scenario {scenario_index} [0.16667] (4)
+        N1 N2 
+        0 sample 1
+        0 sample 2
+        t1 VARNELOG 2 NF r 
+        {founding_event}
+        """
+    scenario = parse_scenario_block(block)
+
+    # Garde-fou : un scenario invalide fausserait le test
+    check_scenario_logic(scenario)
+
+    idx = next(i for i, e in enumerate(scenario.events) if isinstance(e, VarNeLogEvent))
+    assert _founding_time(scenario, idx, values) == expected
+
+
+def test_founding_time_with_merge_before_foundation():
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 
+        0 sample 1
+        0 sample 2
+        0 sample 3
+        t1 VARNELOG 2 NF r 
+        t2 merge 1 3
+        t3 merge 1 2
+        """
+
+    values = {
+        "N1": 1000,
+        "N2": 1000,
+        "t1": 10,
+        "NF": 500,
+        "r": 0.2,
+        "t2": 50,
+        "t3": 100,
+    }
+    scenario = parse_scenario_block(block)
+
+    # Garde-fou : un scenario invalide fausserait le test
+    check_scenario_logic(scenario)
+
+    idx = next(i for i, e in enumerate(scenario.events) if isinstance(e, VarNeLogEvent))
+    assert _founding_time(scenario, idx, values) == values["t3"]
+
+
+def test_founding_time_without_foundation():
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 
+        0 sample 1
+        0 sample 2
+        t1 VARNELOG 2 NF r 
+        t2 merge 2 1
+        """
+
+    values = {
+        "N1": 1000,
+        "N2": 1000,
+        "t1": 10,
+        "NF": 500,
+        "r": 0.2,
+        "t2": 50,
+    }
+    scenario = parse_scenario_block(block)
+    # Pas de garde fou check_logic_scenario pour voir si l'erreur de _founding_time est levée
+    idx = next(i for i, e in enumerate(scenario.events) if isinstance(e, VarNeLogEvent))
+    with pytest.raises(ValueError, match="La population 2 n'est pas fondée"):
+        _founding_time(scenario, idx, values)
+
+
+def test_size_in_force():
+    block = """
+    scenario 1 [0.16667] (6)
+    N1 N2 N3 
+    0   sample 1
+    0   sample 2
+    0   sample 3
+    t1  merge 1 2        
+    t2  VARNELOG 1 NF r  
+    t3  merge 3 1
+    """
+    values = {
+        "N1": 1000,
+        "N2": 2000,
+        "N3": 3000,
+        "t1": 10,
+        "NF": 500,
+        "r": 0.2,
+        "t2": 50,
+        "t3": 100,
+    }
+    scenario = parse_scenario_block(block)
+    idx = next(i for i, e in enumerate(scenario.events) if isinstance(e, VarNeLogEvent))
+    assert _size_in_force(scenario, idx, values) == values["N1"]
+
+
+def test_size_in_force_with_varne_before_varnelog():
+    block = """
+    scenario 1 [0.16667] (6)
+    N1 N2
+    0   sample 1
+    0   sample 2
+    t1  varne 1 Nbn1  
+    t1  varne 1 Nbn2     
+    t2  VARNELOG 1 NF r  
+    t3  merge 2 1
+    """
+    values = {
+        "N1": 1000,
+        "N2": 2000,
+        "t1": 10,
+        "Nbn1": 500,
+        "Nbn2": 800,
+        "NF": 500,
+        "r": 0.2,
+        "t2": 50,
+        "t3": 100,
+    }
+    scenario = parse_scenario_block(block)
+    idx = next(i for i, e in enumerate(scenario.events) if isinstance(e, VarNeLogEvent))
+    assert _size_in_force(scenario, idx, values) == values["Nbn2"]
+
+
+def test_size_in_force_with_missing_value():
+    block = """
+    scenario 1 [0.16667] (6)
+    N1 N2
+    0   sample 1
+    0   sample 2     
+    t2  VARNELOG 1 NF r  
+    t3  merge 2 1
+    """
+    values = {"N2": 2000, "NF": 500, "r": 0.2, "t2": 50, "t3": 100}
+    scenario = parse_scenario_block(block)
+    idx = next(i for i, e in enumerate(scenario.events) if isinstance(e, VarNeLogEvent))
+    with pytest.raises(ValueError, match="Expression 'N1' non évaluable"):
+        _size_in_force(scenario, idx, values)
+
+
+def test_size_in_force_with_wrong_population():
+    block = """
+    scenario 1 [0.16667] (6)
+    N1 N2
+    0   sample 1
+    0   sample 2     
+    t2  VARNELOG 3 NF r  
+    t3  merge 2 1
+    """
+    values = {"N2": 2000, "NF": 500, "r": 0.2, "t2": 50, "t3": 100}
+    scenario = parse_scenario_block(block)
+    idx = next(i for i, e in enumerate(scenario.events) if isinstance(e, VarNeLogEvent))
+    with pytest.raises(ValueError, match="La population 3 n'a pas de taille"):
+        _size_in_force(scenario, idx, values)
 
 
 def test_build_demography_scenario2_admixture(header_text):
@@ -383,6 +563,242 @@ def test_demography_builder_with_wrong_instantaneous_bottleneck():
         build_demography(scenario, values)
 
 
+@pytest.mark.parametrize("mode", ["harmonic", "exact"])
+def test_demography_builder_with_varnelog(mode):
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 
+        0 sample 1
+        0 sample 2
+        t1 VARNELOG 1 NF r 
+        t2 merge 2 1
+        """
+    values = {"N1": 1000, "N2": 5000, "t1": 10, "NF": 50, "r": 0.2, "t2": 50}
+
+    scenario = parse_scenario_block(block)
+    demography = build_demography(scenario, values, varnelog_mode=mode)
+
+    # Démographie construite à la main
+    time_start = values["t1"]
+    time_found = values["t2"]
+    NS = values["N1"]
+    NF = values["NF"]
+    r = values["r"]
+    oracle_demography = msprime.Demography()
+    oracle_demography.add_population(
+        initial_size=values["N1"], name="pop1", initially_active=True
+    )
+    oracle_demography.add_population(
+        initial_size=values["N2"], name="pop2", initially_active=True
+    )
+    add_varnelog(
+        oracle_demography, "pop1", time_start, time_found, NF, NS, r, mode=mode
+    )
+    oracle_demography.add_population_split(
+        time=time_found, derived=["pop1"], ancestral="pop2"
+    )
+    oracle_demography.sort_events()
+
+    assert len(demography.debug().epochs) == len(oracle_demography.debug().epochs)
+    for e, oracle_e in zip(
+        demography.debug().epochs, oracle_demography.debug().epochs, strict=True
+    ):
+        assert e.start_time == oracle_e.start_time
+        assert e.end_time == oracle_e.end_time
+
+        for name in ("pop1", "pop2"):
+            pid = demography[name].id
+            assert e.populations[pid].start_size == oracle_e.populations[pid].start_size
+
+
+@pytest.mark.parametrize("mode", ["harmonic", "exact"])
+def test_demography_builder_with_varne_before_varnelog(mode):
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 
+        0 sample 1
+        0 sample 2
+        t0 varne 1 Nbn0
+        t1 varne 1 Nbn1
+        t2 VARNELOG 1 NF r 
+        t3 merge 2 1
+        """
+    values = {
+        "N1": 1000,
+        "N2": 5000,
+        "t0": 5,
+        "Nbn0": 1000,
+        "t1": 10,
+        "Nbn1": 500,
+        "t2": 30,
+        "NF": 50,
+        "r": 0.2,
+        "t3": 50,
+    }
+
+    scenario = parse_scenario_block(block)
+    demography = build_demography(scenario, values, varnelog_mode=mode)
+
+    # Démographie construite à la main
+    time_start = values["t2"]
+    time_found = values["t3"]
+    NS = values["Nbn1"]
+    NF = values["NF"]
+    r = values["r"]
+    oracle_demography = msprime.Demography()
+    oracle_demography.add_population(
+        initial_size=values["N1"], name="pop1", initially_active=True
+    )
+    oracle_demography.add_population(
+        initial_size=values["N2"], name="pop2", initially_active=True
+    )
+    oracle_demography.add_population_parameters_change(
+        time=values["t0"], population="pop1", initial_size=values["Nbn0"]
+    )
+    oracle_demography.add_population_parameters_change(
+        time=values["t1"], population="pop1", initial_size=values["Nbn1"]
+    )
+    add_varnelog(
+        oracle_demography, "pop1", time_start, time_found, NF, NS, r, mode=mode
+    )
+    oracle_demography.add_population_split(
+        time=time_found, derived=["pop1"], ancestral="pop2"
+    )
+    oracle_demography.sort_events()
+
+    assert len(demography.debug().epochs) == len(oracle_demography.debug().epochs)
+    assert len(demography.debug().epochs) > 3
+    for e, oracle_e in zip(
+        demography.debug().epochs, oracle_demography.debug().epochs, strict=True
+    ):
+        assert e.start_time == oracle_e.start_time
+        assert e.end_time == oracle_e.end_time
+
+        for name in ("pop1", "pop2"):
+            pid = demography[name].id
+            assert e.populations[pid].start_size == oracle_e.populations[pid].start_size
+
+
+@pytest.mark.parametrize("mode", ["harmonic", "exact"])
+def test_demography_builder_with_varne_on_other_pop(mode):
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 
+        0 sample 1
+        0 sample 2
+        t0 varne 1 Nbn0
+        t1 varne 2 Nbn1
+        t2 VARNELOG 1 NF r 
+        t3 merge 2 1
+        """
+    values = {
+        "N1": 1000,
+        "N2": 5000,
+        "t0": 5,
+        "Nbn0": 1000,
+        "t1": 10,
+        "Nbn1": 500,
+        "t2": 30,
+        "NF": 50,
+        "r": 0.2,
+        "t3": 50,
+    }
+
+    scenario = parse_scenario_block(block)
+    demography = build_demography(scenario, values, varnelog_mode=mode)
+
+    # Démographie construite à la main
+    time_start = values["t2"]
+    time_found = values["t3"]
+    NS = values["Nbn0"]
+    NF = values["NF"]
+    r = values["r"]
+    oracle_demography = msprime.Demography()
+    oracle_demography.add_population(
+        initial_size=values["N1"], name="pop1", initially_active=True
+    )
+    oracle_demography.add_population(
+        initial_size=values["N2"], name="pop2", initially_active=True
+    )
+    oracle_demography.add_population_parameters_change(
+        time=values["t0"], population="pop1", initial_size=values["Nbn0"]
+    )
+    oracle_demography.add_population_parameters_change(
+        time=values["t1"], population="pop2", initial_size=values["Nbn1"]
+    )
+    add_varnelog(
+        oracle_demography, "pop1", time_start, time_found, NF, NS, r, mode=mode
+    )
+    oracle_demography.add_population_split(
+        time=time_found, derived=["pop1"], ancestral="pop2"
+    )
+    oracle_demography.sort_events()
+
+    assert len(demography.debug().epochs) == len(oracle_demography.debug().epochs)
+    assert len(demography.debug().epochs) > 3
+    for e, oracle_e in zip(
+        demography.debug().epochs, oracle_demography.debug().epochs, strict=True
+    ):
+        assert e.start_time == oracle_e.start_time
+        assert e.end_time == oracle_e.end_time
+
+        for name in ("pop1", "pop2"):
+            pid = demography[name].id
+            assert e.populations[pid].start_size == oracle_e.populations[pid].start_size
+
+
+@pytest.mark.parametrize("mode", ["harmonic", "exact"])
+def test_demography_builder_with_rescale(mode):
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 
+        0 sample 1
+        0 sample 2
+        t1 VARNELOG 1 NF r 
+        t2 merge 2 1
+        """
+    values = {"N1": 1000, "N2": 5000, "t1": 10, "NF": 50, "r": 0.2, "t2": 50}
+
+    factor = 0.5
+    scenario = parse_scenario_block(block)
+    demography = build_demography(scenario, values, varnelog_mode=mode)
+    rescaled = rescale_demography(demography, factor=factor)
+    # Démographie construite à la main
+    time_start = values["t1"]
+    time_found = values["t2"]
+    NS = values["N1"]
+    NF = values["NF"]
+    r = values["r"]
+    oracle_demography = msprime.Demography()
+    oracle_demography.add_population(
+        initial_size=values["N1"], name="pop1", initially_active=True
+    )
+    oracle_demography.add_population(
+        initial_size=values["N2"], name="pop2", initially_active=True
+    )
+    add_varnelog(
+        oracle_demography, "pop1", time_start, time_found, NF, NS, r, mode=mode
+    )
+    oracle_demography.add_population_split(
+        time=time_found, derived=["pop1"], ancestral="pop2"
+    )
+    oracle_demography.sort_events()
+
+    assert len(rescaled.debug().epochs) == len(oracle_demography.debug().epochs)
+    assert len(rescaled.debug().epochs)
+    for e, oracle_e in zip(
+        rescaled.debug().epochs, oracle_demography.debug().epochs, strict=True
+    ):
+        assert e.start_time == oracle_e.start_time
+        assert e.end_time == oracle_e.end_time
+
+        for name in ("pop1", "pop2"):
+            pid = rescaled[name].id
+            assert e.populations[pid].start_size == pytest.approx(
+                factor * oracle_e.populations[pid].start_size
+            )
+
+
 def test_demography_builder_with_symmetric_migration(header_text):
     header_text_modified = _check_replace_modification(
         header_text, "t1 split 1 4 2 ra", "tm1 smig 1 4 r1\n t1 split 1 4 2 ra"
@@ -542,6 +958,21 @@ def test_get_parameter_used_by_scenario_with_bottleneck():
     scenario = parse_scenario_block(block)
     used_names = get_parameter_names_used_by_scenario(scenario)
     assert {"tbn", "p", "tibn", "s"} <= used_names
+
+
+def test_get_parameter_used_by_scenario_with_varnelog():
+    block = """
+        scenario 1 [0.16667] (4)
+        N1 N2 
+        0 sample 1
+        0 sample 2
+        t1  VARNELOG 2 NF r 
+        t2  merge 1 2
+        """
+
+    scenario = parse_scenario_block(block)
+    used_names = get_parameter_names_used_by_scenario(scenario)
+    assert used_names == {"N1", "N2", "t1", "t2", "NF", "r"}
 
 
 def test_evaluate_expression():
